@@ -24,20 +24,27 @@
   click tracking. Progress persists across refresh/reopen.
 - Content-integrity gating: Discover/Battle questions and Extras are only
   served once `verified = true` and `published = true`, enforced in RLS.
+- Daily Battle (spec sections 15-17): Parents-vs-Kids flow on one shared
+  "controller" device — each team discusses and submits an answer, reveal
+  shows both outcomes, running trip-level score persists across battles.
+- Final Battle (spec section 18-19): same mechanic looped over every
+  question in the trip's final battle, celebratory result screen.
+- Feedback form (spec section 20): all 6 questions, shown once after the
+  Final Battle; "already submitted" tracked client-side so it isn't
+  re-asked on reopen.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
   `docs/DATABASE.md` "Security model").
-- Battles, Final Battle, and the feedback form are not built yet (next up).
 - Day 1 seed content is a draft pending human fact-check/approval; Days
-  2–5 have no content yet.
+  2–5 and the Final Battle's 10-12 questions have no content yet.
 - No error-monitoring service (e.g. Sentry) wired up yet — runtime errors
   are visible via Vercel function/build logs and browser console only.
 - Single Supabase project shared across preview and production, only
   scoped apart by `is_demo` on seed data (see `docs/ARCHITECTURE.md`
   "Environments").
-- The Discover round-trip against live Supabase has not been verified from
-  this environment (sandboxed network blocks `supabase.co`) — verified via
-  lint/typecheck/build and a local dev-server smoke test only. Please
-  exercise the real flow on a phone against your Supabase project before
-  trusting it for the pilot.
+- None of the Discover/Battle/Final/Feedback flows have been round-tripped
+  against live Supabase from this environment (sandboxed network blocks
+  `supabase.co`) — verified via lint/typecheck/build and local dev-server
+  smoke tests only. Please exercise the real flows on a phone against your
+  Supabase project before trusting them for the pilot.

@@ -12,13 +12,20 @@ import {
 } from "@/lib/participant";
 import { supabase } from "@/lib/supabase/client";
 import { trackEvent } from "@/lib/analytics";
+import { getDailyBattle, getFinalBattle, isBattleCompleted } from "@/lib/battle";
 
 interface SlotStatus {
   questionId: string | null;
   completed: boolean;
 }
 
+interface BattleStatus {
+  available: boolean;
+  completed: boolean;
+}
+
 const EMPTY_STATUS: SlotStatus = { questionId: null, completed: false };
+const EMPTY_BATTLE_STATUS: BattleStatus = { available: false, completed: false };
 
 export default function TripHomePage() {
   const { slug } = useParams<{ slug: string }>();
@@ -31,6 +38,8 @@ export default function TripHomePage() {
   const [joining, setJoining] = useState(false);
   const [morningStatus, setMorningStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
+  const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
+  const [finalStatus, setFinalStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [showAddChild, setShowAddChild] = useState(false);
   const [childName, setChildName] = useState("");
   const [childAge, setChildAge] = useState("");
@@ -83,6 +92,21 @@ export default function TripHomePage() {
     [],
   );
 
+  const loadBattleStatus = useCallback(async (tripId: string, day: number) => {
+    const [daily, final] = await Promise.all([
+      getDailyBattle(tripId, day),
+      getFinalBattle(tripId),
+    ]);
+
+    const [dailyCompleted, finalCompleted] = await Promise.all([
+      daily ? isBattleCompleted(daily.battle.id) : Promise.resolve(false),
+      final ? isBattleCompleted(final.battle.id) : Promise.resolve(false),
+    ]);
+
+    setBattleStatus({ available: !!daily && daily.questions.length > 0, completed: dailyCompleted });
+    setFinalStatus({ available: !!final && final.questions.length > 0, completed: finalCompleted });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -97,7 +121,11 @@ export default function TripHomePage() {
         const list = await loadProfiles(t.id);
         if (cancelled) return;
         if (list.length > 0) {
-          await loadSlotStatus(t.id, currentTripDay(t), list.map((p) => p.id));
+          const day = currentTripDay(t);
+          await Promise.all([
+            loadSlotStatus(t.id, day, list.map((p) => p.id)),
+            loadBattleStatus(t.id, day),
+          ]);
         }
       } catch {
         if (!cancelled) setLoadError(true);
@@ -110,7 +138,7 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, loadProfiles, loadSlotStatus]);
+  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus]);
 
   async function handleJoin(e: FormEvent) {
     e.preventDefault();
@@ -120,7 +148,11 @@ export default function TripHomePage() {
       const adult = await getOrCreateAdultParticipant(trip.id, joinName.trim());
       await trackEvent(trip.id, "trip_joined", adult.id);
       const list = await loadProfiles(trip.id);
-      await loadSlotStatus(trip.id, currentTripDay(trip), list.map((p) => p.id));
+      const day = currentTripDay(trip);
+      await Promise.all([
+        loadSlotStatus(trip.id, day, list.map((p) => p.id)),
+        loadBattleStatus(trip.id, day),
+      ]);
     } finally {
       setJoining(false);
     }
@@ -209,13 +241,42 @@ export default function TripHomePage() {
             <span>🌙</span>
             <span>Battle</span>
           </div>
-          <p className="mt-1 text-slate-500">Disponibil diseară</p>
+          {!battleStatus.available ? (
+            <p className="mt-1 text-slate-500">Disponibil diseară</p>
+          ) : battleStatus.completed ? (
+            <p className="mt-1 text-emerald-600">✓ Completat</p>
+          ) : (
+            <Link
+              href={`/trip/${slug}/battle`}
+              className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white"
+            >
+              HAI LA BATTLE
+            </Link>
+          )}
         </div>
       </section>
 
-      <p className="text-center text-sm text-slate-500">
-        {daysToFinal > 0 ? `Final Battle în ${daysToFinal} zile` : "Final Battle azi"}
-      </p>
+      {finalStatus.available ? (
+        <div className="rounded-2xl border border-slate-200 px-5 py-4 text-center">
+          <p className="text-lg font-medium">🏆 Final Battle</p>
+          {finalStatus.completed ? (
+            <Link href={`/trip/${slug}/final`} className="mt-1 inline-block text-emerald-600 underline">
+              ✓ Completat — vezi rezultatul
+            </Link>
+          ) : (
+            <Link
+              href={`/trip/${slug}/final`}
+              className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white"
+            >
+              HAI LA FINALĂ
+            </Link>
+          )}
+        </div>
+      ) : (
+        <p className="text-center text-sm text-slate-500">
+          {daysToFinal > 0 ? `Final Battle în ${daysToFinal} zile` : "Final Battle azi"}
+        </p>
+      )}
 
       <section className="mt-auto flex flex-col gap-3 border-t border-slate-200 pt-6">
         <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Profiluri</h2>

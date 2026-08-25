@@ -4,10 +4,11 @@ ROAM is a mobile-first PWA that runs an interactive trip companion for a
 family trip: daily "Discover" quiz questions, personal "Extras", exploration
 links, and a "Parents vs Kids" Battle — no login required.
 
-The engineering foundation (Next.js + Supabase + CI/CD) is live. Product
-build is underway following the spec's own 72-hour plan — Day 1 (join a
-trip, adult/child profiles, one full Discover interaction, state
-persistence) is done; Battles, Final Battle, and feedback are next.
+The engineering foundation (Next.js + Supabase + CI/CD) is live, and the
+full product flow works end to end: join → Discover → Daily Battle →
+Final Battle → feedback. Days 2-5 of the pilot still need their real
+content authored and fact-checked (see `supabase/seed.sql`), and design/
+UX polish is a deliberately later pass.
 
 ## Stack
 

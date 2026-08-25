@@ -173,7 +173,11 @@ export interface Database {
           id: string;
           trip_id: string;
           participant_id: string | null;
-          rating: number | null;
+          learned_new: number | null;
+          generated_conversations: number | null;
+          searched_more: boolean | null;
+          anticipated_next: "da" | "uneori" | "nu" | null;
+          would_use_again: "sigur" | "probabil" | "probabil_nu" | "nu" | null;
           comment: string | null;
           created_at: string;
         },
