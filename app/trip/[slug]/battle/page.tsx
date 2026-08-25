@@ -8,8 +8,9 @@ import { listProfilesForDevice } from "@/lib/participant";
 import { getDailyBattle, isBattleCompleted, getBattleLeaderboard, type BattleContent } from "@/lib/battle";
 import { BattleFlow } from "@/components/BattleFlow";
 import type { BattleTeam } from "@/lib/supabase/types";
+import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 
-type Step = "loading" | "error" | "not-joined" | "unavailable" | "already-played" | "play";
+type Step = "loading" | "error" | "not-joined" | "unavailable" | "closed" | "already-played" | "play";
 
 export default function DailyBattlePage() {
   const { slug } = useParams<{ slug: string }>();
@@ -18,6 +19,7 @@ export default function DailyBattlePage() {
   const [trip, setTrip] = useState<Trip | null>(null);
   const [content, setContent] = useState<BattleContent | null>(null);
   const [score, setScore] = useState<Record<BattleTeam, number>>({ adults: 0, kids: 0 });
+  const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +52,13 @@ export default function DailyBattlePage() {
           if (cancelled) return;
           setScore(leaderboard);
           setStep("already-played");
+          return;
+        }
+
+        const availability = getSlotAvailability("battle");
+        if (availability.status !== "open") {
+          setClosedInfo(availability);
+          setStep("closed");
         } else {
           setStep("play");
         }
@@ -89,6 +98,20 @@ export default function DailyBattlePage() {
     return (
       <Centered>
         <p>Battle-ul de azi nu e încă disponibil.</p>
+        <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
+          Înapoi acasă
+        </Link>
+      </Centered>
+    );
+  }
+  if (step === "closed") {
+    return (
+      <Centered>
+        {closedInfo?.status === "before" ? (
+          <p>Battle-ul devine disponibil la {closedInfo.opensAt}.</p>
+        ) : (
+          <p>Battle-ul s-a încheiat pentru azi.</p>
+        )}
         <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
           Înapoi acasă
         </Link>
