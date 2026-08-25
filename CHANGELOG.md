@@ -32,6 +32,15 @@
 - Feedback form (spec section 20): all 6 questions, shown once after the
   Final Battle; "already submitted" tracked client-side so it isn't
   re-asked on reopen.
+- Time-of-day availability windows (product owner request, deliberately
+  overriding the spec's own "don't build exact unlock times" suggestion):
+  Morning 07:00-11:59, Lunch 12:00-17:00, Battle 19:00-23:00, device local
+  time. Enforced on the Home screen and on direct page access alike;
+  already-answered content stays reviewable outside its window.
+- History page (`/trip/[slug]/history`, product owner request): every
+  published Discover question so far with the correct answer, One Thing,
+  and each profile's own answer, plus every played Battle's questions and
+  score.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
@@ -43,8 +52,9 @@
 - Single Supabase project shared across preview and production, only
   scoped apart by `is_demo` on seed data (see `docs/ARCHITECTURE.md`
   "Environments").
-- None of the Discover/Battle/Final/Feedback flows have been round-tripped
-  against live Supabase from this environment (sandboxed network blocks
-  `supabase.co`) — verified via lint/typecheck/build and local dev-server
-  smoke tests only. Please exercise the real flows on a phone against your
-  Supabase project before trusting them for the pilot.
+- None of the Discover/Battle/Final/Feedback/History flows have been
+  round-tripped against live Supabase from this environment (sandboxed
+  network blocks `supabase.co`) — verified via lint/typecheck/build,
+  local dev-server smoke tests, and a standalone check of the time-window
+  boundary logic only. Please exercise the real flows on a phone against
+  your Supabase project before trusting them for the pilot.

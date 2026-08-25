@@ -13,6 +13,7 @@ import {
 import { supabase } from "@/lib/supabase/client";
 import { trackEvent } from "@/lib/analytics";
 import { getDailyBattle, getFinalBattle, isBattleCompleted } from "@/lib/battle";
+import { getSlotAvailability } from "@/lib/schedule";
 
 interface SlotStatus {
   questionId: string | null;
@@ -231,28 +232,32 @@ export default function TripHomePage() {
         <p className="mt-1 text-slate-600">
           Ziua {day} din {trip.duration_days}
         </p>
+        <Link href={`/trip/${slug}/history`} className="mt-2 inline-block text-sm text-slate-500 underline">
+          Istoric întrebări și răspunsuri
+        </Link>
       </header>
 
       <section className="flex flex-col gap-4">
-        <SlotCard emoji="☀️" label="Dimineață" status={morningStatus} href={`/trip/${slug}/discover/morning`} />
-        <SlotCard emoji="🍉" label="Prânz" status={lunchStatus} href={`/trip/${slug}/discover/lunch`} />
+        <SlotCard
+          emoji="☀️"
+          label="Dimineață"
+          status={morningStatus}
+          href={`/trip/${slug}/discover/morning`}
+          scheduledSlot="morning"
+        />
+        <SlotCard
+          emoji="🍉"
+          label="Prânz"
+          status={lunchStatus}
+          href={`/trip/${slug}/discover/lunch`}
+          scheduledSlot="lunch"
+        />
         <div className="rounded-2xl border border-slate-200 px-5 py-4">
           <div className="flex items-center gap-2 text-lg font-medium">
             <span>🌙</span>
             <span>Battle</span>
           </div>
-          {!battleStatus.available ? (
-            <p className="mt-1 text-slate-500">Disponibil diseară</p>
-          ) : battleStatus.completed ? (
-            <p className="mt-1 text-emerald-600">✓ Completat</p>
-          ) : (
-            <Link
-              href={`/trip/${slug}/battle`}
-              className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white"
-            >
-              HAI LA BATTLE
-            </Link>
-          )}
+          <BattleAvailability status={battleStatus} slug={slug} />
         </div>
       </section>
 
@@ -344,12 +349,16 @@ function SlotCard({
   label,
   status,
   href,
+  scheduledSlot,
 }: {
   emoji: string;
   label: string;
   status: SlotStatus;
   href: string;
+  scheduledSlot: "morning" | "lunch";
 }) {
+  const availability = getSlotAvailability(scheduledSlot);
+
   return (
     <div className="rounded-2xl border border-slate-200 px-5 py-4">
       <div className="flex items-center gap-2 text-lg font-medium">
@@ -358,14 +367,42 @@ function SlotCard({
       </div>
       {status.completed ? (
         <p className="mt-1 text-emerald-600">✓ Completat</p>
-      ) : status.questionId ? (
+      ) : !status.questionId ? (
+        <p className="mt-1 text-slate-400">Conținutul nu e încă disponibil</p>
+      ) : availability.status === "before" ? (
+        <p className="mt-1 text-slate-500">Disponibil de la {availability.opensAt}</p>
+      ) : availability.status === "after" ? (
+        <p className="mt-1 text-slate-400">S-a încheiat pentru azi</p>
+      ) : (
         <Link href={href} className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white">
           DESCOPERĂ
         </Link>
-      ) : (
-        <p className="mt-1 text-slate-400">Conținutul nu e încă disponibil</p>
       )}
     </div>
+  );
+}
+
+function BattleAvailability({ status, slug }: { status: BattleStatus; slug: string }) {
+  if (!status.available) {
+    return <p className="mt-1 text-slate-500">Disponibil diseară</p>;
+  }
+  if (status.completed) {
+    return <p className="mt-1 text-emerald-600">✓ Completat</p>;
+  }
+  const availability = getSlotAvailability("battle");
+  if (availability.status === "before") {
+    return <p className="mt-1 text-slate-500">Disponibil de la {availability.opensAt}</p>;
+  }
+  if (availability.status === "after") {
+    return <p className="mt-1 text-slate-400">S-a încheiat pentru azi</p>;
+  }
+  return (
+    <Link
+      href={`/trip/${slug}/battle`}
+      className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white"
+    >
+      HAI LA BATTLE
+    </Link>
   );
 }
 

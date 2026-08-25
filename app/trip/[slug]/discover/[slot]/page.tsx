@@ -17,6 +17,7 @@ import {
 } from "@/lib/discover";
 import { trackEvent } from "@/lib/analytics";
 import type { QuestionSlot } from "@/lib/supabase/types";
+import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 
 type Step =
   | "loading"
@@ -25,6 +26,7 @@ type Step =
   | "reveal"
   | "extra"
   | "unavailable"
+  | "closed"
   | "not-joined"
   | "error";
 
@@ -51,6 +53,7 @@ export default function DiscoverPage() {
   const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [openedAt] = useState(() => Date.now());
+  const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,11 +102,20 @@ export default function DiscoverPage() {
         const assignedExtra = await getOrAssignExtra(profile.id, profile.role, content.question.id);
         setExtra(assignedExtra);
         setStep("extra");
+        return;
+      }
+
+      // Already-answered participants can always review (above); a fresh
+      // attempt is only allowed inside this slot's time window.
+      const availability = getSlotAvailability(discoverSlot);
+      if (availability.status !== "open") {
+        setClosedInfo(availability);
+        setStep("closed");
       } else {
         setStep("question");
       }
     },
-    [trip, content],
+    [trip, content, discoverSlot],
   );
 
   // Skip the "Cine răspunde?" screen when there's only one profile on
@@ -173,6 +185,20 @@ export default function DiscoverPage() {
     return (
       <Centered>
         <p>{SLOT_LABEL[discoverSlot] ?? "Acest moment"} nu e încă disponibil.</p>
+        <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
+          Înapoi acasă
+        </Link>
+      </Centered>
+    );
+  }
+  if (step === "closed") {
+    return (
+      <Centered>
+        {closedInfo?.status === "before" ? (
+          <p>{SLOT_LABEL[discoverSlot]} devine disponibil la {closedInfo.opensAt}.</p>
+        ) : (
+          <p>{SLOT_LABEL[discoverSlot]} s-a încheiat pentru azi.</p>
+        )}
         <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
           Înapoi acasă
         </Link>

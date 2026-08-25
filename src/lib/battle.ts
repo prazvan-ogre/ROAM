@@ -14,7 +14,7 @@ export interface BattleContent {
   questions: BattleQuestion[];
 }
 
-async function loadBattleContent(battle: Battle): Promise<BattleContent> {
+export async function loadBattleContent(battle: Battle): Promise<BattleContent> {
   const { data: questions, error: questionsError } = await supabase
     .from("questions")
     .select("*")
