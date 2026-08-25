@@ -60,6 +60,35 @@ export async function getOrCreateAdultParticipant(
   return created;
 }
 
+export interface ParticipantCounts {
+  adults: number;
+  children: number;
+}
+
+// Trip-wide counts for the dashboard (every device, not just this one) --
+// participants is publicly readable (docs/DATABASE.md), so this is a
+// plain count query, no RPC needed.
+export async function getParticipantCounts(tripId: string): Promise<ParticipantCounts> {
+  const [{ count: adults, error: adultsError }, { count: children, error: childrenError }] =
+    await Promise.all([
+      supabase
+        .from("participants")
+        .select("id", { count: "exact", head: true })
+        .eq("trip_id", tripId)
+        .eq("role", "adult"),
+      supabase
+        .from("participants")
+        .select("id", { count: "exact", head: true })
+        .eq("trip_id", tripId)
+        .eq("role", "child"),
+    ]);
+
+  if (adultsError) throw adultsError;
+  if (childrenError) throw childrenError;
+
+  return { adults: adults ?? 0, children: children ?? 0 };
+}
+
 export async function addChildProfile(
   tripId: string,
   managingAdultId: string,

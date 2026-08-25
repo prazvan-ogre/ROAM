@@ -30,6 +30,8 @@ export interface Database {
           language: string;
           start_date: string | null;
           duration_days: number;
+          destination: string | null;
+          location_info: string | null;
           is_active: boolean;
           is_demo: boolean;
           created_at: string;
