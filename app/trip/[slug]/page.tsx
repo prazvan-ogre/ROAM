@@ -1,0 +1,317 @@
+"use client";
+
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
+import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
+import {
+  listProfilesForDevice,
+  getOrCreateAdultParticipant,
+  addChildProfile,
+  type Participant,
+} from "@/lib/participant";
+import { supabase } from "@/lib/supabase/client";
+import { trackEvent } from "@/lib/analytics";
+
+interface SlotStatus {
+  questionId: string | null;
+  completed: boolean;
+}
+
+const EMPTY_STATUS: SlotStatus = { questionId: null, completed: false };
+
+export default function TripHomePage() {
+  const { slug } = useParams<{ slug: string }>();
+
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [profiles, setProfiles] = useState<Participant[]>([]);
+  const [joinName, setJoinName] = useState("");
+  const [joining, setJoining] = useState(false);
+  const [morningStatus, setMorningStatus] = useState<SlotStatus>(EMPTY_STATUS);
+  const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
+  const [showAddChild, setShowAddChild] = useState(false);
+  const [childName, setChildName] = useState("");
+  const [childAge, setChildAge] = useState("");
+
+  const loadProfiles = useCallback(async (tripId: string) => {
+    const list = await listProfilesForDevice(tripId);
+    setProfiles(list);
+    return list;
+  }, []);
+
+  const loadSlotStatus = useCallback(
+    async (tripId: string, day: number, profileIds: string[]) => {
+      const [{ data: morningQ }, { data: lunchQ }] = await Promise.all([
+        supabase
+          .from("questions")
+          .select("id")
+          .eq("trip_id", tripId)
+          .eq("kind", "discover")
+          .eq("day_number", day)
+          .eq("slot", "morning")
+          .maybeSingle(),
+        supabase
+          .from("questions")
+          .select("id")
+          .eq("trip_id", tripId)
+          .eq("kind", "discover")
+          .eq("day_number", day)
+          .eq("slot", "lunch")
+          .maybeSingle(),
+      ]);
+
+      async function isCompleted(questionId: string | undefined) {
+        if (!questionId || profileIds.length === 0) return false;
+        const { count } = await supabase
+          .from("responses")
+          .select("id", { count: "exact", head: true })
+          .eq("question_id", questionId)
+          .in("participant_id", profileIds);
+        return (count ?? 0) > 0;
+      }
+
+      const [morningDone, lunchDone] = await Promise.all([
+        isCompleted(morningQ?.id),
+        isCompleted(lunchQ?.id),
+      ]);
+
+      setMorningStatus({ questionId: morningQ?.id ?? null, completed: morningDone });
+      setLunchStatus({ questionId: lunchQ?.id ?? null, completed: lunchDone });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setLoadError(false);
+      try {
+        const t = await getTripBySlug(slug);
+        if (cancelled) return;
+        setTrip(t);
+        if (!t) return;
+        const list = await loadProfiles(t.id);
+        if (cancelled) return;
+        if (list.length > 0) {
+          await loadSlotStatus(t.id, currentTripDay(t), list.map((p) => p.id));
+        }
+      } catch {
+        if (!cancelled) setLoadError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, loadProfiles, loadSlotStatus]);
+
+  async function handleJoin(e: FormEvent) {
+    e.preventDefault();
+    if (!trip || !joinName.trim()) return;
+    setJoining(true);
+    try {
+      const adult = await getOrCreateAdultParticipant(trip.id, joinName.trim());
+      await trackEvent(trip.id, "trip_joined", adult.id);
+      const list = await loadProfiles(trip.id);
+      await loadSlotStatus(trip.id, currentTripDay(trip), list.map((p) => p.id));
+    } finally {
+      setJoining(false);
+    }
+  }
+
+  async function handleAddChild(e: FormEvent) {
+    e.preventDefault();
+    if (!trip || !childName.trim() || !childAge) return;
+    const adult = profiles.find((p) => p.role === "adult");
+    if (!adult) return;
+    await addChildProfile(trip.id, adult.id, childName.trim(), Number(childAge));
+    setChildName("");
+    setChildAge("");
+    setShowAddChild(false);
+    await loadProfiles(trip.id);
+  }
+
+  if (loading) {
+    return <CenteredMessage>Se încarcă...</CenteredMessage>;
+  }
+
+  if (loadError) {
+    return (
+      <CenteredMessage>
+        <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
+        <button onClick={() => window.location.reload()} className="mt-4 underline">
+          Încearcă din nou
+        </button>
+      </CenteredMessage>
+    );
+  }
+
+  if (!trip) {
+    return <CenteredMessage>Nu am găsit această călătorie.</CenteredMessage>;
+  }
+
+  if (profiles.length === 0) {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 px-6 py-12">
+        <div className="text-center">
+          <h1 className="text-3xl font-semibold uppercase tracking-wide">{trip.name}</h1>
+          <p className="mt-2 text-slate-600">Hai să descoperim {trip.name} împreună.</p>
+        </div>
+        <form onSubmit={handleJoin} className="flex flex-col gap-3">
+          <label className="text-sm font-medium text-slate-700" htmlFor="joinName">
+            Cum te numești?
+          </label>
+          <input
+            id="joinName"
+            className="rounded-xl border border-slate-300 px-4 py-3 text-lg"
+            value={joinName}
+            onChange={(e) => setJoinName(e.target.value)}
+            placeholder="Numele tău"
+            autoFocus
+          />
+          <button
+            type="submit"
+            disabled={joining || !joinName.trim()}
+            className="rounded-xl bg-slate-900 px-4 py-3 text-lg font-semibold text-white disabled:opacity-40"
+          >
+            {joining ? "..." : "ALĂTURĂ-TE"}
+          </button>
+        </form>
+      </main>
+    );
+  }
+
+  const day = currentTripDay(trip);
+  const daysToFinal = trip.duration_days - day;
+  const adult = profiles.find((p) => p.role === "adult");
+
+  return (
+    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-6 py-10">
+      <header className="text-center">
+        <h1 className="text-3xl font-bold uppercase tracking-wide">{trip.name}</h1>
+        <p className="mt-1 text-slate-600">
+          Ziua {day} din {trip.duration_days}
+        </p>
+      </header>
+
+      <section className="flex flex-col gap-4">
+        <SlotCard emoji="☀️" label="Dimineață" status={morningStatus} href={`/trip/${slug}/discover/morning`} />
+        <SlotCard emoji="🍉" label="Prânz" status={lunchStatus} href={`/trip/${slug}/discover/lunch`} />
+        <div className="rounded-2xl border border-slate-200 px-5 py-4">
+          <div className="flex items-center gap-2 text-lg font-medium">
+            <span>🌙</span>
+            <span>Battle</span>
+          </div>
+          <p className="mt-1 text-slate-500">Disponibil diseară</p>
+        </div>
+      </section>
+
+      <p className="text-center text-sm text-slate-500">
+        {daysToFinal > 0 ? `Final Battle în ${daysToFinal} zile` : "Final Battle azi"}
+      </p>
+
+      <section className="mt-auto flex flex-col gap-3 border-t border-slate-200 pt-6">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Profiluri</h2>
+        <ul className="flex flex-col gap-2">
+          {profiles.map((p) => (
+            <li
+              key={p.id}
+              className="flex items-center justify-between rounded-xl bg-slate-100 px-4 py-2"
+            >
+              <span>{p.display_name}</span>
+              <span className="text-xs uppercase text-slate-500">
+                {p.role === "adult" ? "Adult" : `Copil${p.age ? `, ${p.age}` : ""}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        {showAddChild ? (
+          <form onSubmit={handleAddChild} className="flex flex-col gap-2 rounded-xl bg-slate-50 p-4">
+            <input
+              className="rounded-lg border border-slate-300 px-3 py-2"
+              placeholder="Numele copilului"
+              value={childName}
+              onChange={(e) => setChildName(e.target.value)}
+            />
+            <input
+              className="rounded-lg border border-slate-300 px-3 py-2"
+              placeholder="Vârsta"
+              type="number"
+              min={0}
+              max={17}
+              value={childAge}
+              onChange={(e) => setChildAge(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <button type="submit" className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-white">
+                Adaugă
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddChild(false)}
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2"
+              >
+                Anulează
+              </button>
+            </div>
+          </form>
+        ) : (
+          adult && (
+            <button
+              onClick={() => setShowAddChild(true)}
+              className="rounded-xl border border-dashed border-slate-300 px-4 py-2 text-slate-600"
+            >
+              + Adaugă profil copil
+            </button>
+          )
+        )}
+      </section>
+    </main>
+  );
+}
+
+function SlotCard({
+  emoji,
+  label,
+  status,
+  href,
+}: {
+  emoji: string;
+  label: string;
+  status: SlotStatus;
+  href: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 px-5 py-4">
+      <div className="flex items-center gap-2 text-lg font-medium">
+        <span>{emoji}</span>
+        <span>{label}</span>
+      </div>
+      {status.completed ? (
+        <p className="mt-1 text-emerald-600">✓ Completat</p>
+      ) : status.questionId ? (
+        <Link href={href} className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white">
+          DESCOPERĂ
+        </Link>
+      ) : (
+        <p className="mt-1 text-slate-400">Conținutul nu e încă disponibil</p>
+      )}
+    </div>
+  );
+}
+
+function CenteredMessage({ children }: { children: ReactNode }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center px-6 text-center text-slate-600">
+      {children}
+    </main>
+  );
+}
