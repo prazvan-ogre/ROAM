@@ -22,9 +22,13 @@ alter table participants
   add column age smallint,
   add column managed_by_participant_id uuid references participants (id) on delete cascade;
 
+-- NOT VALID: skips checking pre-existing rows (safe against whatever
+-- test data already exists) while still enforcing for every future
+-- insert/update. Only relevant if the table is non-empty at apply time.
 alter table participants
   add constraint child_needs_manager
-    check (role <> 'child' or managed_by_participant_id is not null);
+    check (role <> 'child' or managed_by_participant_id is not null)
+    not valid;
 
 create index participants_managed_by_idx on participants (managed_by_participant_id);
 
@@ -52,9 +56,13 @@ alter table questions
   add column verified boolean not null default false,
   add column published boolean not null default false;
 
+-- NOT VALID: the previous seed content was 'discover'-kind with no slot
+-- (the column didn't exist yet), so validating against it here would
+-- fail. seed.sql replaces that content in the same pass anyway.
 alter table questions
   add constraint discover_needs_slot
-    check (kind <> 'discover' or slot is not null);
+    check (kind <> 'discover' or slot is not null)
+    not valid;
 
 -- Content integrity (spec section 13): unverified/unpublished content
 -- must never be served to participants. Replaces the earlier blanket
