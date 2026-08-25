@@ -8,12 +8,21 @@ import {
   listProfilesForDevice,
   getOrCreateAdultParticipant,
   addChildProfile,
+  getParticipantCounts,
   type Participant,
+  type ParticipantCounts,
 } from "@/lib/participant";
 import { supabase } from "@/lib/supabase/client";
 import { trackEvent } from "@/lib/analytics";
-import { getDailyBattle, getFinalBattle, isBattleCompleted } from "@/lib/battle";
-import { getSlotAvailability } from "@/lib/schedule";
+import {
+  getDailyBattle,
+  getFinalBattle,
+  isBattleCompleted,
+  getBattleLeaderboard,
+  getTripLeaderboard,
+} from "@/lib/battle";
+import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
+import type { BattleTeam } from "@/lib/supabase/types";
 
 interface SlotStatus {
   questionId: string | null;
@@ -27,6 +36,8 @@ interface BattleStatus {
 
 const EMPTY_STATUS: SlotStatus = { questionId: null, completed: false };
 const EMPTY_BATTLE_STATUS: BattleStatus = { available: false, completed: false };
+const EMPTY_SCORE: Record<BattleTeam, number> = { adults: 0, kids: 0 };
+const EMPTY_COUNTS: ParticipantCounts = { adults: 0, children: 0 };
 
 export default function TripHomePage() {
   const { slug } = useParams<{ slug: string }>();
@@ -41,6 +52,9 @@ export default function TripHomePage() {
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [finalStatus, setFinalStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
+  const [dailyScore, setDailyScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
+  const [tripScore, setTripScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
+  const [participantCounts, setParticipantCounts] = useState<ParticipantCounts>(EMPTY_COUNTS);
   const [showAddChild, setShowAddChild] = useState(false);
   const [childName, setChildName] = useState("");
   const [childAge, setChildAge] = useState("");
@@ -106,6 +120,17 @@ export default function TripHomePage() {
 
     setBattleStatus({ available: !!daily && daily.questions.length > 0, completed: dailyCompleted });
     setFinalStatus({ available: !!final && final.questions.length > 0, completed: finalCompleted });
+
+    const [dailyLeaderboard, tripLeaderboard] = await Promise.all([
+      daily ? getBattleLeaderboard(daily.battle.id) : Promise.resolve(EMPTY_SCORE),
+      getTripLeaderboard(tripId),
+    ]);
+    setDailyScore(dailyLeaderboard);
+    setTripScore(tripLeaderboard);
+  }, []);
+
+  const loadParticipantCounts = useCallback(async (tripId: string) => {
+    setParticipantCounts(await getParticipantCounts(tripId));
   }, []);
 
   useEffect(() => {
@@ -120,6 +145,8 @@ export default function TripHomePage() {
         setTrip(t);
         if (!t) return;
         const list = await loadProfiles(t.id);
+        if (cancelled) return;
+        await loadParticipantCounts(t.id);
         if (cancelled) return;
         if (list.length > 0) {
           const day = currentTripDay(t);
@@ -139,7 +166,7 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus]);
+  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus, loadParticipantCounts]);
 
   async function handleJoin(e: FormEvent) {
     e.preventDefault();
@@ -153,6 +180,7 @@ export default function TripHomePage() {
       await Promise.all([
         loadSlotStatus(trip.id, day, list.map((p) => p.id)),
         loadBattleStatus(trip.id, day),
+        loadParticipantCounts(trip.id),
       ]);
     } finally {
       setJoining(false);
@@ -236,6 +264,15 @@ export default function TripHomePage() {
           Istoric întrebări și răspunsuri
         </Link>
       </header>
+
+      <Dashboard
+        trip={trip}
+        day={day}
+        daysToFinal={daysToFinal}
+        counts={participantCounts}
+        dailyScore={dailyScore}
+        tripScore={tripScore}
+      />
 
       <section className="flex flex-col gap-4">
         <SlotCard
@@ -341,6 +378,86 @@ export default function TripHomePage() {
         )}
       </section>
     </main>
+  );
+}
+
+function Dashboard({
+  trip,
+  day,
+  daysToFinal,
+  counts,
+  dailyScore,
+  tripScore,
+}: {
+  trip: Trip;
+  day: number;
+  daysToFinal: number;
+  counts: ParticipantCounts;
+  dailyScore: Record<BattleTeam, number>;
+  tripScore: Record<BattleTeam, number>;
+}) {
+  const daysPassed = Math.max(day - 1, 0);
+
+  return (
+    <section className="flex flex-col gap-3 rounded-2xl border border-slate-200 px-5 py-4">
+      {(trip.destination || trip.location_info) && (
+        <div>
+          {trip.destination && <p className="font-medium">📍 {trip.destination}</p>}
+          {trip.location_info && <p className="mt-1 text-sm text-slate-600">{trip.location_info}</p>}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 text-center">
+        <Stat label="Participanți" value={`${counts.adults} adulți, ${counts.children} copii`} />
+        <Stat label="Zile" value={`${daysPassed} trecute · ${Math.max(daysToFinal, 0)} rămase`} />
+        <Stat label="Scorul zilei" value={`${dailyScore.adults} — ${dailyScore.kids}`} />
+        <Stat label="Scor general" value={`${tripScore.adults} — ${tripScore.kids}`} />
+      </div>
+
+      <NextChallengeCountdown />
+    </section>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-2">
+      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 font-medium">{value}</p>
+    </div>
+  );
+}
+
+const COUNTDOWN_SLOT_LABEL: Record<string, string> = {
+  morning: "Dimineață",
+  lunch: "Prânz",
+  battle: "Battle",
+};
+
+function NextChallengeCountdown() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const next = getNextWindowOpening(now);
+  const totalSeconds = Math.max(0, Math.floor((next.opensAt.getTime() - now.getTime()) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+
+  return (
+    <div className="text-center">
+      <p className="text-xs uppercase tracking-wide text-slate-500">
+        Următorul challenge: {COUNTDOWN_SLOT_LABEL[next.slot]}
+      </p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">
+        {pad(hours)}:{pad(minutes)}:{pad(seconds)}
+      </p>
+    </div>
   );
 }
 

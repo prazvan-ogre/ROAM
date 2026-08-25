@@ -53,3 +53,33 @@ export function getSlotAvailability(slot: ScheduledSlot, now: Date = new Date())
     closesAt: formatTime(w.endHour, w.endMinute),
   };
 }
+
+const SLOT_ORDER: ScheduledSlot[] = ["morning", "lunch", "battle"];
+
+export interface NextWindow {
+  slot: ScheduledSlot;
+  opensAt: Date;
+}
+
+// The next window to *open* -- if we're currently inside one, that one
+// doesn't count (it's already open), so this always points strictly
+// forward. Wraps to tomorrow's Morning once Battle's start has passed.
+export function getNextWindowOpening(now: Date = new Date()): NextWindow {
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  for (const slot of SLOT_ORDER) {
+    const w = WINDOWS[slot];
+    const startMinutes = w.startHour * 60 + w.startMinute;
+    if (nowMinutes < startMinutes) {
+      const opensAt = new Date(now);
+      opensAt.setHours(w.startHour, w.startMinute, 0, 0);
+      return { slot, opensAt };
+    }
+  }
+
+  const morning = WINDOWS.morning;
+  const opensAt = new Date(now);
+  opensAt.setDate(opensAt.getDate() + 1);
+  opensAt.setHours(morning.startHour, morning.startMinute, 0, 0);
+  return { slot: "morning", opensAt };
+}
