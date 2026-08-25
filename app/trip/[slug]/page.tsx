@@ -7,11 +7,11 @@ import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import {
   listProfilesForDevice,
   getOrCreateAdultParticipant,
-  addChildProfile,
   getParticipantCounts,
   type Participant,
   type ParticipantCounts,
 } from "@/lib/participant";
+import { TripNav } from "@/components/TripNav";
 import { supabase } from "@/lib/supabase/client";
 import { trackEvent } from "@/lib/analytics";
 import {
@@ -55,9 +55,6 @@ export default function TripHomePage() {
   const [dailyScore, setDailyScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
   const [tripScore, setTripScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
   const [participantCounts, setParticipantCounts] = useState<ParticipantCounts>(EMPTY_COUNTS);
-  const [showAddChild, setShowAddChild] = useState(false);
-  const [childName, setChildName] = useState("");
-  const [childAge, setChildAge] = useState("");
 
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
@@ -187,18 +184,6 @@ export default function TripHomePage() {
     }
   }
 
-  async function handleAddChild(e: FormEvent) {
-    e.preventDefault();
-    if (!trip || !childName.trim() || !childAge) return;
-    const adult = profiles.find((p) => p.role === "adult");
-    if (!adult) return;
-    await addChildProfile(trip.id, adult.id, childName.trim(), Number(childAge));
-    setChildName("");
-    setChildAge("");
-    setShowAddChild(false);
-    await loadProfiles(trip.id);
-  }
-
   if (loading) {
     return <CenteredMessage>Se încarcă...</CenteredMessage>;
   }
@@ -251,7 +236,6 @@ export default function TripHomePage() {
 
   const day = currentTripDay(trip);
   const daysToFinal = trip.duration_days - day;
-  const adult = profiles.find((p) => p.role === "adult");
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-6 py-10">
@@ -260,9 +244,6 @@ export default function TripHomePage() {
         <p className="mt-1 text-slate-600">
           Ziua {day} din {trip.duration_days}
         </p>
-        <Link href={`/trip/${slug}/history`} className="mt-2 inline-block text-sm text-slate-500 underline">
-          Istoric întrebări și răspunsuri
-        </Link>
       </header>
 
       <Dashboard
@@ -320,63 +301,7 @@ export default function TripHomePage() {
         </p>
       )}
 
-      <section className="mt-auto flex flex-col gap-3 border-t border-slate-200 pt-6">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Profiluri</h2>
-        <ul className="flex flex-col gap-2">
-          {profiles.map((p) => (
-            <li
-              key={p.id}
-              className="flex items-center justify-between rounded-xl bg-slate-100 px-4 py-2"
-            >
-              <span>{p.display_name}</span>
-              <span className="text-xs uppercase text-slate-500">
-                {p.role === "adult" ? "Adult" : `Copil${p.age ? `, ${p.age}` : ""}`}
-              </span>
-            </li>
-          ))}
-        </ul>
-
-        {showAddChild ? (
-          <form onSubmit={handleAddChild} className="flex flex-col gap-2 rounded-xl bg-slate-50 p-4">
-            <input
-              className="rounded-lg border border-slate-300 px-3 py-2"
-              placeholder="Numele copilului"
-              value={childName}
-              onChange={(e) => setChildName(e.target.value)}
-            />
-            <input
-              className="rounded-lg border border-slate-300 px-3 py-2"
-              placeholder="Vârsta"
-              type="number"
-              min={0}
-              max={17}
-              value={childAge}
-              onChange={(e) => setChildAge(e.target.value)}
-            />
-            <div className="flex gap-2">
-              <button type="submit" className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-white">
-                Adaugă
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowAddChild(false)}
-                className="flex-1 rounded-lg border border-slate-300 px-3 py-2"
-              >
-                Anulează
-              </button>
-            </div>
-          </form>
-        ) : (
-          adult && (
-            <button
-              onClick={() => setShowAddChild(true)}
-              className="rounded-xl border border-dashed border-slate-300 px-4 py-2 text-slate-600"
-            >
-              + Adaugă profil copil
-            </button>
-          )
-        )}
-      </section>
+      <TripNav slug={slug} />
     </main>
   );
 }
