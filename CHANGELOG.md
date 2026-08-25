@@ -16,7 +16,10 @@
 - Trip join flow: adult profile creation, child profile management, all
   device-based (no login).
 - Home screen: day-of-trip, Morning/Lunch/Battle status, Final Battle
-  countdown.
+  countdown, and (product owner request) a dashboard section — trip
+  location blurb, all-device participant counts (adults/kids), days
+  passed/remaining, today's and the trip's cumulative Parents-vs-Kids
+  score, and a live countdown to the next challenge window.
 - Full Discover interaction: profile picker ("Cine răspunde?"), question,
   answer submission, reveal (with per-question reveal-message pools),
   Common Core, One Thing, personal Extra assignment (load-balanced across
