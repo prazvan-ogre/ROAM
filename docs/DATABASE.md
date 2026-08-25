@@ -44,8 +44,8 @@ Everything else maps 1:1 to the spec's entity list.
 | `participants` | One row per profile (adult *or* child) on a trip. Child rows set `managed_by_participant_id` + `age` and share the managing adult's `device_id`. |
 | `extra_assignments` | Which Extra a participant was assigned, and its viewed/completed status. |
 | `responses` | A participant's answer to a Discover or Battle question. |
-| `battle_scores` | Per-battle score rows, tagged by `team` (`adults`/`kids`) and/or participant. |
-| `feedback` | End-of-trip rating/comment. |
+| `battle_scores` | Per-question team result rows (`team`: adults/kids, `score`: 1 or 0), summed for the "PĂRINȚI 2 — COPII 1" tally. Publicly readable — see point 4 below. |
+| `feedback` | The 6-question end-of-trip survey from spec section 20 (`learned_new`, `generated_conversations`, `searched_more`, `anticipated_next`, `would_use_again`, `comment`). |
 | `analytics_events` | Product analytics events (see `src/lib/analytics.ts` for the event list). |
 
 ## Content integrity (spec section 13)
@@ -74,19 +74,20 @@ Row Level Security is the actual access boundary:
    survive a refresh**: `responses` and `extra_assignments` allow
    `select` (in addition to `insert`) so a device can reload and see its
    own prior answers/assigned Extra without losing progress (spec section
-   29). `battle_scores`, `feedback`, and `analytics_events` stay
-   insert-only — nothing reads them back directly (see point 4 for how
-   aggregate battle scores are still shown).
+   29). `feedback` and `analytics_events` stay insert-only — nothing
+   reads them back (the client tracks "already gave feedback" itself, in
+   `localStorage`, rather than round-tripping a personal survey response).
 3. **Protected**: `SUPABASE_SERVICE_ROLE_KEY` is required to write content
    or to run migrations. It lives only in Vercel's server-side env vars
    and GitHub Actions secrets, never in `NEXT_PUBLIC_*` vars.
-4. **Avoiding cross-participant exposure**: raw `battle_scores` rows are
-   not selectable by anon, so no device can read another participant's
-   score. Aggregates are exposed through two `SECURITY DEFINER`
-   functions: `battle_leaderboard(battle_id)` (one battle's team totals)
-   and `trip_battle_leaderboard(trip_id)` (the cumulative "PĂRINȚI 2 —
-   COPII 1" trip-level tally from spec section 17) — both return team
-   totals only, never individual rows.
+4. **`battle_scores` is publicly readable, unlike the other activity
+   tables** — deliberately. A row is a team's result on one question
+   (`team`, `score`), never an individual's, so there's no participant to
+   protect (spec section 17: "no individual scoring"); every device needs
+   to show the running "PĂRINȚI 2 — COPII 1" tally without waiting on a
+   fresh aggregate call. Two `SECURITY DEFINER` functions still exist for
+   convenience: `battle_leaderboard(battle_id)` (one battle's totals) and
+   `trip_battle_leaderboard(trip_id)` (the trip-wide tally).
    Note: because `responses`/`extra_assignments`/`participants` are
    select-able by anyone (point 2 and point 5), and `participants` is
    itself public, a device that already knows another participant's id
@@ -110,6 +111,7 @@ Row Level Security is the actual access boundary:
 - `supabase/migrations/20260825090000_initial_schema.sql` — content tables + RLS.
 - `supabase/migrations/20260825090100_activity_tables.sql` — activity tables + RLS + `battle_leaderboard()`.
 - `supabase/migrations/20260825120000_profiles_and_content_model.sql` — child profiles (`age`, `managed_by_participant_id`), the full Discover/Extra content shape, verified+published gating, and `trip_battle_leaderboard()`.
+- `supabase/migrations/20260825140000_feedback_form.sql` — the real 6-question feedback shape, and public read on `battle_scores`.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`
