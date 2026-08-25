@@ -40,10 +40,16 @@
   Morning 07:00-11:59, Lunch 12:00-17:00, Battle 19:00-23:00, device local
   time. Enforced on the Home screen and on direct page access alike;
   already-answered content stays reviewable outside its window.
-- History page (`/trip/[slug]/history`, product owner request): every
-  published Discover question so far with the correct answer, One Thing,
-  and each profile's own answer, plus every played Battle's questions and
-  score.
+- History page (product owner request): every published Discover question
+  so far with the correct answer, One Thing, and each profile's own
+  answer, plus every played Battle's questions and score.
+- Restructured into 3 hub pages with a shared bottom nav (product owner
+  request): Dashboard (`/trip/[slug]` — stats + today's actions, unchanged
+  from above), Întrebări (`/trip/[slug]/questions` — replaces the History
+  page with a day-by-day tab browser; rows are collapsed by default and
+  click-to-expand into the answer/Common Core/One Thing/battle result),
+  and Utilizatori (`/trip/[slug]/users` — profile list + add-child, moved
+  off the Dashboard into its own page).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
@@ -55,8 +61,8 @@
 - Single Supabase project shared across preview and production, only
   scoped apart by `is_demo` on seed data (see `docs/ARCHITECTURE.md`
   "Environments").
-- None of the Discover/Battle/Final/Feedback/History flows have been
-  round-tripped against live Supabase from this environment (sandboxed
+- None of the Discover/Battle/Final/Feedback/Questions/Users flows have
+  been round-tripped against live Supabase from this environment (sandboxed
   network blocks `supabase.co`) — verified via lint/typecheck/build,
   local dev-server smoke tests, and a standalone check of the time-window
   boundary logic only. Please exercise the real flows on a phone against
