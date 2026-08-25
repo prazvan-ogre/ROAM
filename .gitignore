@@ -1,0 +1,42 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+build/
+dist/
+
+# environment variables (never commit real secrets)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# supabase local runtime
+supabase/.branches
+supabase/.temp
+
+# testing / coverage
+coverage/
+
+# logs
+*.log
+npm-debug.log*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
