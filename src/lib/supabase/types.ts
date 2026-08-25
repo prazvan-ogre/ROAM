@@ -6,6 +6,9 @@
 export type ParticipantRole = "adult" | "child";
 export type QuestionKind = "discover" | "battle";
 export type QuestionType = "single_choice" | "multi_choice" | "text";
+export type QuestionSlot = "morning" | "lunch";
+export type ExtraType = "know" | "think" | "connect" | "ask" | "explore";
+export type ExtraAudience = "all" | "adult" | "child";
 export type AssignmentStatus = "assigned" | "viewed" | "completed";
 export type BattleTeam = "adults" | "kids";
 
@@ -53,11 +56,19 @@ export interface Database {
           battle_id: string | null;
           kind: QuestionKind;
           day_number: number | null;
+          slot: QuestionSlot | null;
           order_index: number;
           prompt: string;
           question_type: QuestionType;
           media_url: string | null;
           points: number;
+          common_core: string | null;
+          one_thing: string | null;
+          correct_reveal_message: string | null;
+          alternative_reveal_message: string | null;
+          sources: unknown[];
+          verified: boolean;
+          published: boolean;
           is_active: boolean;
           created_at: string;
         },
@@ -78,11 +89,17 @@ export interface Database {
         {
           id: string;
           trip_id: string;
+          question_id: string | null;
           day_number: number | null;
           title: string;
           description: string | null;
           media_url: string | null;
           order_index: number;
+          extra_type: ExtraType | null;
+          audience: ExtraAudience;
+          sources: unknown[];
+          verified: boolean;
+          published: boolean;
           is_active: boolean;
           created_at: string;
         },
@@ -93,6 +110,7 @@ export interface Database {
           id: string;
           trip_id: string;
           extra_id: string | null;
+          question_id: string | null;
           title: string;
           url: string;
           description: string | null;
@@ -108,6 +126,8 @@ export interface Database {
           device_id: string;
           display_name: string;
           role: ParticipantRole;
+          age: number | null;
+          managed_by_participant_id: string | null;
           created_at: string;
           last_seen_at: string;
         },
@@ -175,6 +195,10 @@ export interface Database {
     Functions: {
       battle_leaderboard: {
         Args: { p_battle_id: string };
+        Returns: { team: BattleTeam; total_score: number }[];
+      };
+      trip_battle_leaderboard: {
+        Args: { p_trip_id: string };
         Returns: { team: BattleTeam; total_score: number }[];
       };
     };
