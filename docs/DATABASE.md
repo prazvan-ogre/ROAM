@@ -16,9 +16,11 @@ adding safety or clarity:
   One table means one place to fetch/render/validate a question.
 - **`answer_options`** is unchanged, but now references `questions.id`
   generically instead of two separate question tables.
-- **`profiles` is folded into `participants.role`** (`'adult' | 'child'`).
-  A "profile" in the spec is just the role a participant picked when
-  joining — it doesn't need its own row/table.
+- **`profiles` is folded into `participants`**, using `role`
+  (`'adult' | 'child'`) plus `age` and `managed_by_participant_id` for
+  children. Per spec section 4, an adult participant *is* its own adult
+  profile; a child profile is just another `participants` row managed by
+  one, sharing the adult's `device_id` (a child has no device of its own).
 
 Everything else maps 1:1 to the spec's entity list.
 
@@ -30,21 +32,32 @@ Everything else maps 1:1 to the spec's entity list.
 |---|---|
 | `trips` | One row per pilot trip (e.g. Kassandra 2026). `is_demo` flags seed/demo trips. |
 | `battles` | A themed group of Battle questions for a given day; `is_final` marks the Final Battle. |
-| `questions` | Discover or Battle questions (`kind` discriminates). `battle_id` set only for `kind='battle'`. |
+| `questions` | Discover or Battle questions (`kind` discriminates). `battle_id`/`slot` set only for their respective kind. Carries the full Discover content shape: `common_core`, `one_thing`, `correct_reveal_message`/`alternative_reveal_message`, `sources`, `verified`, `published`. |
 | `answer_options` | Options for a question; `is_correct` marks the right one(s). |
-| `extras` | Per-day bonus content/tasks. |
-| `explore_links` | External links (maps, articles) surfaced per trip/extra. |
+| `extras` | Bonus content tied to one Discover question (`question_id`), typed (`extra_type`: know/think/connect/ask/explore) and scoped by `audience` (all/adult/child). Also carries `sources`/`verified`/`published`. |
+| `explore_links` | External "rabbit hole" links, attached to a question and/or an extra. |
 
-### Activity (participant-generated, anon-writable, not anon-readable)
+### Activity (participant-generated, anon-writable, mostly anon-readable)
 
 | Table | Purpose |
 |---|---|
-| `participants` | One row per device that joined a trip. `device_id` is client-generated (see below). |
-| `extra_assignments` | Tracks which participant has seen/completed which Extra. |
+| `participants` | One row per profile (adult *or* child) on a trip. Child rows set `managed_by_participant_id` + `age` and share the managing adult's `device_id`. |
+| `extra_assignments` | Which Extra a participant was assigned, and its viewed/completed status. |
 | `responses` | A participant's answer to a Discover or Battle question. |
 | `battle_scores` | Per-battle score rows, tagged by `team` (`adults`/`kids`) and/or participant. |
 | `feedback` | End-of-trip rating/comment. |
 | `analytics_events` | Product analytics events (see `src/lib/analytics.ts` for the event list). |
+
+## Content integrity (spec section 13)
+
+`questions` and `extras` are only served to participants when
+**both** `verified = true` **and** `published = true` — enforced in RLS
+(`select` policies check both flags), not just in application code, so a
+direct API call can't see draft content either. Everything seeded is
+deliberately left `verified = false`: only a human fact-check + approval
+pass may flip that flag (see `supabase/seed.sql` for the exact `update`
+statements to run once content is reviewed). An AI assistant authoring a
+migration is not that pass.
 
 ## Security model (RLS)
 
@@ -52,22 +65,34 @@ There is **no Supabase Auth** — the app uses only the `anon` key, and the
 `service_role` key never reaches the client (it's a CI/admin-only secret).
 Row Level Security is the actual access boundary:
 
-1. **Public-readable**: all content tables, in full. Anyone with the anon
-   key can read every question, extra, and battle. This is intentional —
-   the app has no login, so content has to be fetched without one.
-2. **Anon-writable**: activity tables accept `insert` from anyone (no
-   `select`, `update`, or `delete`, except `participants` — see below).
-   A device can record its own answers/feedback/events but can never read
-   another device's raw rows back.
+1. **Public-readable**: content tables, but only rows with
+   `verified = true and published = true` (see "Content integrity" above).
+   Anyone with the anon key can read every *published* question, extra,
+   and battle — the app has no login, so content has to be fetched
+   without one — but never draft/unreviewed content.
+2. **Anon-writable, and anon-readable where the product needs state to
+   survive a refresh**: `responses` and `extra_assignments` allow
+   `select` (in addition to `insert`) so a device can reload and see its
+   own prior answers/assigned Extra without losing progress (spec section
+   29). `battle_scores`, `feedback`, and `analytics_events` stay
+   insert-only — nothing reads them back directly (see point 4 for how
+   aggregate battle scores are still shown).
 3. **Protected**: `SUPABASE_SERVICE_ROLE_KEY` is required to write content
    or to run migrations. It lives only in Vercel's server-side env vars
    and GitHub Actions secrets, never in `NEXT_PUBLIC_*` vars.
 4. **Avoiding cross-participant exposure**: raw `battle_scores` rows are
    not selectable by anon, so no device can read another participant's
-   score. Where an aggregate needs to be shown (e.g. "Kids: 40, Parents:
-   35"), it's exposed through a `SECURITY DEFINER` function,
-   `battle_leaderboard(battle_id)`, which returns team totals only — never
-   individual rows.
+   score. Aggregates are exposed through two `SECURITY DEFINER`
+   functions: `battle_leaderboard(battle_id)` (one battle's team totals)
+   and `trip_battle_leaderboard(trip_id)` (the cumulative "PĂRINȚI 2 —
+   COPII 1" trip-level tally from spec section 17) — both return team
+   totals only, never individual rows.
+   Note: because `responses`/`extra_assignments`/`participants` are
+   select-able by anyone (point 2 and point 5), and `participants` is
+   itself public, a device that already knows another participant's id
+   could technically look up their answers or assigned Extra directly via
+   the API — the UI never offers this, and it's the same accepted-risk
+   tradeoff as point 5 below, not a new one.
 5. **`participants` is the one deliberate exception**: it's both publicly
    readable (needed to show "who's playing" / names on a leaderboard) and
    publicly *updatable* (`using (true)`). Because there's no auth, RLS
@@ -84,6 +109,7 @@ Row Level Security is the actual access boundary:
 
 - `supabase/migrations/20260825090000_initial_schema.sql` — content tables + RLS.
 - `supabase/migrations/20260825090100_activity_tables.sql` — activity tables + RLS + `battle_leaderboard()`.
+- `supabase/migrations/20260825120000_profiles_and_content_model.sql` — child profiles (`age`, `managed_by_participant_id`), the full Discover/Extra content shape, verified+published gating, and `trip_battle_leaderboard()`.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`
@@ -101,11 +127,14 @@ supabase db push
 
 ## Seed data
 
-`supabase/seed.sql` creates a demo **Kassandra 2026** trip (`ro`, 5 days)
-with placeholder questions/extras/battle content, clearly prefixed
-`[demo]` and flagged `is_demo = true`. It's idempotent (deletes and
-recreates the `kassandra-2026` trip by slug) — safe to re-run locally.
+`supabase/seed.sql` creates the **Kassandra 2026** trip (`ro`, 5 days)
+with Day 1 written as real draft content in the ROAM voice (spec section
+36.1) — not throwaway placeholder text — but left `verified = false`,
+`published = false` per the content-integrity rule above. It's idempotent
+(deletes and recreates the `kassandra-2026` trip by slug) — safe to
+re-run locally. The file's header comment has the exact `update`
+statements to run once Day 1 is fact-checked and approved.
 
-**Do not run it against production** unless you intend to load/replace
-demo content there. Real pilot content should be entered directly (via
-Studio or a real content migration), not derived from the seed file.
+**Do not re-run it against production** once real pilot activity
+(participants/responses) exists for this trip — it deletes the trip.
+Days 2–5 still need their content authored the same way before the pilot.
