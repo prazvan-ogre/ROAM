@@ -138,6 +138,11 @@
   open/closed/winner/tie-break logic and the cascade-delete of a
   participant's vote against seeded `prize_votes` rows at different
   timestamps on the same scratch local Postgres.
+- The Dashboard's Final Battle card now only appears on the trip's last
+  day (product owner request) — `getFinalBattle` isn't even fetched on
+  earlier days, which show the "Final Battle în X zile" countdown line
+  instead. Previously it was fetched and shown as soon as the Final Battle
+  content existed in the database, regardless of the current day.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

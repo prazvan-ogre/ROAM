@@ -86,10 +86,10 @@ export default function TripHomePage() {
     [],
   );
 
-  const loadBattleStatus = useCallback(async (tripId: string, day: number) => {
+  const loadBattleStatus = useCallback(async (tripId: string, day: number, isLastDay: boolean) => {
     const [daily, final] = await Promise.all([
       getDailyBattle(tripId, day),
-      getFinalBattle(tripId),
+      isLastDay ? getFinalBattle(tripId) : Promise.resolve(null),
     ]);
 
     const [dailyCompleted, finalCompleted] = await Promise.all([
@@ -118,7 +118,7 @@ export default function TripHomePage() {
           const day = currentTripDay(t);
           await Promise.all([
             loadSlotStatus(t.id, day, list.map((p) => p.id)),
-            loadBattleStatus(t.id, day),
+            loadBattleStatus(t.id, day, day >= t.duration_days),
           ]);
         }
       } catch {
@@ -140,7 +140,7 @@ export default function TripHomePage() {
     const day = currentTripDay(trip);
     await Promise.all([
       loadSlotStatus(trip.id, day, list.map((p) => p.id)),
-      loadBattleStatus(trip.id, day),
+      loadBattleStatus(trip.id, day, day >= trip.duration_days),
     ]);
   }
 
@@ -242,28 +242,30 @@ export default function TripHomePage() {
         </div>
       </section>
 
-      {finalStatus.available ? (
-        <div className="rounded-[20px] border border-border bg-card p-5 text-center shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
-          <p className="mb-3 flex items-center justify-center gap-2 text-[17px] font-semibold text-foreground">
-            <Trophy size={18} className="text-primary" /> Final Battle
-          </p>
-          {finalStatus.completed ? (
-            <Link href={`/trip/${slug}/final`} className="inline-flex items-center gap-1 text-[15px] font-medium text-primary underline">
-              <Check size={14} /> Completat — vezi rezultatul
-            </Link>
-          ) : (
-            <Link
-              href={`/trip/${slug}/final`}
-              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-[14px] text-[15px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98]"
-            >
-              HAI LA FINALĂ
-            </Link>
-          )}
-        </div>
+      {day >= trip.duration_days ? (
+        finalStatus.available ? (
+          <div className="rounded-[20px] border border-border bg-card p-5 text-center shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
+            <p className="mb-3 flex items-center justify-center gap-2 text-[17px] font-semibold text-foreground">
+              <Trophy size={18} className="text-primary" /> Final Battle
+            </p>
+            {finalStatus.completed ? (
+              <Link href={`/trip/${slug}/final`} className="inline-flex items-center gap-1 text-[15px] font-medium text-primary underline">
+                <Check size={14} /> Completat — vezi rezultatul
+              </Link>
+            ) : (
+              <Link
+                href={`/trip/${slug}/final`}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-[14px] text-[15px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98]"
+              >
+                HAI LA FINALĂ
+              </Link>
+            )}
+          </div>
+        ) : (
+          <p className="text-center text-[13px] text-muted-foreground">Final Battle azi</p>
+        )
       ) : (
-        <p className="text-center text-[13px] text-muted-foreground">
-          {daysToFinal > 0 ? `Final Battle în ${daysToFinal} zile` : "Final Battle azi"}
-        </p>
+        <p className="text-center text-[13px] text-muted-foreground">Final Battle în {daysToFinal} zile</p>
       )}
 
       <TripNav slug={slug} />
