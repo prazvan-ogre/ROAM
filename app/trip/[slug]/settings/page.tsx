@@ -13,6 +13,7 @@ import {
   type Participant,
 } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
+import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 
@@ -36,6 +37,7 @@ export default function SettingsPage() {
   const [childName, setChildName] = useState("");
   const [childAge, setChildAge] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
 
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
@@ -52,7 +54,7 @@ export default function SettingsPage() {
         if (cancelled || !t) return;
         setTrip(t);
 
-        const list = await loadProfiles(t.id);
+        const [list] = await Promise.all([loadProfiles(t.id), getPrizeStatus(t.id).then(setPrizeStatus)]);
         if (cancelled) return;
         setStep(list.length === 0 ? "not-joined" : "ready");
       } catch {
@@ -71,7 +73,7 @@ export default function SettingsPage() {
     if (!trip || !childName.trim() || !childAge) return;
     const adult = profiles.find((p) => p.role === "adult");
     if (!adult) return;
-    await addChildProfile(trip.id, adult.id, childName.trim(), Number(childAge));
+    await addChildProfile(trip.id, childName.trim(), Number(childAge), adult.id);
     setChildName("");
     setChildAge("");
     setShowAddChild(false);
@@ -132,7 +134,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {tab === "config" && trip && <ConfigSection trip={trip} />}
+      {tab === "config" && trip && <ConfigSection trip={trip} prizeStatus={prizeStatus} />}
 
       {tab === "users" && (
         <UsersSection
@@ -160,7 +162,15 @@ export default function SettingsPage() {
   );
 }
 
-function ConfigSection({ trip }: { trip: Trip }) {
+function ConfigSection({ trip, prizeStatus }: { trip: Trip; prizeStatus: PrizeStatus | null }) {
+  const prizeValue = !prizeStatus
+    ? "Se încarcă..."
+    : prizeStatus.options.length === 0
+      ? "Nu a fost stabilit încă"
+      : !prizeStatus.votingOpen && prizeStatus.winner
+        ? prizeStatus.winner.title
+        : "Se stabilește prin vot (fiecare participant votează la înscriere)";
+
   return (
     <div className="flex flex-col gap-3">
       <ConfigRow icon={<MapPin size={17} />} label="Destinație" value={trip.destination ?? "Nesetată"} />
@@ -169,11 +179,7 @@ function ConfigSection({ trip }: { trip: Trip }) {
         label="Durata competiției"
         value={`${trip.duration_days} zile`}
       />
-      <ConfigRow
-        icon={<Trophy size={17} />}
-        label="Premiul competiției"
-        value={trip.prize ?? "Nu a fost stabilit încă"}
-      />
+      <ConfigRow icon={<Trophy size={17} />} label="Premiul competiției" value={prizeValue} />
     </div>
   );
 }

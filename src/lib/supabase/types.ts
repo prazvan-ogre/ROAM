@@ -186,6 +186,27 @@ export interface Database {
         },
         "trip_id"
       >;
+      prize_options: TableDef<
+        {
+          id: string;
+          trip_id: string;
+          title: string;
+          description: string | null;
+          order_index: number;
+          created_at: string;
+        },
+        "trip_id" | "title"
+      >;
+      prize_votes: TableDef<
+        {
+          id: string;
+          trip_id: string;
+          prize_option_id: string;
+          participant_id: string;
+          created_at: string;
+        },
+        "trip_id" | "prize_option_id" | "participant_id"
+      >;
       analytics_events: TableDef<
         {
           id: string;

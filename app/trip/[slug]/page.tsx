@@ -1,15 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { MapPin, Sun, Utensils, Moon, Check, ArrowRight, Clock, Trophy } from "lucide-react";
+import { Sun, Utensils, Moon, Check, Clock, Trophy } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, getOrCreateAdultParticipant, type Participant } from "@/lib/participant";
+import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
-import { Btn, Centered } from "@/components/ui";
+import { OnboardingWizard } from "@/components/OnboardingWizard";
+import { Centered } from "@/components/ui";
 import { supabase } from "@/lib/supabase/client";
-import { trackEvent } from "@/lib/analytics";
 import { getDailyBattle, getFinalBattle, isBattleCompleted } from "@/lib/battle";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
 
@@ -33,8 +33,6 @@ export default function TripHomePage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [profiles, setProfiles] = useState<Participant[]>([]);
-  const [joinName, setJoinName] = useState("");
-  const [joining, setJoining] = useState(false);
   const [morningStatus, setMorningStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
@@ -136,22 +134,14 @@ export default function TripHomePage() {
     };
   }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus]);
 
-  async function handleJoin(e: FormEvent) {
-    e.preventDefault();
-    if (!trip || !joinName.trim()) return;
-    setJoining(true);
-    try {
-      const adult = await getOrCreateAdultParticipant(trip.id, joinName.trim());
-      await trackEvent(trip.id, "trip_joined", adult.id);
-      const list = await loadProfiles(trip.id);
-      const day = currentTripDay(trip);
-      await Promise.all([
-        loadSlotStatus(trip.id, day, list.map((p) => p.id)),
-        loadBattleStatus(trip.id, day),
-      ]);
-    } finally {
-      setJoining(false);
-    }
+  async function handleWizardComplete() {
+    if (!trip) return;
+    const list = await loadProfiles(trip.id);
+    const day = currentTripDay(trip);
+    await Promise.all([
+      loadSlotStatus(trip.id, day, list.map((p) => p.id)),
+      loadBattleStatus(trip.id, day),
+    ]);
   }
 
   if (loading) {
@@ -174,40 +164,7 @@ export default function TripHomePage() {
   }
 
   if (profiles.length === 0) {
-    return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-12 pt-20">
-        <div className="mb-14">
-          {trip.destination && (
-            <div className="mb-8 flex items-center gap-1.5">
-              <MapPin size={14} className="text-primary" />
-              <span className="text-[13px] font-medium text-muted-foreground">{trip.destination}</span>
-            </div>
-          )}
-          <h1 className="mb-4 text-[40px] font-semibold leading-[1.1] tracking-tight text-foreground">
-            {trip.name}
-          </h1>
-          <p className="text-[17px] leading-relaxed text-muted-foreground">
-            Hai să descoperim {trip.name} împreună.
-          </p>
-        </div>
-        <form onSubmit={handleJoin} className="flex flex-col gap-3">
-          <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground" htmlFor="joinName">
-            Cum te numești?
-          </label>
-          <input
-            id="joinName"
-            className="rounded-2xl border border-border bg-card px-5 py-4 text-[17px] text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.04)] outline-none transition-colors placeholder:text-disabled focus:border-primary"
-            value={joinName}
-            onChange={(e) => setJoinName(e.target.value)}
-            placeholder="Numele tău"
-            autoFocus
-          />
-          <Btn type="submit" disabled={joining || !joinName.trim()}>
-            {joining ? "..." : <>ALĂTURĂ-TE <ArrowRight size={16} /></>}
-          </Btn>
-        </form>
-      </main>
-    );
+    return <OnboardingWizard trip={trip} onComplete={handleWizardComplete} />;
   }
 
   const day = currentTripDay(trip);

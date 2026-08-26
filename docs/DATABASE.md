@@ -19,8 +19,11 @@ adding safety or clarity:
 - **`profiles` is folded into `participants`**, using `role`
   (`'adult' | 'child'`) plus `age` and `managed_by_participant_id` for
   children. Per spec section 4, an adult participant *is* its own adult
-  profile; a child profile is just another `participants` row managed by
-  one, sharing the adult's `device_id` (a child has no device of its own).
+  profile; a child profile is usually another `participants` row managed
+  by one, sharing the adult's `device_id` (a child has no device of its
+  own) — but `managed_by_participant_id` is optional (product owner
+  decision, onboarding_wizard migration): the onboarding wizard lets a
+  child be the first, unmanaged participant on their own device.
 
 Everything else maps 1:1 to the spec's entity list.
 
@@ -30,7 +33,8 @@ Everything else maps 1:1 to the spec's entity list.
 
 | Table | Purpose |
 |---|---|
-| `trips` | One row per pilot trip (e.g. Kassandra 2026). `is_demo` flags seed/demo trips. `destination`/`location_info` back the Home dashboard's location blurb; `prize` backs Setări > Configurare. |
+| `trips` | One row per pilot trip (e.g. Kassandra 2026). `is_demo` flags seed/demo trips. `destination`/`location_info` back the Home dashboard's location blurb. `prize` is unused (superseded by `prize_options`/`prize_votes`, left in place rather than dropped). |
+| `prize_options` / `prize_votes` | The 3 prize choices for a trip, and each participant's single vote (`unique(participant_id)`) for their favourite. The option with the most votes 12h after the first vote is the competition prize, computed on read (`getPrizeStatus`) — see Setări > Configurare and the onboarding wizard's prize step. |
 | `battles` | A themed group of Battle questions for a given day; `is_final` marks the Final Battle. |
 | `questions` | Discover or Battle questions (`kind` discriminates). `battle_id`/`slot` set only for their respective kind. Carries the full Discover content shape: `common_core`, `one_thing`, `correct_reveal_message`/`alternative_reveal_message`, `sources`, `verified`, `published`. |
 | `answer_options` | Options for a question; `is_correct` marks the right one(s). |
@@ -41,7 +45,7 @@ Everything else maps 1:1 to the spec's entity list.
 
 | Table | Purpose |
 |---|---|
-| `participants` | One row per profile (adult *or* child) on a trip. Child rows set `managed_by_participant_id` + `age` and share the managing adult's `device_id`. |
+| `participants` | One row per profile (adult *or* child) on a trip. Child rows set `age` and usually `managed_by_participant_id`, sharing the managing adult's `device_id` — but a child can also be the sole, unmanaged participant on their own device (onboarding wizard). |
 | `extra_assignments` | Which Extra a participant was assigned, and its viewed/completed status. |
 | `responses` | A participant's answer to a Discover or Battle question. |
 | `battle_scores` | Per-question team result rows (`team`: adults/kids, `score`: 1 or 0), summed for the "PĂRINȚI 2 — COPII 1" tally. Publicly readable — see point 4 below. |
@@ -114,6 +118,8 @@ Row Level Security is the actual access boundary:
 - `supabase/migrations/20260825140000_feedback_form.sql` — the real 6-question feedback shape, and public read on `battle_scores`.
 - `supabase/migrations/20260825150000_trip_dashboard_fields.sql` — `destination`/`location_info` on `trips`, for the Home dashboard.
 - `supabase/migrations/20260826090000_settings_and_scoring.sql` — `prize` on `trips` (Setări > Configurare); a `delete` policy on `participants` (Setări > Utilizatori edit/delete, same accepted-risk model as point 5 above); `trip_battle_win_tally()`, the per-evening win-tally behind the "PĂRINȚI vs COPII" score on the Scor page.
+- `supabase/migrations/20260826110000_onboarding_wizard.sql` — drops `child_needs_manager`: the onboarding wizard lets a child be the first, unmanaged participant on their own device.
+- `supabase/migrations/20260826130000_prize_vote.sql` — `prize_options`/`prize_votes` (the wizard's prize step is a vote, not a static value).
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`
