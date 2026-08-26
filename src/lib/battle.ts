@@ -80,19 +80,28 @@ export async function isBattleCompleted(battleId: string): Promise<boolean> {
   return (count ?? 0) > 0;
 }
 
+// Daily Battle correct answers are worth 10 points, Final Battle correct
+// answers 5 points (product owner spec) -- these raw points accumulate
+// per battle and are the input to the win tally below, not a score shown
+// on their own as the "PĂRINȚI vs COPII" headline (see getBattleResult /
+// getTripBattleWinTally), though they're still surfaced as a secondary
+// "puncte acumulate" figure.
 export async function recordTeamAnswer(
   battleId: string,
   team: BattleTeam,
   isCorrect: boolean,
+  isFinal: boolean,
 ): Promise<void> {
   const { error } = await supabase.from("battle_scores").insert({
     battle_id: battleId,
     team,
-    score: isCorrect ? 1 : 0,
+    score: isCorrect ? (isFinal ? 5 : 10) : 0,
   });
   if (error) throw error;
 }
 
+// Raw point sum for one battle -- used for the secondary "puncte
+// acumulate" display, and as the input to getBattleResult below.
 export async function getBattleLeaderboard(
   battleId: string,
 ): Promise<Record<BattleTeam, number>> {
@@ -105,12 +114,38 @@ export async function getBattleLeaderboard(
   return result;
 }
 
+// Trip-wide raw point sum -- secondary "puncte acumulate" display only.
 export async function getTripLeaderboard(tripId: string): Promise<Record<BattleTeam, number>> {
   const { data, error } = await supabase.rpc("trip_battle_leaderboard", { p_trip_id: tripId });
   if (error) throw error;
   const result: Record<BattleTeam, number> = { adults: 0, kids: 0 };
   for (const row of data ?? []) {
     result[row.team] = row.total_score;
+  }
+  return result;
+}
+
+// The headline "PĂRINȚI X — COPII Y" for one evening: 1 for whichever team
+// had more points that battle, 1-1 on a tie. Only meaningful once the
+// battle has actually been played (caller should gate on
+// isBattleCompleted first) -- an unplayed battle has 0-0 points, which
+// this would otherwise read as a tie.
+export async function getBattleResult(battleId: string): Promise<Record<BattleTeam, number>> {
+  const points = await getBattleLeaderboard(battleId);
+  return {
+    adults: points.adults >= points.kids ? 1 : 0,
+    kids: points.kids >= points.adults ? 1 : 0,
+  };
+}
+
+// The season-long "PĂRINȚI vs COPII" headline: sum of evenings won (see
+// trip_battle_win_tally() -- tie evenings count for both teams).
+export async function getTripBattleWinTally(tripId: string): Promise<Record<BattleTeam, number>> {
+  const { data, error } = await supabase.rpc("trip_battle_win_tally", { p_trip_id: tripId });
+  if (error) throw error;
+  const result: Record<BattleTeam, number> = { adults: 0, kids: 0 };
+  for (const row of data ?? []) {
+    result[row.team] = row.wins;
   }
   return result;
 }

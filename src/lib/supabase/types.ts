@@ -32,6 +32,7 @@ export interface Database {
           duration_days: number;
           destination: string | null;
           location_info: string | null;
+          prize: string | null;
           is_active: boolean;
           is_demo: boolean;
           created_at: string;
@@ -206,6 +207,10 @@ export interface Database {
       trip_battle_leaderboard: {
         Args: { p_trip_id: string };
         Returns: { team: BattleTeam; total_score: number }[];
+      };
+      trip_battle_win_tally: {
+        Args: { p_trip_id: string };
+        Returns: { team: BattleTeam; wins: number }[];
       };
     };
   };
