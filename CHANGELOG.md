@@ -368,6 +368,15 @@
   a participant who's only answered Day 1's morning question resolves
   every other slot -- including that same day's own lunch, and every
   later day -- as unanswered/locked.
+- Fixed (product owner follow-up, correcting the entry above): showing
+  every day's questions in the recap, locked, went too far -- even a
+  locked question's bare prompt lets someone search for the answer
+  elsewhere before the calendar reaches it. `getTripHistory` is day-gated
+  again (`day_number <= uptoDay`, the day-tabs row only ever covers days
+  already reached), while keeping the answer-based reveal gating from the
+  previous entry -- so a *reached* day's questions still show in the
+  list, still locked until this device answers, but a day the calendar
+  hasn't reached yet doesn't appear at all anymore.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
