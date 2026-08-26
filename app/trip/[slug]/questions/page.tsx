@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, Sun, Utensils, Moon } from "lucide-react";
+import { ChevronDown, Sun, Utensils, Moon, ExternalLink, Lock } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import {
@@ -19,6 +19,13 @@ type Step = "loading" | "error" | "not-joined" | "ready";
 
 const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
 const SLOT_ICON: Record<string, typeof Sun> = { morning: Sun, lunch: Utensils };
+const EXTRA_TYPE_LABEL: Record<string, string> = {
+  know: "ȘTIAI CĂ",
+  think: "GÂNDEȘTE-TE",
+  connect: "CONEXIUNE",
+  ask: "ÎNTREABĂ",
+  explore: "EXPLOREAZĂ",
+};
 const FINAL_TAB = "final";
 
 export default function QuestionsPage() {
@@ -48,7 +55,7 @@ export default function QuestionsPage() {
         }
         setProfiles(list);
 
-        const h = await getTripHistory(t.id, currentTripDay(t), list.map((p) => p.id));
+        const h = await getTripHistory(t.id, list.map((p) => p.id));
         if (cancelled) return;
         setHistory(h);
         setStep("ready");
@@ -83,10 +90,12 @@ export default function QuestionsPage() {
   );
 
   useEffect(() => {
-    if (selectedTab !== null) return;
-    if (days.length > 0) setSelectedTab(days[days.length - 1]);
+    if (selectedTab !== null || !trip) return;
+    const today = currentTripDay(trip);
+    if (days.includes(today)) setSelectedTab(today);
+    else if (days.length > 0) setSelectedTab(days[days.length - 1]);
     else if (hasFinal) setSelectedTab(FINAL_TAB);
-  }, [days, hasFinal, selectedTab]);
+  }, [days, hasFinal, selectedTab, trip]);
 
   function toggle(id: string) {
     setExpandedIds((prev) => {
@@ -209,7 +218,9 @@ function DiscoverRow({
 }) {
   const correctOption = item.options.find((o) => o.is_correct);
   const answers = Object.entries(item.responsesByParticipant);
+  const answered = answers.length > 0;
   const Icon = SLOT_ICON[item.question.slot ?? ""] ?? Sun;
+  const extra = answers.map(([pid]) => item.extrasByParticipant[pid]).find((e) => e != null);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card">
@@ -223,18 +234,30 @@ function DiscoverRow({
           </p>
           <p className="mt-0.5 text-[15px] font-medium leading-snug text-foreground">{item.question.prompt}</p>
         </div>
+        {!answered && <Lock size={13} className="shrink-0 text-disabled" />}
         <ChevronDown
           size={15}
           className={`shrink-0 text-disabled transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
         />
       </button>
 
-      {expanded && (
+      {expanded && !answered && (
+        <div className="border-t border-secondary px-4 pb-5 pt-4">
+          <p className="text-[13px] leading-relaxed text-muted-foreground">
+            Răspunsul corect și informațiile extra apar aici după ce răspunzi la întrebare.
+          </p>
+        </div>
+      )}
+
+      {expanded && answered && (
         <div className="flex flex-col gap-3 border-t border-secondary px-4 pb-5 pt-4">
           {correctOption && (
             <div className="rounded-xl bg-accent px-3.5 py-3">
               <p className="text-[13px] font-semibold text-primary">Răspuns: {correctOption.label}</p>
             </div>
+          )}
+          {item.question.common_core && (
+            <p className="text-[13px] leading-relaxed text-secondary-foreground">{item.question.common_core}</p>
           )}
           {item.question.one_thing && (
             <div className="rounded-xl bg-background px-3.5 py-3">
@@ -242,29 +265,54 @@ function DiscoverRow({
               <p className="text-[13px] leading-relaxed text-secondary-foreground">{item.question.one_thing}</p>
             </div>
           )}
-          {answers.length > 0 && (
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-disabled">Răspunsuri</p>
-              {answers.map(([participantId, response]) => {
-                const chosen = item.options.find((o) => o.id === response.selected_option_id);
-                return (
-                  <div
-                    key={participantId}
-                    className="flex items-center justify-between border-b border-background py-2 last:border-0"
-                  >
-                    <span className="text-[14px] text-foreground">{profileName(participantId)}</span>
-                    <span className="text-[13px] font-medium">
-                      {response.is_correct ? (
-                        <span className="text-primary">{chosen?.label ?? "—"} · Corect</span>
-                      ) : (
-                        <span className="text-muted-foreground">{chosen?.label ?? "—"} · Aproape</span>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
+          {extra && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-primary">
+                {extra.extra_type ? EXTRA_TYPE_LABEL[extra.extra_type] : "EXTRA"}
+              </span>
+              <p className="text-[13px] leading-relaxed text-secondary-foreground">
+                {extra.description ?? extra.title}
+              </p>
             </div>
           )}
+          {item.exploreLinks.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-disabled">🐇 Explorează</p>
+              {item.exploreLinks.map((link) => (
+                <a
+                  key={link.id}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-[13px] text-primary hover:underline"
+                >
+                  <ExternalLink size={12} />
+                  {link.title}
+                </a>
+              ))}
+            </div>
+          )}
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-disabled">Răspunsuri</p>
+            {answers.map(([participantId, response]) => {
+              const chosen = item.options.find((o) => o.id === response.selected_option_id);
+              return (
+                <div
+                  key={participantId}
+                  className="flex items-center justify-between border-b border-background py-2 last:border-0"
+                >
+                  <span className="text-[14px] text-foreground">{profileName(participantId)}</span>
+                  <span className="text-[13px] font-medium">
+                    {response.is_correct ? (
+                      <span className="text-primary">{chosen?.label ?? "—"} · Corect</span>
+                    ) : (
+                      <span className="text-muted-foreground">{chosen?.label ?? "—"} · Aproape</span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

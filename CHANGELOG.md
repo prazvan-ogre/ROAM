@@ -346,6 +346,28 @@
   against it, which nothing in this session can do on its own, and the
   content still needs the same human review-and-publish pass as the rest
   of the seed content before it's visible.
+- Fixed: the Întrebări (recap) page's Discover rows revealed the correct
+  answer and One Thing to anyone who expanded them, whether or not this
+  device had actually answered that question yet (product owner:
+  noticed Day 1's own two questions sitting there, spoiled, while Day 1
+  itself was still in progress). `getTripHistory` also only ever fetched
+  questions up to the current trip day, so later days never appeared at
+  all -- reworked to fetch every Discover question in the trip (RLS
+  still limits this to published/verified content) and gate the reveal
+  entirely on `responsesByParticipant` having an entry for this device:
+  unanswered questions now show in the list (with a small lock icon)
+  same as answered ones, but expanding one only shows a "answer it first"
+  line instead of the answer, Common Core, One Thing, Extra, or Explore
+  links. Answered ones show all of that, now including the Common Core
+  and each participant's own assigned Extra (via `extra_assignments`,
+  read back rather than freshly assigned) and the question's Explore
+  links, none of which the recap page showed before at all. The day-tabs
+  row now always covers every day with published content (not just days
+  reached so far), defaulting to the current trip day. Verified the
+  per-participant answered/locked split directly on a scratch Postgres:
+  a participant who's only answered Day 1's morning question resolves
+  every other slot -- including that same day's own lunch, and every
+  later day -- as unanswered/locked.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
