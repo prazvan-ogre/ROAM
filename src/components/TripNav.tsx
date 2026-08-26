@@ -2,17 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, BookOpen, Users } from "lucide-react";
+import { Home, Trophy, BookOpen, Users } from "lucide-react";
 
 const TABS = [
   { path: "", label: "Acasă", icon: Home },
+  { path: "/leaderboard", label: "Scor", icon: Trophy },
   { path: "/questions", label: "Întrebări", icon: BookOpen },
   { path: "/users", label: "Utilizatori", icon: Users },
 ];
 
-// Shared bottom tab bar for the 3 hub pages. More may be added later --
-// keep this the single place that lists them (product owner's own
-// framing: "momentan rămânem la cele 3").
+// Shared bottom tab bar for the hub pages -- keep this the single place
+// that lists them.
 export function TripNav({ slug }: { slug: string }) {
   const pathname = usePathname();
 

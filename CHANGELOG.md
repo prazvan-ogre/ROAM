@@ -67,6 +67,14 @@
   screens (Dashboard, Întrebări, Utilizatori, Discover, Battle, Final
   Battle, Feedback). Purely visual — no routes, data-fetching, or state
   machines changed.
+- Dedicated Scor page (`/trip/[slug]/leaderboard`, product owner request
+  after seeing the Figma Make export's own dedicated leaderboard tab):
+  4th bottom-nav tab with a Scor total/Scor zilnic toggle over the
+  Parents-vs-Kids hero score and the individual "Clasamentul familiei"
+  ranking (moved off the Dashboard, which previously showed a compact
+  version of the same list, to avoid duplicating it). `getParticipantLeaderboard`
+  now accepts an optional `day` to scope the ranking to a single day for
+  the "Scor zilnic" tab, and returns `age` for the child-profile subtitle.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
