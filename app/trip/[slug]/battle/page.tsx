@@ -9,6 +9,7 @@ import { getDailyBattle, isBattleCompleted, getBattleLeaderboard, type BattleCon
 import { BattleFlow } from "@/components/BattleFlow";
 import type { BattleTeam } from "@/lib/supabase/types";
 import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
+import { Centered } from "@/components/ui";
 
 type Step = "loading" | "error" | "not-joined" | "unavailable" | "closed" | "already-played" | "play";
 
@@ -121,10 +122,10 @@ export default function DailyBattlePage() {
   if (step === "already-played") {
     return (
       <Centered>
-        <p className="text-2xl font-semibold">
+        <p className="text-[24px] font-semibold text-foreground">
           PĂRINȚI {score.adults} — COPII {score.kids}
         </p>
-        <p className="mt-2 text-slate-600">Battle-ul de azi e deja jucat.</p>
+        <p className="mt-2 text-muted-foreground">Battle-ul de azi e deja jucat.</p>
         <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
           Înapoi acasă
         </Link>
@@ -135,12 +136,4 @@ export default function DailyBattlePage() {
   if (!trip || !content) return <Centered>Se încarcă...</Centered>;
 
   return <BattleFlow content={content} tripId={trip.id} slug={slug} isFinal={false} />;
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6 text-center text-slate-600">
-      {children}
-    </main>
-  );
 }

@@ -5,8 +5,13 @@
 html,
 body {
   height: 100%;
+  scrollbar-width: none;
 }
 
 body {
   overscroll-behavior-y: none;
+}
+
+::-webkit-scrollbar {
+  display: none;
 }
