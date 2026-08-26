@@ -147,6 +147,58 @@ export async function getOrAssignExtra(
   return leastAssigned;
 }
 
+export interface PendingDiscoverItem {
+  dayNumber: number;
+  slot: QuestionSlot;
+  questionId: string;
+}
+
+// Past days' Discover questions not yet answered by at least one of this
+// device's participants -- product owner spec: someone who joins partway
+// through the trip can still catch up on previous days' Discover
+// questions (unlike Battle, which is a once-per-evening team submission
+// with nothing to "catch up" on -- see getDailyBattle). Only days before
+// today are considered; today's own slot is handled by the normal
+// Dashboard flow. Time-of-day availability windows don't apply to these
+// -- see getSlotAvailability callers, which skip the window check for a
+// day in the past.
+export async function getPendingDiscoverCatchUp(
+  tripId: string,
+  currentDay: number,
+  participantIds: string[],
+): Promise<PendingDiscoverItem[]> {
+  if (currentDay <= 1 || participantIds.length === 0) return [];
+
+  const { data: questions, error: questionsError } = await supabase
+    .from("questions")
+    .select("id, day_number, slot")
+    .eq("trip_id", tripId)
+    .eq("kind", "discover")
+    .lt("day_number", currentDay);
+  if (questionsError) throw questionsError;
+  if (!questions || questions.length === 0) return [];
+
+  const questionIds = questions.map((q) => q.id);
+  const { data: responseRows, error: responsesError } = await supabase
+    .from("responses")
+    .select("participant_id, question_id")
+    .in("question_id", questionIds)
+    .in("participant_id", participantIds);
+  if (responsesError) throw responsesError;
+
+  const answeredByQuestion = new Map<string, Set<string>>();
+  for (const r of responseRows ?? []) {
+    const set = answeredByQuestion.get(r.question_id) ?? new Set<string>();
+    set.add(r.participant_id);
+    answeredByQuestion.set(r.question_id, set);
+  }
+
+  return questions
+    .filter((q) => (answeredByQuestion.get(q.id)?.size ?? 0) < participantIds.length)
+    .map((q) => ({ dayNumber: q.day_number as number, slot: q.slot as QuestionSlot, questionId: q.id }))
+    .sort((a, b) => a.dayNumber - b.dayNumber || (a.slot === "morning" ? -1 : 1));
+}
+
 export interface LeaderboardEntry {
   participantId: string;
   displayName: string;

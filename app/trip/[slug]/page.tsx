@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Sun, Utensils, Moon, Check, Clock, Trophy } from "lucide-react";
+import { Sun, Utensils, Moon, Check, Clock, Trophy, ChevronRight } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
@@ -11,7 +11,10 @@ import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { Centered } from "@/components/ui";
 import { supabase } from "@/lib/supabase/client";
 import { getDailyBattle, getFinalBattle, isBattleCompleted } from "@/lib/battle";
+import { getPendingDiscoverCatchUp, type PendingDiscoverItem } from "@/lib/discover";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
+
+const CATCHUP_SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
 
 interface SlotStatus {
   questionId: string | null;
@@ -37,6 +40,7 @@ export default function TripHomePage() {
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [finalStatus, setFinalStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
+  const [catchUp, setCatchUp] = useState<PendingDiscoverItem[]>([]);
 
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
@@ -101,6 +105,11 @@ export default function TripHomePage() {
     setFinalStatus({ available: !!final && final.questions.length > 0, completed: finalCompleted });
   }, []);
 
+  const loadCatchUp = useCallback(async (tripId: string, day: number, profileIds: string[]) => {
+    const pending = await getPendingDiscoverCatchUp(tripId, day, profileIds);
+    setCatchUp(pending);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -119,6 +128,7 @@ export default function TripHomePage() {
           await Promise.all([
             loadSlotStatus(t.id, day, list.map((p) => p.id)),
             loadBattleStatus(t.id, day, day >= t.duration_days),
+            loadCatchUp(t.id, day, list.map((p) => p.id)),
           ]);
         }
       } catch {
@@ -132,7 +142,7 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus]);
+  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus, loadCatchUp]);
 
   async function handleWizardComplete() {
     if (!trip) return;
@@ -141,6 +151,7 @@ export default function TripHomePage() {
     await Promise.all([
       loadSlotStatus(trip.id, day, list.map((p) => p.id)),
       loadBattleStatus(trip.id, day, day >= trip.duration_days),
+      loadCatchUp(trip.id, day, list.map((p) => p.id)),
     ]);
   }
 
@@ -241,6 +252,33 @@ export default function TripHomePage() {
           <BattleChallengeRow status={battleStatus} slug={slug} isLast />
         </div>
       </section>
+
+      {catchUp.length > 0 && (
+        <section>
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            De recuperat
+          </p>
+          <div className="mt-3">
+            {catchUp.map((item) => (
+              <Link
+                key={item.questionId}
+                href={`/trip/${slug}/discover/${item.slot}?day=${item.dayNumber}`}
+                className="flex items-center gap-3 border-b border-secondary py-4 last:border-0"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-primary">
+                  {item.slot === "morning" ? <Sun size={17} /> : <Utensils size={17} />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] font-medium leading-none text-foreground">
+                    Ziua {item.dayNumber} · {CATCHUP_SLOT_LABEL[item.slot] ?? item.slot}
+                  </p>
+                </div>
+                <ChevronRight size={16} className="shrink-0 text-disabled" />
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {day >= trip.duration_days ? (
         finalStatus.available ? (
