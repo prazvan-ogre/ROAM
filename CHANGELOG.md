@@ -160,23 +160,31 @@
   daily Battle's own recorded result (each has its own `battle_id`), but
   it did let the "PĂRINȚI vs COPII" season tally count that evening
   before it should.
-- Discover catch-up (product owner spec): someone joining partway through
-  the trip can now answer previous days' morning/lunch questions, not
-  just today's — the Dashboard's new "De recuperat" section lists every
-  past-day Discover question at least one of the device's participants
-  hasn't answered yet, linking to `/trip/[slug]/discover/[slot]?day=N`.
-  The Discover route now accepts that optional `day` param (validated
-  against `1..currentTripDay`, `getPendingDiscoverCatchUp` in
-  `discover.ts` finds the pending list) and skips the time-of-day
-  availability window entirely for a day in the past — the window only
-  means something for today's own slot. Battle stays exactly as before:
-  it's a once-per-evening team submission, not a per-participant
-  response, so there's nothing to "catch up" on, and a late joiner
-  participates in future Battles (including the Final Battle, gated to
-  the last day per the previous entry) the same as everyone else.
-  Verified the pending-list query against seeded responses for a
-  partially-answered vs. fully-caught-up device on the same scratch
-  local Postgres.
+- Catch-up, take two (product owner follow-up correcting the previous
+  entry): moved from a Dashboard section into a 6th onboarding-wizard
+  step (`intro → name → role → how → catchup → prize`), right after the
+  new participant is created and before the prize vote — and widened to
+  include previous days' **Battle** questions too, not just Discover.
+  `getCatchUpQuestions(tripId, currentDay, participantId)` in
+  `discover.ts` (replacing `getPendingDiscoverCatchUp`) finds every
+  past-day question of either kind this specific participant hasn't
+  answered, shown one after another in the wizard with immediate
+  correct/incorrect feedback (`submitResponse`, same call Discover uses).
+  Battle questions answered this way are a personal-score-only exercise:
+  they insert a normal `responses` row, never a `battle_scores` row (the
+  team submission recorded live during `BattleFlow`), so catching up
+  can't retroactively change any already-played Battle's result — a late
+  joiner still plays every future Battle live, as a team, same as
+  everyone else. `getParticipantLeaderboard` no longer filters to
+  `kind = 'discover'` only, so these catch-up points now count toward
+  the individual "Clasamentul familiei" score (in practice this only
+  ever adds Battle points for catch-up answers, since a live Battle
+  never creates an individual `responses` row either way). The Discover
+  route's `?day=` param and the Dashboard's "De recuperat" section from
+  the previous entry are reverted — this wizard step replaces both.
+  Verified the pending-question count, that `battle_scores` stays at 0
+  rows after catch-up answers, and the personal-score sum across both
+  kinds, against seeded data on the same scratch local Postgres.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
