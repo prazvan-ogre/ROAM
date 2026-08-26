@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Trophy, BookOpen, Users } from "lucide-react";
+import { Home, Trophy, BookOpen, Settings } from "lucide-react";
 
 const TABS = [
   { path: "", label: "Acasă", icon: Home },
   { path: "/leaderboard", label: "Scor", icon: Trophy },
   { path: "/questions", label: "Întrebări", icon: BookOpen },
-  { path: "/users", label: "Utilizatori", icon: Users },
+  { path: "/settings", label: "Setări", icon: Settings },
 ];
 
 // Shared bottom tab bar for the hub pages -- keep this the single place

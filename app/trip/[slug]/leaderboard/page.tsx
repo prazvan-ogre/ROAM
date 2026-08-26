@@ -5,7 +5,14 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice } from "@/lib/participant";
-import { getDailyBattle, getBattleLeaderboard, getTripLeaderboard } from "@/lib/battle";
+import {
+  getDailyBattle,
+  isBattleCompleted,
+  getBattleLeaderboard,
+  getTripLeaderboard,
+  getBattleResult,
+  getTripBattleWinTally,
+} from "@/lib/battle";
 import { getParticipantLeaderboard, type LeaderboardEntry } from "@/lib/discover";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
@@ -26,6 +33,8 @@ export default function LeaderboardPage() {
   const [tab, setTab] = useState<Tab>("total");
   const [dailyScore, setDailyScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
   const [tripScore, setTripScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
+  const [dailyPoints, setDailyPoints] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
+  const [tripPoints, setTripPoints] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
   const [totalRanking, setTotalRanking] = useState<LeaderboardEntry[]>([]);
   const [todayRanking, setTodayRanking] = useState<LeaderboardEntry[]>([]);
 
@@ -45,14 +54,20 @@ export default function LeaderboardPage() {
       setDay(d);
 
       const daily = await getDailyBattle(t.id, d);
-      const [dailyLeaderboard, tripLeaderboard, total, today] = await Promise.all([
+      const dailyPlayed = daily ? await isBattleCompleted(daily.battle.id) : false;
+
+      const [dailyPts, dailyResult, tripPts, tripWinTally, total, today] = await Promise.all([
         daily ? getBattleLeaderboard(daily.battle.id) : Promise.resolve(EMPTY_SCORE),
+        daily && dailyPlayed ? getBattleResult(daily.battle.id) : Promise.resolve(EMPTY_SCORE),
         getTripLeaderboard(t.id),
+        getTripBattleWinTally(t.id),
         getParticipantLeaderboard(t.id),
         getParticipantLeaderboard(t.id, d),
       ]);
-      setDailyScore(dailyLeaderboard);
-      setTripScore(tripLeaderboard);
+      setDailyPoints(dailyPts);
+      setDailyScore(dailyResult);
+      setTripPoints(tripPts);
+      setTripScore(tripWinTally);
       setTotalRanking(total);
       setTodayRanking(today);
       setStep("ready");
@@ -89,6 +104,7 @@ export default function LeaderboardPage() {
 
   const isTotal = tab === "total";
   const teamScore = isTotal ? tripScore : dailyScore;
+  const teamPoints = isTotal ? tripPoints : dailyPoints;
   const ranking = (isTotal ? totalRanking : todayRanking).filter((e) => e.answered > 0);
 
   const todayDiff = dailyScore.adults - dailyScore.kids;
@@ -148,6 +164,10 @@ export default function LeaderboardPage() {
             </span>
           </div>
         )}
+
+        <p className="mt-3 text-center text-[12px] text-muted-foreground">
+          Puncte acumulate: {teamPoints.adults} — {teamPoints.kids}
+        </p>
       </div>
 
       {ranking.length > 0 && (

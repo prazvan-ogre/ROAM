@@ -94,12 +94,31 @@
   `verified = false, published = false` everywhere (same content-integrity
   gate as before) — the publish-flip SQL is in the `seed.sql` header
   comment.
+- Utilizatori renamed to **Setări** (product owner request), restructured
+  into 3 sub-sections behind an in-page tab switcher: Configurare
+  (read-only destination/duration/`trips.prize`, a new column), Utilizatori
+  (the existing profile list + add-child, now also with edit
+  name/role/age and delete — new `updateParticipant`/`deleteParticipant`
+  in `participant.ts`, and a `delete` RLS policy on `participants`), and
+  Info (static copy explaining the scoring mechanism below).
+- Battle scoring overhaul (product owner spec): each correct Battle answer
+  is now worth 10 points (Final Battle: 5 points, `recordTeamAnswer` takes
+  `isFinal`), and the "PĂRINȚI vs COPII" score shown on the Scor page is a
+  **win tally**, not a raw point sum — whichever team has more points in a
+  given Battle gets +1 for that evening, a tie gives +1 to both
+  (`trip_battle_win_tally()`, `getBattleResult`/`getTripBattleWinTally` in
+  `battle.ts`). The raw point sums (`battle_leaderboard()`/
+  `trip_battle_leaderboard()`, unchanged) are kept as a secondary "puncte
+  acumulate" line under the hero score. Verified the win-tally logic
+  (win/loss/tie/not-yet-played) against seeded battle_scores rows on the
+  same scratch local Postgres used to verify the seed content.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
   `docs/DATABASE.md` "Security model").
-- Day 1 seed content is a draft pending human fact-check/approval; Days
-  2–5 and the Final Battle's 10-12 questions have no content yet.
+- All 7 days of seed content are drafted/supplied but left
+  `verified = false, published = false` pending a human review pass (see
+  `seed.sql` header for the publish-flip SQL).
 - No error-monitoring service (e.g. Sentry) wired up yet — runtime errors
   are visible via Vercel function/build logs and browser console only.
 - Single Supabase project shared across preview and production, only

@@ -30,7 +30,7 @@ Everything else maps 1:1 to the spec's entity list.
 
 | Table | Purpose |
 |---|---|
-| `trips` | One row per pilot trip (e.g. Kassandra 2026). `is_demo` flags seed/demo trips. `destination`/`location_info` back the Home dashboard's location blurb. |
+| `trips` | One row per pilot trip (e.g. Kassandra 2026). `is_demo` flags seed/demo trips. `destination`/`location_info` back the Home dashboard's location blurb; `prize` backs Setări > Configurare. |
 | `battles` | A themed group of Battle questions for a given day; `is_final` marks the Final Battle. |
 | `questions` | Discover or Battle questions (`kind` discriminates). `battle_id`/`slot` set only for their respective kind. Carries the full Discover content shape: `common_core`, `one_thing`, `correct_reveal_message`/`alternative_reveal_message`, `sources`, `verified`, `published`. |
 | `answer_options` | Options for a question; `is_correct` marks the right one(s). |
@@ -113,6 +113,7 @@ Row Level Security is the actual access boundary:
 - `supabase/migrations/20260825120000_profiles_and_content_model.sql` — child profiles (`age`, `managed_by_participant_id`), the full Discover/Extra content shape, verified+published gating, and `trip_battle_leaderboard()`.
 - `supabase/migrations/20260825140000_feedback_form.sql` — the real 6-question feedback shape, and public read on `battle_scores`.
 - `supabase/migrations/20260825150000_trip_dashboard_fields.sql` — `destination`/`location_info` on `trips`, for the Home dashboard.
+- `supabase/migrations/20260826090000_settings_and_scoring.sql` — `prize` on `trips` (Setări > Configurare); a `delete` policy on `participants` (Setări > Utilizatori edit/delete, same accepted-risk model as point 5 above); `trip_battle_win_tally()`, the per-evening win-tally behind the "PĂRINȚI vs COPII" score on the Scor page.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

@@ -89,6 +89,28 @@ export async function getParticipantCounts(tripId: string): Promise<ParticipantC
   return { adults: adults ?? 0, children: children ?? 0 };
 }
 
+export async function updateParticipant(
+  id: string,
+  displayName: string,
+  role: ParticipantRole,
+  age: number | null,
+): Promise<Participant> {
+  const { data, error } = await supabase
+    .from("participants")
+    .update({ display_name: displayName, role, age })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteParticipant(id: string): Promise<void> {
+  const { error } = await supabase.from("participants").delete().eq("id", id);
+  if (error) throw error;
+}
+
 export async function addChildProfile(
   tripId: string,
   managingAdultId: string,

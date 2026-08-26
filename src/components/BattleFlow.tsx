@@ -55,7 +55,7 @@ export function BattleFlow({
     setSubmitting(true);
     try {
       const isCorrect = selected.is_correct;
-      await recordTeamAnswer(content.battle.id, team, isCorrect);
+      await recordTeamAnswer(content.battle.id, team, isCorrect, isFinal);
       await trackEvent(tripId, "battle_answered", undefined, {
         battle_id: content.battle.id,
         question_id: current.question.id,
