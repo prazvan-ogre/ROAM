@@ -130,14 +130,14 @@ supabase db push
 
 ## Seed data
 
-`supabase/seed.sql` creates the **Kassandra 2026** trip (`ro`, 5 days)
-with Day 1 written as real draft content in the ROAM voice (spec section
-36.1) — not throwaway placeholder text — but left `verified = false`,
-`published = false` per the content-integrity rule above. It's idempotent
-(deletes and recreates the `kassandra-2026` trip by slug) — safe to
-re-run locally. The file's header comment has the exact `update`
-statements to run once Day 1 is fact-checked and approved.
+`supabase/seed.sql` creates the **Kassandra 2026** trip (`ro`, 7 days)
+with all 7 days of Discover (Morning + Lunch) and Battle content, plus
+the 10-question Final Battle on Day 7 — supplied directly by the product
+owner, not AI-drafted — but left `verified = false`, `published = false`
+per the content-integrity rule above. It's idempotent (deletes and
+recreates the `kassandra-2026` trip by slug) — safe to re-run locally.
+The file's header comment has the exact `update` statements to run once
+the content is reviewed and approved.
 
 **Do not re-run it against production** once real pilot activity
 (participants/responses) exists for this trip — it deletes the trip.
-Days 2–5 still need their content authored the same way before the pilot.
