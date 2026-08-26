@@ -185,6 +185,12 @@
   Verified the pending-question count, that `battle_scores` stays at 0
   rows after catch-up answers, and the personal-score sum across both
   kinds, against seeded data on the same scratch local Postgres.
+- Removed the "Puncte acumulate: X — Y" secondary line from the Scor
+  page (product owner request), on both the Scor total and Scor zilnic
+  tabs — the win-tally headline score is the only number shown now. The
+  `getBattleLeaderboard`/`getTripLeaderboard` raw-point-sum calls that
+  fed it are dropped from this page (still used elsewhere: `/battle`,
+  `/final`, `history.ts`, and internally by `getBattleResult`).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
