@@ -294,16 +294,27 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
               <p className="text-center text-[15px] text-muted-foreground">Se încarcă...</p>
             ) : prizeStatus.options.length === 0 ? (
               <div className="text-center">
-                <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">Premiul</p>
-                <h1 className="mt-2 text-[24px] font-semibold tracking-tight text-foreground">🏆 Cine câștigă</h1>
-                <p className="mt-4 text-[17px] leading-relaxed text-muted-foreground">Va fi anunțat în curând.</p>
+                <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">
+                  Premiul câștigătorilor
+                </p>
+                <h1 className="mt-2 text-[24px] font-semibold tracking-tight text-foreground">
+                  🏆 Copii vs. Părinți
+                </h1>
+                <p className="mt-4 text-[17px] leading-relaxed text-muted-foreground">
+                  La final, o singură echipă câștigă. Premiul ei va fi anunțat în curând.
+                </p>
               </div>
             ) : !prizeStatus.votingOpen && prizeStatus.winner ? (
               <div className="text-center">
-                <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">Premiul stabilit</p>
+                <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">
+                  Premiul câștigătorilor
+                </p>
                 <h1 className="mt-2 text-[22px] font-semibold tracking-tight text-foreground">
                   🏆 {prizeStatus.winner.title}
                 </h1>
+                <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+                  Asta primește echipa care câștigă — Copii sau Părinți.
+                </p>
                 {prizeStatus.winner.description && (
                   <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
                     {prizeStatus.winner.description}
@@ -313,10 +324,10 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
             ) : (
               <>
                 <p className="text-center text-[13px] font-semibold uppercase tracking-wide text-primary">
-                  Alege premiul
+                  Premiul câștigătorilor
                 </p>
                 <h1 className="text-center text-[22px] font-semibold tracking-tight text-foreground">
-                  Ce premiu ți-ar plăcea?
+                  Ce ar trebui să primească echipa câștigătoare — Copii sau Părinți?
                 </h1>
                 <div className="flex flex-col gap-2">
                   {prizeStatus.options.map((opt) => (
