@@ -237,6 +237,11 @@
     that a separately seeded legacy (no `participant_id`) battle still
     resolves by raw sum, with the hybrid trip-wide tally correctly
     combining both (1-1).
+- Reworded the onboarding wizard's prize step (product owner request) to
+  frame it explicitly as the winning team's prize, not just "your
+  favourite prize" — every state (voting open, winner decided, no
+  options yet) now names "echipa câștigătoare — Copii sau Părinți"
+  instead of leaving that connection implicit.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
