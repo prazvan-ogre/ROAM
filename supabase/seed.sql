@@ -26,11 +26,12 @@
 
 delete from trips where slug = 'kassandra-2026';
 
-insert into trips (slug, name, language, start_date, duration_days, destination, location_info, is_active, is_demo)
+insert into trips (slug, name, language, start_date, duration_days, destination, location_info, prize, is_active, is_demo)
 values (
   'kassandra-2026', 'Kassandra 2026', 'ro', '2026-09-01', 7,
   'Kassandra, Halkidiki, Grecia',
   'O peninsulă din nordul Greciei, cunoscută pentru plaje, măsline și istorie antică — pe aici au trecut fenicieni, greci și romani cu mii de ani în urmă.',
+  'Echipa câștigătoare e DJ pe drumul de întoarcere — alege muzica toată călătoria! 🎧',
   true, false
 );
 

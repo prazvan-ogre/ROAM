@@ -71,7 +71,7 @@ export default function SettingsPage() {
     if (!trip || !childName.trim() || !childAge) return;
     const adult = profiles.find((p) => p.role === "adult");
     if (!adult) return;
-    await addChildProfile(trip.id, adult.id, childName.trim(), Number(childAge));
+    await addChildProfile(trip.id, childName.trim(), Number(childAge), adult.id);
     setChildName("");
     setChildAge("");
     setShowAddChild(false);

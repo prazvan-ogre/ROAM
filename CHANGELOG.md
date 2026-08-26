@@ -112,6 +112,18 @@
   acumulate" line under the hero score. Verified the win-tally logic
   (win/loss/tie/not-yet-played) against seeded battle_scores rows on the
   same scratch local Postgres used to verify the seed content.
+- First-visit onboarding wizard (product owner spec), replacing the old
+  one-field join form: theme intro → name → "adult sau copil" (the
+  participant is created here; age is collected for a child) → how the
+  game works → the prize (`trip.prize`) → hands off to the Dashboard.
+  Forward-only, no back navigation, so there's no path that could
+  re-submit the join once it succeeds. A child can now be the first (and
+  possibly only) participant on their own device — `child_needs_manager`
+  relaxed (dropped) since not every child shares the parent's phone;
+  `addChildProfile`'s `managingAdultId` is now optional. Seeded the
+  Kassandra 2026 trip's `prize`: "Echipa câștigătoare e DJ pe drumul de
+  întoarcere." Verified the no-manager child insert against the relaxed
+  constraint on the same scratch local Postgres.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
