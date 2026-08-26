@@ -290,6 +290,42 @@
   goes straight from reveal to the next question. `getCatchUpQuestions`
   now also fetches each pending question's `explore_links`, same as
   `getDiscoverQuestion`.
+- Catch-up, take three (product owner follow-up): removed entirely from
+  `OnboardingWizard.tsx` — it was interposed as its own step between
+  "how it works" and the prize vote, but catch-up is a homepage thing,
+  not something that should block a brand-new joiner from reaching the
+  prize step. `STEP_ORDER` is back to `intro → name → role → how →
+  prize`; every catch-up-related state, effect, handler and render block
+  is gone from the wizard. The only way to catch up now is the
+  Dashboard's "Ai întrebări de recuperat" banner → `/trip/[slug]/catchup`
+  (already reachable any time, from the previous entry) — including
+  right after a brand-new participant finishes the (now catch-up-free)
+  wizard, since `handleWizardComplete` already recomputes the banner.
+- Extra/Explore content on `/catchup` and in live Battle no longer waits
+  on a second tap (product owner: it should show automatically the
+  moment an answer is validated, not need an extra step). `/catchup`'s
+  separate "reveal" → "MERGI MAI DEPARTE" → "extra" sequence is merged
+  into one screen: submitting an answer now fetches the response and the
+  assigned Extra together, and reveal + Common Core + One Thing + Extra
+  + Explore links + "ask others" all render at once. `BattleFlow.tsx`
+  (live Daily/Final Battle) gets the same treatment: `handleSubmit` now
+  also calls `getOrAssignExtra` alongside `recordBattleAnswer`, and the
+  existing "reveal" step shows the assigned Extra + Explore links + an
+  "ask others" line under the correct answer, automatically.
+- Battle questions now carry their own supplementary info, same as
+  Discover (product owner: extra info shouldn't stop at Discover) — the
+  database had none (`extras.question_id` only ever pointed at Discover
+  questions in the seed data), so this adds one AI-drafted Extra per
+  Battle/Final Battle question (28 total: 3 per daily Battle × 6 days +
+  10 for the Final Battle) via `supabase/seed.sql`, left `verified =
+  false`/`published = false` for the same human review pass as the rest
+  of the seed content. `BattleQuestion` (`battle.ts`) and `CatchUpQuestion`
+  (`discover.ts`) both gained an `exploreLinks` field, and
+  `loadBattleContent` now fetches `explore_links` per question, same as
+  `getDiscoverQuestion` — Battle never had a reason to before, since it
+  never showed Extras. Verified against a scratch local Postgres: all 28
+  Battle/Final Battle questions resolve to exactly one Extra row after
+  running the updated `seed.sql`.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

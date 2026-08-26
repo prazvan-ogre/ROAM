@@ -17,16 +17,7 @@ import {
 } from "@/lib/discover";
 import { Btn, FlowHeader, Centered } from "@/components/ui";
 
-type Step =
-  | "loading"
-  | "error"
-  | "not-joined"
-  | "select-profile"
-  | "empty"
-  | "question"
-  | "reveal"
-  | "extra"
-  | "done";
+type Step = "loading" | "error" | "not-joined" | "select-profile" | "empty" | "question" | "reveal" | "done";
 
 const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
 const EXTRA_TYPE_LABEL: Record<string, string> = {
@@ -39,20 +30,20 @@ const EXTRA_TYPE_LABEL: Record<string, string> = {
 
 // Reachable any time from the Dashboard, unlike the wizard's own catch-up
 // step which only ever runs once, right when a participant is first
-// created. Someone who joined on an earlier day (or just didn't get to
-// answer everything back then) still needs a way back to those questions
-// after the day rolls over -- this page is that way back, for any profile
-// on the device, not only a brand-new one. Same rules as the wizard's
-// catch-up step: plain submitResponse (personal score only), never
-// touches battle_scores, so it can't change an already-played Battle's
-// result.
+// created (product owner follow-up: catch-up is a homepage thing, not a
+// wizard step -- removed from OnboardingWizard entirely). Someone who
+// joined on an earlier day (or just didn't get to answer everything back
+// then) still needs a way back to those questions after the day rolls
+// over -- this page is that way back, for any profile on the device, not
+// only a brand-new one. Same rules as before: plain submitResponse
+// (personal score only), never touches battle_scores, so it can't change
+// an already-played Battle's result.
 //
-// Mirrors the live Discover flow's reveal -> Extra -> Explore links ->
-// "ask others" sequence (product owner: correctness alone isn't enough,
-// a missed question still owes the same One Thing / Extra / rabbit-hole
-// content the live flow gives) -- Battle questions skip straight from
-// reveal to the next question instead, since Extras are only ever
-// assigned against a Discover question (docs/DATABASE.md).
+// Reveal and the assigned Extra/Explore links show together, automatically,
+// the moment an answer is submitted -- no extra tap, no extra step
+// (product owner: correctness alone isn't enough, and it shouldn't take an
+// extra click to see the rest). Applies to both Discover and Battle
+// questions now that Battle questions carry their own Extras too.
 export default function CatchUpPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
@@ -117,17 +108,13 @@ export default function CatchUpPage() {
   async function handleSubmit() {
     if (!activeProfile || !selected) return;
     const current = questions[index];
-    const r = await submitResponse(activeProfile.id, current.question.id, selected);
+    const [r, assignedExtra] = await Promise.all([
+      submitResponse(activeProfile.id, current.question.id, selected),
+      getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id),
+    ]);
     setResponse(r);
-    setStep("reveal");
-  }
-
-  async function handleContinueToExtra() {
-    if (!activeProfile) return;
-    const current = questions[index];
-    const assignedExtra = await getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id);
     setExtra(assignedExtra);
-    setStep("extra");
+    setStep("reveal");
   }
 
   function handleAdvance() {
@@ -223,7 +210,6 @@ export default function CatchUpPage() {
 
   const current = questions[index];
   if (!current) return <Centered>Se încarcă...</Centered>;
-  const isDiscover = current.question.kind === "discover";
   const progressLabel = `Ziua ${current.question.day_number} · ${
     SLOT_LABEL[current.question.slot ?? ""] ?? "Battle"
   } · ${index + 1}/${questions.length}`;
@@ -262,62 +248,44 @@ export default function CatchUpPage() {
     );
   }
 
-  if (step === "reveal") {
-    const isCorrect = !!response?.is_correct;
-    const message = isCorrect
-      ? current.question.correct_reveal_message
-      : current.question.alternative_reveal_message;
-    return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
-        <FlowHeader label="De recuperat" icon={<History size={15} />} onClose={goHome} />
-        <div className="flex flex-1 flex-col gap-6">
-          <div>
-            <p className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-primary">{progressLabel}</p>
-            <div
-              className={`mb-5 flex h-10 w-10 items-center justify-center rounded-full ${isCorrect ? "bg-accent" : "bg-secondary"}`}
-            >
-              {isCorrect ? <Check size={18} className="text-primary" /> : <X size={18} className="text-muted-foreground" />}
-            </div>
-            <p className="text-[24px] font-semibold leading-snug tracking-tight text-foreground">
-              {message ?? (isCorrect ? "Corect" : "Nu chiar 🙂")}
-            </p>
-          </div>
-
-          {current.question.common_core && (
-            <p className="text-[15px] leading-relaxed text-secondary-foreground">{current.question.common_core}</p>
-          )}
-
-          {current.question.one_thing && (
-            <div className="border-l-2 border-primary py-1 pl-4">
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">The One Thing</p>
-              <p className="text-[15px] font-medium leading-snug text-foreground">{current.question.one_thing}</p>
-            </div>
-          )}
-
-          <div className="mt-auto pt-4">
-            <Btn onClick={isDiscover ? handleContinueToExtra : handleAdvance}>
-              {isDiscover ? "MERGI MAI DEPARTE" : "Continuă"}
-            </Btn>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  // step === "extra"
+  // step === "reveal" -- reveal, Extra, Explore links and the "ask
+  // others" line all show together, immediately, no extra tap.
+  const isCorrect = !!response?.is_correct;
+  const message = isCorrect ? current.question.correct_reveal_message : current.question.alternative_reveal_message;
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
       <FlowHeader label="De recuperat" icon={<History size={15} />} onClose={goHome} />
       <div className="flex flex-1 flex-col gap-5">
-        {extra ? (
+        <div>
+          <p className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-primary">{progressLabel}</p>
+          <div
+            className={`mb-5 flex h-10 w-10 items-center justify-center rounded-full ${isCorrect ? "bg-accent" : "bg-secondary"}`}
+          >
+            {isCorrect ? <Check size={18} className="text-primary" /> : <X size={18} className="text-muted-foreground" />}
+          </div>
+          <p className="text-[22px] font-semibold leading-snug tracking-tight text-foreground">
+            {message ?? (isCorrect ? "Corect" : "Nu chiar 🙂")}
+          </p>
+        </div>
+
+        {current.question.common_core && (
+          <p className="text-[15px] leading-relaxed text-secondary-foreground">{current.question.common_core}</p>
+        )}
+
+        {current.question.one_thing && (
+          <div className="border-l-2 border-primary py-1 pl-4">
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">The One Thing</p>
+            <p className="text-[15px] font-medium leading-snug text-foreground">{current.question.one_thing}</p>
+          </div>
+        )}
+
+        {extra && (
           <div className="flex flex-col gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
               {extra.extra_type ? EXTRA_TYPE_LABEL[extra.extra_type] : "EXTRA"}
             </span>
-            <p className="text-[17px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
+            <p className="text-[15px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
           </div>
-        ) : (
-          <p className="text-muted-foreground">Nu mai sunt Extra-uri disponibile pentru această întrebare.</p>
         )}
 
         {current.exploreLinks.length > 0 && (
@@ -338,14 +306,18 @@ export default function CatchUpPage() {
           </div>
         )}
 
-        <p className="text-[14px] leading-relaxed text-disabled">
-          Ceilalți au descoperit ceva puțin diferit.
-          <br />
-          Întreabă-i ce au primit. 👋
-        </p>
+        {extra && (
+          <p className="text-[13px] leading-relaxed text-disabled">
+            Ceilalți au descoperit ceva puțin diferit.
+            <br />
+            Întreabă-i ce au primit. 👋
+          </p>
+        )}
 
         <div className="mt-auto pt-4">
-          <Btn onClick={handleAdvance}>Continuă</Btn>
+          <Btn onClick={handleAdvance}>
+            {index + 1 >= questions.length ? "GATA" : "URMĂTOAREA ÎNTREBARE"}
+          </Btn>
         </div>
       </div>
     </main>

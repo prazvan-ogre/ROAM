@@ -38,7 +38,7 @@ Everything else maps 1:1 to the spec's entity list.
 | `battles` | A themed group of Battle questions for a given day; `is_final` marks the Final Battle. |
 | `questions` | Discover or Battle questions (`kind` discriminates). `battle_id`/`slot` set only for their respective kind. Carries the full Discover content shape: `common_core`, `one_thing`, `correct_reveal_message`/`alternative_reveal_message`, `sources`, `verified`, `published`. |
 | `answer_options` | Options for a question; `is_correct` marks the right one(s). |
-| `extras` | Bonus content tied to one Discover question (`question_id`), typed (`extra_type`: know/think/connect/ask/explore) and scoped by `audience` (all/adult/child). Also carries `sources`/`verified`/`published`. |
+| `extras` | Bonus content tied to one question (`question_id`) -- Discover or Battle alike, product owner request -- typed (`extra_type`: know/think/connect/ask/explore) and scoped by `audience` (all/adult/child). Also carries `sources`/`verified`/`published`. |
 | `explore_links` | External "rabbit hole" links, attached to a question and/or an extra. |
 
 ### Activity (participant-generated, anon-writable, mostly anon-readable)
@@ -148,12 +148,15 @@ supabase db push
 
 `supabase/seed.sql` creates the **Kassandra 2026** trip (`ro`, 7 days)
 with all 7 days of Discover (Morning + Lunch) and Battle content, plus
-the 10-question Final Battle on Day 7 — supplied directly by the product
-owner, not AI-drafted — but left `verified = false`, `published = false`
-per the content-integrity rule above. It's idempotent (deletes and
-recreates the `kassandra-2026` trip by slug) — safe to re-run locally.
-The file's header comment has the exact `update` statements to run once
-the content is reviewed and approved.
+the 10-question Final Battle on Day 7 — the questions, options, and
+Discover Extras supplied directly by the product owner, not AI-drafted;
+the Battle Extras (one per Battle/Final Battle question) are AI-drafted,
+since the source doc didn't cover those — but everything is left
+`verified = false`, `published = false` per the content-integrity rule
+above, the AI-drafted Battle Extras included. It's idempotent (deletes
+and recreates the `kassandra-2026` trip by slug) — safe to re-run
+locally. The file's header comment has the exact `update` statements to
+run once the content is reviewed and approved.
 
 **Do not re-run it against production** once real pilot activity
 (participants/responses) exists for this trip — it deletes the trip.
