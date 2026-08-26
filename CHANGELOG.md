@@ -50,6 +50,13 @@
   click-to-expand into the answer/Common Core/One Thing/battle result),
   and Utilizatori (`/trip/[slug]/users` — profile list + add-child, moved
   off the Dashboard into its own page).
+- Participant leaderboard on the Dashboard (product owner request — the
+  spec explicitly lists individual leaderboards as out of scope, called
+  out here as a deliberate exception): every participant trip-wide who
+  has answered at least one Discover question, ranked by score (sum of
+  `questions.points` for correct answers) with a medal for the top 3.
+  Framed as a secondary "just for fun" list below the real competition,
+  the Parents-vs-Kids score.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

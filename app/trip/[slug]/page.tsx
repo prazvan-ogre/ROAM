@@ -22,6 +22,7 @@ import {
   getTripLeaderboard,
 } from "@/lib/battle";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
+import { getParticipantLeaderboard, type LeaderboardEntry } from "@/lib/discover";
 import type { BattleTeam } from "@/lib/supabase/types";
 
 interface SlotStatus {
@@ -55,6 +56,7 @@ export default function TripHomePage() {
   const [dailyScore, setDailyScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
   const [tripScore, setTripScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
   const [participantCounts, setParticipantCounts] = useState<ParticipantCounts>(EMPTY_COUNTS);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
 
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
@@ -130,6 +132,10 @@ export default function TripHomePage() {
     setParticipantCounts(await getParticipantCounts(tripId));
   }, []);
 
+  const loadLeaderboard = useCallback(async (tripId: string) => {
+    setLeaderboard(await getParticipantLeaderboard(tripId));
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -143,7 +149,7 @@ export default function TripHomePage() {
         if (!t) return;
         const list = await loadProfiles(t.id);
         if (cancelled) return;
-        await loadParticipantCounts(t.id);
+        await Promise.all([loadParticipantCounts(t.id), loadLeaderboard(t.id)]);
         if (cancelled) return;
         if (list.length > 0) {
           const day = currentTripDay(t);
@@ -163,7 +169,7 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus, loadParticipantCounts]);
+  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus, loadParticipantCounts, loadLeaderboard]);
 
   async function handleJoin(e: FormEvent) {
     e.preventDefault();
@@ -178,6 +184,7 @@ export default function TripHomePage() {
         loadSlotStatus(trip.id, day, list.map((p) => p.id)),
         loadBattleStatus(trip.id, day),
         loadParticipantCounts(trip.id),
+        loadLeaderboard(trip.id),
       ]);
     } finally {
       setJoining(false);
@@ -254,6 +261,8 @@ export default function TripHomePage() {
         dailyScore={dailyScore}
         tripScore={tripScore}
       />
+
+      <ParticipantLeaderboard entries={leaderboard} />
 
       <section className="flex flex-col gap-4">
         <SlotCard
@@ -350,6 +359,40 @@ function Stat({ label, value }: { label: string; value: string }) {
       <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 font-medium">{value}</p>
     </div>
+  );
+}
+
+const RANK_MEDAL: Record<number, string> = { 0: "🥇", 1: "🥈", 2: "🥉" };
+
+// Secondary, "just for fun" list -- the Parents-vs-Kids score above is the
+// real competition (spec section 17). Only shows participants who've
+// answered at least one Discover question, so it doesn't just list
+// everyone at 0.
+function ParticipantLeaderboard({ entries }: { entries: LeaderboardEntry[] }) {
+  const ranked = entries.filter((e) => e.answered > 0);
+  if (ranked.length === 0) return null;
+
+  return (
+    <section className="flex flex-col gap-2 rounded-2xl border border-slate-200 px-5 py-4">
+      <p className="text-xs uppercase tracking-wide text-slate-500">
+        Cine răspunde la toate întrebările? (doar pentru distracție)
+      </p>
+      <ol className="flex flex-col gap-1">
+        {ranked.map((e, i) => (
+          <li key={e.participantId} className="flex items-center justify-between text-sm">
+            <span>
+              {RANK_MEDAL[i] ?? `${i + 1}.`} {e.displayName}{" "}
+              <span className="text-xs uppercase text-slate-400">
+                {e.role === "adult" ? "Adult" : "Copil"}
+              </span>
+            </span>
+            <span className="text-slate-600">
+              {e.score} pct · {e.answered} răspunsuri
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
