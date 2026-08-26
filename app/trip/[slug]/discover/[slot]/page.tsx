@@ -241,7 +241,7 @@ export default function DiscoverPage() {
               <div>
                 <p className="text-[15px] font-medium text-foreground">{p.display_name}</p>
                 <p className="text-[13px] text-muted-foreground">
-                  {p.role === "adult" ? "Adult" : `Copil · ${p.age} ani`}
+                  {p.role === "adult" ? "Adult" : p.age ? `Copil · ${p.age} ani` : "Copil"}
                 </p>
               </div>
             </button>

@@ -57,17 +57,13 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
       return;
     }
     if (!role || !name.trim()) return;
-    if (role === "child" && !Number(age)) {
-      setError("Introdu vârsta.");
-      return;
-    }
     setSubmitting(true);
     setError(null);
     try {
       const participant =
         role === "adult"
           ? await getOrCreateAdultParticipant(trip.id, name.trim())
-          : await addChildProfile(trip.id, name.trim(), Number(age));
+          : await addChildProfile(trip.id, name.trim(), age ? Number(age) : null);
       await trackEvent(trip.id, "trip_joined", participant.id);
       setParticipantId(participant.id);
       goNext();
@@ -160,7 +156,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
             {role === "child" && (
               <input
                 className="rounded-xl border border-border bg-card px-4 py-3 text-center text-[15px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
-                placeholder="Vârsta"
+                placeholder="Vârsta (opțional)"
                 type="number"
                 min={0}
                 max={17}

@@ -143,6 +143,12 @@
   earlier days, which show the "Final Battle în X zile" countdown line
   instead. Previously it was fetched and shown as soon as the Final Battle
   content existed in the database, regardless of the current day.
+- Age is no longer required for a child profile (product owner request):
+  the onboarding wizard's and Setări's age field is now optional
+  everywhere a child profile is created or edited (`addChildProfile`'s
+  `age` param is `number | null`). Every "Copil · X ani" label now falls
+  back to plain "Copil" when no age was given, instead of rendering
+  "Copil · null ani".
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

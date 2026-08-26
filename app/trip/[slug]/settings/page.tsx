@@ -70,10 +70,10 @@ export default function SettingsPage() {
 
   async function handleAddChild(e: FormEvent) {
     e.preventDefault();
-    if (!trip || !childName.trim() || !childAge) return;
+    if (!trip || !childName.trim()) return;
     const adult = profiles.find((p) => p.role === "adult");
     if (!adult) return;
-    await addChildProfile(trip.id, childName.trim(), Number(childAge), adult.id);
+    await addChildProfile(trip.id, childName.trim(), childAge ? Number(childAge) : null, adult.id);
     setChildName("");
     setChildAge("");
     setShowAddChild(false);
@@ -243,7 +243,7 @@ function UsersSection({
             <div>
               <p className="text-[15px] font-medium text-foreground">{p.display_name}</p>
               <p className="text-[13px] text-muted-foreground">
-                {p.role === "adult" ? "Adult" : `Copil · ${p.age} ani`}
+                {p.role === "adult" ? "Adult" : p.age ? `Copil · ${p.age} ani` : "Copil"}
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -273,7 +273,7 @@ function UsersSection({
             />
             <input
               className="rounded-xl border border-border bg-background px-4 py-3 text-[15px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
-              placeholder="Vârsta"
+              placeholder="Vârsta (opțional)"
               type="number"
               min={0}
               max={17}
@@ -367,7 +367,7 @@ function EditProfileForm({
       {role === "child" && (
         <input
           className="rounded-xl border border-border bg-background px-4 py-3 text-[15px] text-foreground outline-none transition-colors focus:border-primary"
-          placeholder="Vârsta"
+          placeholder="Vârsta (opțional)"
           type="number"
           min={0}
           max={17}
