@@ -71,7 +71,10 @@ export default function LeaderboardPage() {
       setTotalRanking(total);
       setTodayRanking(today);
       setStep("ready");
-    } catch {
+    } catch (err) {
+      // Logged rather than swallowed -- the generic error screen hides real
+      // causes (e.g. trip_battle_win_tally() not yet migrated) otherwise.
+      console.error("Leaderboard load failed", err);
       setStep("error");
     }
   }, [slug]);
