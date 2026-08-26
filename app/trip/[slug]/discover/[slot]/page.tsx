@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Check, X, ExternalLink } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
@@ -44,6 +44,7 @@ const EXTRA_TYPE_LABEL: Record<string, string> = {
 
 export default function DiscoverPage() {
   const { slug, slot } = useParams<{ slug: string; slot: string }>();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const discoverSlot = slot as QuestionSlot;
 
@@ -58,6 +59,11 @@ export default function DiscoverPage() {
   const [submitting, setSubmitting] = useState(false);
   const [openedAt] = useState(() => Date.now());
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
+  // A past day (?day=N< today) is a catch-up attempt (product owner spec:
+  // someone joining partway through the trip can still answer previous
+  // days' Discover questions) -- the time-of-day window only makes sense
+  // for today's own slot, so it's skipped entirely for a past day.
+  const [isPastDay, setIsPastDay] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +74,15 @@ export default function DiscoverPage() {
         if (cancelled || !t) return;
         setTrip(t);
 
+        const today = currentTripDay(t);
+        const dayParam = searchParams.get("day");
+        const targetDay = dayParam ? Number(dayParam) : today;
+        if (!Number.isInteger(targetDay) || targetDay < 1 || targetDay > today) {
+          setStep("unavailable");
+          return;
+        }
+        setIsPastDay(targetDay < today);
+
         const list = await listProfilesForDevice(t.id);
         if (cancelled) return;
         if (list.length === 0) {
@@ -76,7 +91,7 @@ export default function DiscoverPage() {
         }
         setProfiles(list);
 
-        const c = await getDiscoverQuestion(t.id, currentTripDay(t), discoverSlot);
+        const c = await getDiscoverQuestion(t.id, targetDay, discoverSlot);
         if (cancelled) return;
         if (!c) {
           setStep("unavailable");
@@ -94,7 +109,7 @@ export default function DiscoverPage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, discoverSlot]);
+  }, [slug, discoverSlot, searchParams]);
 
   const handleSelectProfile = useCallback(
     async (profile: Participant) => {
@@ -110,16 +125,20 @@ export default function DiscoverPage() {
       }
 
       // Already-answered participants can always review (above); a fresh
-      // attempt is only allowed inside this slot's time window.
-      const availability = getSlotAvailability(discoverSlot);
-      if (availability.status !== "open") {
-        setClosedInfo(availability);
-        setStep("closed");
-      } else {
-        setStep("question");
+      // attempt on today's own slot is only allowed inside its time
+      // window -- a catch-up attempt on a past day skips that check, the
+      // window has no meaning for a day that's already over.
+      if (!isPastDay) {
+        const availability = getSlotAvailability(discoverSlot);
+        if (availability.status !== "open") {
+          setClosedInfo(availability);
+          setStep("closed");
+          return;
+        }
       }
+      setStep("question");
     },
-    [trip, content, discoverSlot],
+    [trip, content, discoverSlot, isPastDay],
   );
 
   // Skip the "Cine răspunde?" screen when there's only one profile on

@@ -160,6 +160,23 @@
   daily Battle's own recorded result (each has its own `battle_id`), but
   it did let the "PĂRINȚI vs COPII" season tally count that evening
   before it should.
+- Discover catch-up (product owner spec): someone joining partway through
+  the trip can now answer previous days' morning/lunch questions, not
+  just today's — the Dashboard's new "De recuperat" section lists every
+  past-day Discover question at least one of the device's participants
+  hasn't answered yet, linking to `/trip/[slug]/discover/[slot]?day=N`.
+  The Discover route now accepts that optional `day` param (validated
+  against `1..currentTripDay`, `getPendingDiscoverCatchUp` in
+  `discover.ts` finds the pending list) and skips the time-of-day
+  availability window entirely for a day in the past — the window only
+  means something for today's own slot. Battle stays exactly as before:
+  it's a once-per-evening team submission, not a per-participant
+  response, so there's nothing to "catch up" on, and a late joiner
+  participates in future Battles (including the Final Battle, gated to
+  the last day per the previous entry) the same as everyone else.
+  Verified the pending-list query against seeded responses for a
+  partially-answered vs. fully-caught-up device on the same scratch
+  local Postgres.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
