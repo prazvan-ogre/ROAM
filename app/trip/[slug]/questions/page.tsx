@@ -299,7 +299,7 @@ function BattleRow({
       {expanded && (
         <div className="flex flex-col gap-3 border-t border-secondary px-4 pb-5 pt-4">
           <p className="text-[15px] font-semibold text-foreground">
-            PĂRINȚI {item.leaderboard.adults} — COPII {item.leaderboard.kids}
+            PĂRINȚI {Math.round(item.score.adults)} — COPII {Math.round(item.score.kids)}
           </p>
           <div className="flex flex-col gap-2">
             {item.content.questions.map(({ question, options }) => {

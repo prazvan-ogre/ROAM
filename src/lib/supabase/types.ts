@@ -221,13 +221,9 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
-      battle_leaderboard: {
+      battle_team_score: {
         Args: { p_battle_id: string };
-        Returns: { team: BattleTeam; total_score: number }[];
-      };
-      trip_battle_leaderboard: {
-        Args: { p_trip_id: string };
-        Returns: { team: BattleTeam; total_score: number }[];
+        Returns: { team: BattleTeam; score: number }[];
       };
       trip_battle_win_tally: {
         Args: { p_trip_id: string };

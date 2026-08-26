@@ -10,7 +10,7 @@ import { TripNav } from "@/components/TripNav";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { Centered } from "@/components/ui";
 import { supabase } from "@/lib/supabase/client";
-import { getDailyBattle, getFinalBattle, isBattleCompleted } from "@/lib/battle";
+import { getDailyBattle, getFinalBattle } from "@/lib/battle";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
 
 interface SlotStatus {
@@ -86,20 +86,39 @@ export default function TripHomePage() {
     [],
   );
 
-  const loadBattleStatus = useCallback(async (tripId: string, day: number, isLastDay: boolean) => {
-    const [daily, final] = await Promise.all([
-      getDailyBattle(tripId, day),
-      isLastDay ? getFinalBattle(tripId) : Promise.resolve(null),
-    ]);
+  const loadBattleStatus = useCallback(
+    async (tripId: string, day: number, isLastDay: boolean, profileIds: string[]) => {
+      const [daily, final] = await Promise.all([
+        getDailyBattle(tripId, day),
+        isLastDay ? getFinalBattle(tripId) : Promise.resolve(null),
+      ]);
 
-    const [dailyCompleted, finalCompleted] = await Promise.all([
-      daily ? isBattleCompleted(daily.battle.id) : Promise.resolve(false),
-      final ? isBattleCompleted(final.battle.id) : Promise.resolve(false),
-    ]);
+      // Everyone on this device answers Battle questions individually
+      // now (like Discover), so "completed" here means this device's own
+      // participants have already answered, same check as Discover's
+      // slot status -- not a trip-wide "has anyone at all played" flag.
+      async function isDeviceCompleted(content: typeof daily) {
+        if (!content || profileIds.length === 0) return false;
+        const questionIds = content.questions.map((q) => q.question.id);
+        if (questionIds.length === 0) return false;
+        const { count } = await supabase
+          .from("responses")
+          .select("id", { count: "exact", head: true })
+          .in("question_id", questionIds)
+          .in("participant_id", profileIds);
+        return (count ?? 0) > 0;
+      }
 
-    setBattleStatus({ available: !!daily && daily.questions.length > 0, completed: dailyCompleted });
-    setFinalStatus({ available: !!final && final.questions.length > 0, completed: finalCompleted });
-  }, []);
+      const [dailyCompleted, finalCompleted] = await Promise.all([
+        isDeviceCompleted(daily),
+        isDeviceCompleted(final),
+      ]);
+
+      setBattleStatus({ available: !!daily && daily.questions.length > 0, completed: dailyCompleted });
+      setFinalStatus({ available: !!final && final.questions.length > 0, completed: finalCompleted });
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -116,9 +135,10 @@ export default function TripHomePage() {
         if (cancelled) return;
         if (list.length > 0) {
           const day = currentTripDay(t);
+          const profileIds = list.map((p) => p.id);
           await Promise.all([
-            loadSlotStatus(t.id, day, list.map((p) => p.id)),
-            loadBattleStatus(t.id, day, day >= t.duration_days),
+            loadSlotStatus(t.id, day, profileIds),
+            loadBattleStatus(t.id, day, day >= t.duration_days, profileIds),
           ]);
         }
       } catch {
@@ -138,9 +158,10 @@ export default function TripHomePage() {
     if (!trip) return;
     const list = await loadProfiles(trip.id);
     const day = currentTripDay(trip);
+    const profileIds = list.map((p) => p.id);
     await Promise.all([
-      loadSlotStatus(trip.id, day, list.map((p) => p.id)),
-      loadBattleStatus(trip.id, day, day >= trip.duration_days),
+      loadSlotStatus(trip.id, day, profileIds),
+      loadBattleStatus(trip.id, day, day >= trip.duration_days, profileIds),
     ]);
   }
 

@@ -4,14 +4,12 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice } from "@/lib/participant";
-import { getDailyBattle, isBattleCompleted, getBattleLeaderboard, type BattleContent } from "@/lib/battle";
+import { listProfilesForDevice, type Participant } from "@/lib/participant";
+import { getDailyBattle, type BattleContent } from "@/lib/battle";
 import { BattleFlow } from "@/components/BattleFlow";
-import type { BattleTeam } from "@/lib/supabase/types";
-import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Centered } from "@/components/ui";
 
-type Step = "loading" | "error" | "not-joined" | "unavailable" | "closed" | "already-played" | "play";
+type Step = "loading" | "error" | "not-joined" | "unavailable" | "play";
 
 export default function DailyBattlePage() {
   const { slug } = useParams<{ slug: string }>();
@@ -19,8 +17,7 @@ export default function DailyBattlePage() {
   const [step, setStep] = useState<Step>("loading");
   const [trip, setTrip] = useState<Trip | null>(null);
   const [content, setContent] = useState<BattleContent | null>(null);
-  const [score, setScore] = useState<Record<BattleTeam, number>>({ adults: 0, kids: 0 });
-  const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
+  const [profiles, setProfiles] = useState<Participant[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,12 +28,13 @@ export default function DailyBattlePage() {
         if (cancelled || !t) return;
         setTrip(t);
 
-        const profiles = await listProfilesForDevice(t.id);
+        const list = await listProfilesForDevice(t.id);
         if (cancelled) return;
-        if (profiles.length === 0) {
+        if (list.length === 0) {
           setStep("not-joined");
           return;
         }
+        setProfiles(list);
 
         const battle = await getDailyBattle(t.id, currentTripDay(t));
         if (cancelled) return;
@@ -45,24 +43,7 @@ export default function DailyBattlePage() {
           return;
         }
         setContent(battle);
-
-        const played = await isBattleCompleted(battle.battle.id);
-        if (cancelled) return;
-        if (played) {
-          const leaderboard = await getBattleLeaderboard(battle.battle.id);
-          if (cancelled) return;
-          setScore(leaderboard);
-          setStep("already-played");
-          return;
-        }
-
-        const availability = getSlotAvailability("battle");
-        if (availability.status !== "open") {
-          setClosedInfo(availability);
-          setStep("closed");
-        } else {
-          setStep("play");
-        }
+        setStep("play");
       } catch {
         if (!cancelled) setStep("error");
       }
@@ -105,35 +86,7 @@ export default function DailyBattlePage() {
       </Centered>
     );
   }
-  if (step === "closed") {
-    return (
-      <Centered>
-        {closedInfo?.status === "before" ? (
-          <p>Battle-ul devine disponibil la {closedInfo.opensAt}.</p>
-        ) : (
-          <p>Battle-ul s-a încheiat pentru azi.</p>
-        )}
-        <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
-          Înapoi acasă
-        </Link>
-      </Centered>
-    );
-  }
-  if (step === "already-played") {
-    return (
-      <Centered>
-        <p className="text-[24px] font-semibold text-foreground">
-          PĂRINȚI {score.adults} — COPII {score.kids}
-        </p>
-        <p className="mt-2 text-muted-foreground">Battle-ul de azi e deja jucat.</p>
-        <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
-          Înapoi acasă
-        </Link>
-      </Centered>
-    );
-  }
-
   if (!trip || !content) return <Centered>Se încarcă...</Centered>;
 
-  return <BattleFlow content={content} tripId={trip.id} slug={slug} isFinal={false} />;
+  return <BattleFlow content={content} tripId={trip.id} slug={slug} isFinal={false} profiles={profiles} />;
 }

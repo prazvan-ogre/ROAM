@@ -399,26 +399,34 @@ function InfoSection() {
     <div className="flex flex-col gap-4 text-[15px] leading-relaxed text-secondary-foreground">
       <InfoCard title="Cum se joacă">
         În fiecare zi sunt trei momente: Dimineața și Prânzul (câte o întrebare de
-        descoperit, individual), și Battle-ul de seară (Părinți vs. Copii).
+        descoperit, individual), și Battle-ul de seară (Părinți vs. Copii). La Battle
+        răspunde fiecare participant pe rând, de pe același telefon.
       </InfoCard>
 
-      <InfoCard title="Scorul serii">
-        La Battle-ul de seară, fiecare răspuns corect valorează <strong>10 puncte</strong>.
-        La Marea Finală (ultima seară), fiecare răspuns corect valorează{" "}
-        <strong>5 puncte</strong>, adăugate la scorul acumulat până atunci.
+      <InfoCard title="Punctajul">
+        Fiecare răspuns corect valorează <strong>10 puncte</strong> — la Dimineață,
+        Prânz și Battle-ul de seară. La Marea Finală (ultima seară), fiecare răspuns
+        corect valorează <strong>5 puncte</strong>.
       </InfoCard>
 
       <InfoCard title="PĂRINȚI vs COPII">
-        Scorul afișat pe pagina Scor nu e suma brută de puncte, ci numărul de seri
-        câștigate: echipa cu mai multe puncte în seara respectivă primește +1. În caz
-        de egalitate, ambele echipe primesc +1. Scorul total e suma acestor seri
-        câștigate pe parcursul întregii competiții.
+        La fiecare Battle, scorul unei echipe e media punctelor membrilor ei (suma
+        punctelor împărțită la câți au răspuns) — ca numărul de adulți și de copii să
+        nu fie egal să nu conteze. Echipa cu media mai mare primește +1 la scorul
+        total; egalitate → +1 pentru ambele echipe. Doar răspunsurile de la Battle
+        contează pentru acest scor — cele de dimineață/prânz nu.
+      </InfoCard>
+
+      <InfoCard title="Rezultatul serii">
+        Rezultatul Battle-ului nu e vizibil primele 15 minute de la primul răspuns, cât
+        încă mai răspund ceilalți. După ce trece timpul, cine mai răspunde încă
+        primește punctele la scorul personal, dar nu mai schimbă rezultatul serii.
       </InfoCard>
 
       <InfoCard title="Clasamentul individual">
         Clasamentul „Cine răspunde la toate întrebările?” din pagina Scor e separat de
-        scorul Părinți vs. Copii — e doar pentru distracție, calculat din întrebările de
-        dimineață/prânz la care a răspuns fiecare participant.
+        scorul Părinți vs. Copii — e doar pentru distracție, calculat din toate
+        răspunsurile corecte ale fiecărui participant (dimineață, prânz și Battle).
       </InfoCard>
     </div>
   );

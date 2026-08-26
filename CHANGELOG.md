@@ -191,6 +191,52 @@
   `getBattleLeaderboard`/`getTripLeaderboard` raw-point-sum calls that
   fed it are dropped from this page (still used elsewhere: `/battle`,
   `/final`, `history.ts`, and internally by `getBattleResult`).
+- Battle scoring overhaul, take two (product owner follow-up): every
+  participant now answers Battle questions individually, pass-the-phone
+  style (select your own profile, then work through the evening's
+  questions one after another) — not one shared submission per team via
+  a "controller" device. `BattleFlow.tsx` was rebuilt around this,
+  mirroring the Discover flow's select-profile/question/reveal pattern;
+  `/battle` and `/final` no longer pre-block the whole page on a
+  battle-wide "already played" flag, since that's no longer meaningful
+  per participant.
+  - To keep team size from mattering (e.g. 3 kids vs. 2 adults), a
+    team's score for a battle is now the **average** of its members'
+    points (sum ÷ distinct participants who answered), not the raw sum —
+    `battle_team_score()` (new SQL function, replacing
+    `battle_leaderboard()`/`trip_battle_leaderboard()`, both dropped) and
+    an updated `trip_battle_win_tally()` compare averages. Battles played
+    before this feature (old controller-submitted rows, no
+    `participant_id`) keep their original raw-sum result instead of
+    being retroactively recomputed — the migration resolves each battle
+    in whichever mode its own rows are in.
+  - Only Battle answers ever count toward the "PĂRINȚI vs COPII" score
+    (unchanged) — Discover answers never did and still don't.
+  - A team's evening result stays hidden for 15 minutes after the first
+    individual answer to that battle (`getBattleWindowStatus` in
+    `battle.ts`), so nobody sees a partial score while others are still
+    deciding — enforced everywhere the result is shown (BattleFlow's own
+    "done" screen, and the Scor page's "Scor zilnic" tab). A late answer
+    past that window is still recorded to the individual's own score
+    (`responses`, via `recordBattleAnswer`) but is excluded from
+    `battle_scores`, so it can never move the team result — the same
+    guarantee the wizard's catch-up step already has for past battles.
+  - `getParticipantLeaderboard`'s individual score already summed every
+    kind of correct answer (Discover and Battle alike, from the previous
+    entry) — unchanged, now simply also fed by everyone's live Battle
+    answers, not just wizard catch-up ones.
+  - Known gap: the recap page (Întrebări) doesn't re-check the 15-minute
+    window before showing a battle's result, unlike BattleFlow and the
+    Scor page — in practice only relevant for a battle still inside that
+    window, which nobody would yet have reason to look up in the recap.
+  - Verified on a scratch local Postgres with an intentionally uneven
+    battle (2 adults, both fully correct, raw sum 60; 3 kids, mostly
+    correct, raw sum 70): confirmed the average-based comparison
+    (adults 10.0 vs. kids 7.78) gives adults the evening's win — the
+    opposite of what the old raw-sum comparison would have given — and
+    that a separately seeded legacy (no `participant_id`) battle still
+    resolves by raw sum, with the hybrid trip-wide tally correctly
+    combining both (1-1).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
