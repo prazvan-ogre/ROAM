@@ -185,7 +185,7 @@ export default function LeaderboardPage() {
                 <div className="ml-3 min-w-0 flex-1">
                   <p className="text-[16px] font-semibold text-foreground">{e.displayName}</p>
                   <p className="text-[13px] text-muted-foreground">
-                    {e.role === "adult" ? "Adult" : `Copil · ${e.age} ani`}
+                    {e.role === "adult" ? "Adult" : e.age ? `Copil · ${e.age} ani` : "Copil"}
                   </p>
                 </div>
                 <p className={`shrink-0 text-[16px] font-bold ${i === 0 ? "text-primary" : "text-foreground"}`}>

@@ -114,11 +114,12 @@ export async function deleteParticipant(id: string): Promise<void> {
 // managingAdultId is optional: the onboarding wizard lets a child be the
 // first (and possibly only) participant on their own device, with no
 // adult around yet to manage them (child_needs_manager was relaxed for
-// exactly this -- see the onboarding_wizard migration).
+// exactly this -- see the onboarding_wizard migration). age is optional
+// too (product owner request) -- a family may not want to enter it.
 export async function addChildProfile(
   tripId: string,
   displayName: string,
-  age: number,
+  age: number | null,
   managingAdultId?: string,
 ): Promise<Participant> {
   const deviceId = getDeviceId();
