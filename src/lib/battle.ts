@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { submitResponse, type AnswerOption, type Question, type Response } from "./discover";
+import { submitResponse, type AnswerOption, type ExploreLink, type Question, type Response } from "./discover";
 import type { Database, BattleTeam } from "./supabase/types";
 
 export type Battle = Database["public"]["Tables"]["battles"]["Row"];
@@ -7,6 +7,7 @@ export type Battle = Database["public"]["Tables"]["battles"]["Row"];
 export interface BattleQuestion {
   question: Question;
   options: AnswerOption[];
+  exploreLinks: ExploreLink[];
 }
 
 export interface BattleContent {
@@ -25,13 +26,22 @@ export async function loadBattleContent(battle: Battle): Promise<BattleContent> 
 
   const withOptions: BattleQuestion[] = [];
   for (const question of questions ?? []) {
-    const { data: options, error: optionsError } = await supabase
-      .from("answer_options")
-      .select("*")
-      .eq("question_id", question.id)
-      .order("order_index", { ascending: true });
+    const [{ data: options, error: optionsError }, { data: exploreLinks, error: exploreError }] =
+      await Promise.all([
+        supabase
+          .from("answer_options")
+          .select("*")
+          .eq("question_id", question.id)
+          .order("order_index", { ascending: true }),
+        supabase
+          .from("explore_links")
+          .select("*")
+          .eq("question_id", question.id)
+          .order("order_index", { ascending: true }),
+      ]);
     if (optionsError) throw optionsError;
-    withOptions.push({ question, options: options ?? [] });
+    if (exploreError) throw exploreError;
+    withOptions.push({ question, options: options ?? [], exploreLinks: exploreLinks ?? [] });
   }
 
   return { battle, questions: withOptions };
@@ -81,7 +91,7 @@ const BATTLE_POINTS = { normal: 10, final: 5 } as const;
 // sees the running score (product owner spec). Late answers past that
 // window still count personally (submitResponse below) but are excluded
 // from battle_scores, so they can't move the team result -- same
-// guarantee as a wizard catch-up answer to a past battle.
+// guarantee as a catch-up answer to a past battle (getCatchUpQuestions).
 const RESULT_WINDOW_MS = 15 * 60 * 1000;
 
 export interface BattleWindowStatus {
@@ -120,9 +130,9 @@ export async function getBattleWindowStatus(battleId: string): Promise<BattleWin
   };
 }
 
-// One participant's answer to one Battle question, live (not a wizard
-// catch-up answer to a past battle -- see getCatchUpQuestions, which
-// never touches battle_scores at all). Always records a personal
+// One participant's answer to one Battle question, live (not a catch-up
+// answer to a past battle -- see getCatchUpQuestions, which never
+// touches battle_scores at all). Always records a personal
 // `responses` row (submitResponse, same as Discover -- feeds the
 // individual leaderboard and prevents answering the same question
 // twice). Also adds a battle_scores row with this participant's team +

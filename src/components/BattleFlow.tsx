@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Moon, Check, X } from "lucide-react";
+import { Moon, Check, X, ExternalLink } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 import type { BattleContent, BattleWindowStatus } from "@/lib/battle";
 import { recordBattleAnswer, getBattleWindowStatus, getBattleResult } from "@/lib/battle";
-import type { AnswerOption, Response } from "@/lib/discover";
+import { getOrAssignExtra, type AnswerOption, type Extra, type Response } from "@/lib/discover";
 import { trackEvent } from "@/lib/analytics";
 import type { Participant } from "@/lib/participant";
 import type { BattleTeam } from "@/lib/supabase/types";
@@ -14,6 +14,14 @@ import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Btn, FlowHeader, OptionButton } from "@/components/ui";
 
 type Step = "intro" | "select-profile" | "closed" | "question" | "reveal" | "done";
+
+const EXTRA_TYPE_LABEL: Record<string, string> = {
+  know: "ȘTIAI CĂ",
+  think: "GÂNDEȘTE-TE",
+  connect: "CONEXIUNE",
+  ask: "ÎNTREABĂ",
+  explore: "EXPLOREAZĂ",
+};
 
 // Product owner spec: every participant answers individually now
 // (select their own profile, then work through this evening's Battle
@@ -43,6 +51,7 @@ export function BattleFlow({
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<AnswerOption | null>(null);
   const [myResponse, setMyResponse] = useState<Response | null>(null);
+  const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [passCorrect, setPassCorrect] = useState(0);
   const [passAnswered, setPassAnswered] = useState(0);
@@ -97,6 +106,7 @@ export function BattleFlow({
     setQuestionIndex(firstUnansweredIndex);
     setSelectedOption(null);
     setMyResponse(null);
+    setExtra(null);
     setStep("question");
   }
 
@@ -114,15 +124,19 @@ export function BattleFlow({
     setSubmitting(true);
     try {
       const team: BattleTeam = activeProfile.role === "adult" ? "adults" : "kids";
-      const response = await recordBattleAnswer(
-        activeProfile.id,
-        team,
-        content.battle.id,
-        current.question,
-        selectedOption,
-        isFinal,
-      );
+      const [response, assignedExtra] = await Promise.all([
+        recordBattleAnswer(
+          activeProfile.id,
+          team,
+          content.battle.id,
+          current.question,
+          selectedOption,
+          isFinal,
+        ),
+        getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id),
+      ]);
       setMyResponse(response);
+      setExtra(assignedExtra);
       setPassAnswered((n) => n + 1);
       if (response.is_correct) setPassCorrect((n) => n + 1);
       await trackEvent(tripId, "battle_answered", activeProfile.id, {
@@ -143,6 +157,7 @@ export function BattleFlow({
       setQuestionIndex(nextIndex);
       setSelectedOption(null);
       setMyResponse(null);
+      setExtra(null);
       setStep("question");
     }
   }
@@ -307,6 +322,40 @@ export function BattleFlow({
               Răspuns: {current.options.find((o) => o.is_correct)?.label}
             </p>
           </div>
+
+          {extra && (
+            <div className="flex flex-col gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
+                {extra.extra_type ? EXTRA_TYPE_LABEL[extra.extra_type] : "EXTRA"}
+              </span>
+              <p className="text-[15px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
+            </div>
+          )}
+
+          {current.exploreLinks.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-[12px] font-medium text-disabled">🐇 Vrei să afli mai mult?</p>
+              {current.exploreLinks.map((link) => (
+                <a
+                  key={link.id}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-[14px] text-primary hover:underline"
+                >
+                  <ExternalLink size={13} />
+                  {link.title}
+                </a>
+              ))}
+            </div>
+          )}
+
+          {extra && (
+            <p className="text-[13px] leading-relaxed text-disabled">
+              Ceilalți au primit poate un alt Extra. Întreabă-i ce au aflat ei. 👋
+            </p>
+          )}
+
           <div className="mt-auto pt-4">
             <Btn onClick={handleNext}>
               {questionIndex + 1 >= content.questions.length ? "GATA" : "URMĂTOAREA ÎNTREBARE"}
