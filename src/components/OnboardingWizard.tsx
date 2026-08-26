@@ -34,7 +34,14 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   useEffect(() => {
     getPrizeStatus(trip.id)
       .then(setPrizeStatus)
-      .catch(() => setPrizeStatus({ options: [], votingOpen: false, winner: null, closesAt: null }));
+      .catch((err) => {
+        // Falls back to "no options" rather than blocking the wizard --
+        // but log it, since this hides real causes (e.g. the
+        // prize_options/prize_votes migration not applied yet) behind an
+        // empty-looking prize step.
+        console.error("getPrizeStatus failed", err);
+        setPrizeStatus({ options: [], votingOpen: false, winner: null, closesAt: null });
+      });
   }, [trip.id]);
 
   const stepIndex = STEP_ORDER.indexOf(step);
@@ -106,7 +113,12 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
               Vacanța asta explorăm {trip.name}
             </h1>
             <p className="text-[17px] leading-relaxed text-muted-foreground">
-              Istorie, curiozități și gastronomie — descoperite împreună, o zi pe rând.
+              Halkidiki are trei peninsule întinse în mare ca degetele unei mâini — noi suntem pe
+              prima, Kassandra. Se spune că formele lor vin din legenda tridentului lui Poseidon.
+              Ne așteaptă plaje turcoaz, sate din piatră și câte puțină mitologie la fiecare pas.
+            </p>
+            <p className="text-[15px] leading-relaxed text-muted-foreground">
+              Restul le descoperim pe parcurs, o zi pe rând. 🌊
             </p>
           </div>
         )}
