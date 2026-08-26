@@ -149,6 +149,17 @@
   `age` param is `number | null`). Every "Copil · X ani" label now falls
   back to plain "Copil" when no age was given, instead of rendering
   "Copil · null ani".
+- Fixed: `/trip/[slug]/final` had no day gate at all, unlike Discover and
+  Daily Battle (each already scoped to just today's `day_number`) — so a
+  participant joining partway through the trip (or anyone navigating
+  there directly) could play the Final Battle, which recaps every
+  previous day's content, on day 1. A fresh attempt now requires
+  `currentTripDay(trip) >= trip.duration_days`, same as the Dashboard's
+  Final Battle card; an already-played Final Battle still stays
+  reviewable regardless of day. Playing it early didn't corrupt any past
+  daily Battle's own recorded result (each has its own `battle_id`), but
+  it did let the "PĂRINȚI vs COPII" season tally count that evening
+  before it should.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

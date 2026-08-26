@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { getTripBySlug, type Trip } from "@/lib/trip";
+import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import {
   getFinalBattle,
@@ -61,6 +61,16 @@ export default function FinalBattlePage() {
         if (cancelled) return;
 
         if (!played) {
+          // A fresh attempt is only allowed on the trip's last day -- the
+          // Final Battle recaps every previous day's content, so unlike
+          // Discover/Daily Battle (each gated to just today's own day)
+          // this route had no day check at all, letting anyone play the
+          // whole trip's recap on day 1. Already-played battles stay
+          // reviewable below regardless of day, same as everywhere else.
+          if (currentTripDay(t) < t.duration_days) {
+            setStep("unavailable");
+            return;
+          }
           await trackEvent(t.id, "final_battle_started", undefined, { battle_id: battle.battle.id });
           setStep("battle");
           return;
