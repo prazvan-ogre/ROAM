@@ -80,6 +80,20 @@
   covers score and the Dashboard is action-focused) — dropped the
   now-unused participant-count and battle-leaderboard fetches from that
   page along with it.
+- Replaced all seed content with the product owner's real 7-day Kassandra
+  quiz (uploaded doc, not AI-drafted): trip is now 7 days, not 5. Each
+  day's Morning/Lunch Discover question ships with its 4 supplied
+  "Variante de Explicații & Indicii" as its Extras pool, and each evening
+  Battle has its 3 supplied questions; Day 7's evening battle is the
+  supplied 10-question "Marea Finală" (`is_final = true`) instead of a
+  regular daily battle. Verified against the actual migrations + this
+  seed on a scratch local Postgres 16 (not reachable from this sandbox
+  against the real Supabase project): every question has exactly 3
+  options with exactly 1 correct, every Discover question has exactly 4
+  Extras, every Battle question's day matches its Battle's day. Left
+  `verified = false, published = false` everywhere (same content-integrity
+  gate as before) — the publish-flip SQL is in the `seed.sql` header
+  comment.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
