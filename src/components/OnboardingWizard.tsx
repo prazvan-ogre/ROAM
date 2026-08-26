@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight, Check, X } from "lucide-react";
+import { ArrowRight, Check, X, ExternalLink } from "lucide-react";
 import { getOrCreateAdultParticipant, addChildProfile } from "@/lib/participant";
 import { getPrizeStatus, castPrizeVote, type PrizeStatus } from "@/lib/prize";
 import {
   getCatchUpQuestions,
   submitResponse,
+  getOrAssignExtra,
   type CatchUpQuestion,
   type AnswerOption,
+  type Extra,
   type Response,
 } from "@/lib/discover";
 import { trackEvent } from "@/lib/analytics";
@@ -21,6 +23,13 @@ type Step = "intro" | "name" | "role" | "how" | "catchup" | "prize";
 const STEP_ORDER: Step[] = ["intro", "name", "role", "how", "catchup", "prize"];
 
 const CATCHUP_SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
+const CATCHUP_EXTRA_TYPE_LABEL: Record<string, string> = {
+  know: "ȘTIAI CĂ",
+  think: "GÂNDEȘTE-TE",
+  connect: "CONEXIUNE",
+  ask: "ÎNTREABĂ",
+  explore: "EXPLOREAZĂ",
+};
 
 // First-visit onboarding, product owner spec: theme intro -> collect name
 // -> "adult sau copil" (participant is created right here) -> how the game
@@ -53,6 +62,13 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   const [catchUpIndex, setCatchUpIndex] = useState(0);
   const [catchUpSelected, setCatchUpSelected] = useState<AnswerOption | null>(null);
   const [catchUpResponse, setCatchUpResponse] = useState<Response | null>(null);
+  // "extra" mirrors the live Discover flow's own post-reveal step (product
+  // owner: a missed question still owes the same Extra/rabbit-hole content
+  // the live flow gives, not just a correct/incorrect mark) -- only reached
+  // for a Discover-kind catch-up question, since Extras are only ever
+  // assigned against those (docs/DATABASE.md).
+  const [catchUpPhase, setCatchUpPhase] = useState<"answer" | "extra">("answer");
+  const [catchUpExtra, setCatchUpExtra] = useState<Extra | null>(null);
 
   useEffect(() => {
     getPrizeStatus(trip.id)
@@ -122,11 +138,21 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
     setCatchUpResponse(response);
   }
 
+  async function handleCatchUpContinueToExtra() {
+    if (!catchUpQuestions || !participantId) return;
+    const current = catchUpQuestions[catchUpIndex];
+    const assignedExtra = await getOrAssignExtra(participantId, role ?? "adult", current.question.id);
+    setCatchUpExtra(assignedExtra);
+    setCatchUpPhase("extra");
+  }
+
   function handleCatchUpNext() {
     if (!catchUpQuestions) return;
     const nextIndex = catchUpIndex + 1;
     setCatchUpSelected(null);
     setCatchUpResponse(null);
+    setCatchUpExtra(null);
+    setCatchUpPhase("answer");
     if (nextIndex >= catchUpQuestions.length) {
       setStep("prize");
       return;
@@ -244,6 +270,50 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
           <div className="flex flex-1 flex-col justify-center gap-4">
             {!currentCatchUp ? (
               <p className="text-center text-[15px] text-muted-foreground">Se încarcă...</p>
+            ) : catchUpPhase === "extra" ? (
+              <>
+                <p className="text-center text-[13px] font-semibold uppercase tracking-wide text-primary">
+                  De recuperat · Ziua {currentCatchUp.question.day_number} ·{" "}
+                  {CATCHUP_SLOT_LABEL[currentCatchUp.question.slot ?? ""] ?? "Battle"} · {catchUpIndex + 1}/
+                  {catchUpQuestions?.length ?? 0}
+                </p>
+                {catchUpExtra ? (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-center text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
+                      {catchUpExtra.extra_type ? CATCHUP_EXTRA_TYPE_LABEL[catchUpExtra.extra_type] : "EXTRA"}
+                    </span>
+                    <p className="text-center text-[17px] leading-relaxed text-foreground">
+                      {catchUpExtra.description ?? catchUpExtra.title}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-center text-muted-foreground">
+                    Nu mai sunt Extra-uri disponibile pentru această întrebare.
+                  </p>
+                )}
+                {currentCatchUp.exploreLinks.length > 0 && (
+                  <div className="flex flex-col items-center gap-2">
+                    <p className="text-[12px] font-medium text-disabled">🐇 Vrei să afli mai mult?</p>
+                    {currentCatchUp.exploreLinks.map((link) => (
+                      <a
+                        key={link.id}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 text-[14px] text-primary hover:underline"
+                      >
+                        <ExternalLink size={13} />
+                        {link.title}
+                      </a>
+                    ))}
+                  </div>
+                )}
+                <p className="text-center text-[14px] leading-relaxed text-disabled">
+                  Ceilalți au descoperit ceva puțin diferit.
+                  <br />
+                  Întreabă-i ce au primit. 👋
+                </p>
+              </>
             ) : (
               <>
                 <p className="text-center text-[13px] font-semibold uppercase tracking-wide text-primary">
@@ -283,6 +353,33 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
                     );
                   })}
                 </div>
+                {catchUpResponse && (
+                  <div className="flex flex-col gap-3">
+                    {(() => {
+                      const message = catchUpResponse.is_correct
+                        ? currentCatchUp.question.correct_reveal_message
+                        : currentCatchUp.question.alternative_reveal_message;
+                      return message ? (
+                        <p className="text-center text-[15px] leading-relaxed text-secondary-foreground">{message}</p>
+                      ) : null;
+                    })()}
+                    {currentCatchUp.question.common_core && (
+                      <p className="text-center text-[15px] leading-relaxed text-secondary-foreground">
+                        {currentCatchUp.question.common_core}
+                      </p>
+                    )}
+                    {currentCatchUp.question.one_thing && (
+                      <div className="border-l-2 border-primary py-1 pl-4">
+                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
+                          The One Thing
+                        </p>
+                        <p className="text-[15px] font-medium leading-snug text-foreground">
+                          {currentCatchUp.question.one_thing}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -360,10 +457,25 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
           </Btn>
         ) : step === "catchup" ? (
           <Btn
-            onClick={catchUpResponse ? handleCatchUpNext : handleCatchUpSubmit}
-            disabled={!currentCatchUp || (!catchUpResponse && !catchUpSelected)}
+            onClick={
+              catchUpPhase === "extra"
+                ? handleCatchUpNext
+                : catchUpResponse
+                  ? currentCatchUp?.question.kind === "discover"
+                    ? handleCatchUpContinueToExtra
+                    : handleCatchUpNext
+                  : handleCatchUpSubmit
+            }
+            disabled={!currentCatchUp || (catchUpPhase === "answer" && !catchUpResponse && !catchUpSelected)}
           >
-            {catchUpResponse ? "Continuă" : "Răspunde"} <ArrowRight size={16} />
+            {catchUpPhase === "extra"
+              ? "Continuă"
+              : catchUpResponse
+                ? currentCatchUp?.question.kind === "discover"
+                  ? "Mergi mai departe"
+                  : "Continuă"
+                : "Răspunde"}{" "}
+            <ArrowRight size={16} />
           </Btn>
         ) : step === "prize" ? (
           <Btn onClick={handleFinish} disabled={finishing || !prizeStatus || (canVote && !selectedPrizeId)}>

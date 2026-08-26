@@ -275,6 +275,21 @@
   + Battle questions; joining on day 2 still yields all of day 1
   regardless of time (unchanged); and the Final Battle never appears
   even when its own day's Battle window has closed.
+- Fixed (same report, product owner follow-up): both catch-up surfaces
+  (the wizard step and the new `/catchup` page) only ever confirmed
+  correct/incorrect on a missed question — the message, Common Core, One
+  Thing, assigned Extra, Explore links, and the "ask others" invitation
+  that the live Discover flow always shows were silently skipped. A
+  missed question now gets the same treatment once answered: reveal
+  (message + Common Core + One Thing), then — for a Discover-kind
+  question, since Extras are only ever assigned against those
+  (`docs/DATABASE.md`) — the same assigned Extra + Explore links +
+  "Ceilalți au descoperit ceva puțin diferit. Întreabă-i ce au primit."
+  line as `/discover/[slot]`, via the same `getOrAssignExtra`. A missed
+  Battle question has no Extra step (never did, live or caught up) and
+  goes straight from reveal to the next question. `getCatchUpQuestions`
+  now also fetches each pending question's `explore_links`, same as
+  `getDiscoverQuestion`.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

@@ -3,21 +3,39 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Check, X, History } from "lucide-react";
+import { Check, X, History, ExternalLink } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import {
   getCatchUpQuestions,
   submitResponse,
+  getOrAssignExtra,
   type CatchUpQuestion,
   type AnswerOption,
+  type Extra,
   type Response,
 } from "@/lib/discover";
 import { Btn, FlowHeader, Centered } from "@/components/ui";
 
-type Step = "loading" | "error" | "not-joined" | "select-profile" | "empty" | "question" | "done";
+type Step =
+  | "loading"
+  | "error"
+  | "not-joined"
+  | "select-profile"
+  | "empty"
+  | "question"
+  | "reveal"
+  | "extra"
+  | "done";
 
 const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
+const EXTRA_TYPE_LABEL: Record<string, string> = {
+  know: "ȘTIAI CĂ",
+  think: "GÂNDEȘTE-TE",
+  connect: "CONEXIUNE",
+  ask: "ÎNTREABĂ",
+  explore: "EXPLOREAZĂ",
+};
 
 // Reachable any time from the Dashboard, unlike the wizard's own catch-up
 // step which only ever runs once, right when a participant is first
@@ -28,6 +46,13 @@ const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Pr�
 // catch-up step: plain submitResponse (personal score only), never
 // touches battle_scores, so it can't change an already-played Battle's
 // result.
+//
+// Mirrors the live Discover flow's reveal -> Extra -> Explore links ->
+// "ask others" sequence (product owner: correctness alone isn't enough,
+// a missed question still owes the same One Thing / Extra / rabbit-hole
+// content the live flow gives) -- Battle questions skip straight from
+// reveal to the next question instead, since Extras are only ever
+// assigned against a Discover question (docs/DATABASE.md).
 export default function CatchUpPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
@@ -40,6 +65,7 @@ export default function CatchUpPage() {
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<AnswerOption | null>(null);
   const [response, setResponse] = useState<Response | null>(null);
+  const [extra, setExtra] = useState<Extra | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +102,7 @@ export default function CatchUpPage() {
     setIndex(0);
     setSelected(null);
     setResponse(null);
+    setExtra(null);
     setStep(pending.length === 0 ? "empty" : "question");
   }, []);
 
@@ -92,17 +119,28 @@ export default function CatchUpPage() {
     const current = questions[index];
     const r = await submitResponse(activeProfile.id, current.question.id, selected);
     setResponse(r);
+    setStep("reveal");
   }
 
-  function handleNext() {
+  async function handleContinueToExtra() {
+    if (!activeProfile) return;
+    const current = questions[index];
+    const assignedExtra = await getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id);
+    setExtra(assignedExtra);
+    setStep("extra");
+  }
+
+  function handleAdvance() {
     const nextIndex = index + 1;
     setSelected(null);
     setResponse(null);
+    setExtra(null);
     if (nextIndex >= questions.length) {
       setStep("done");
       return;
     }
     setIndex(nextIndex);
+    setStep("question");
   }
 
   function goHome() {
@@ -183,54 +221,131 @@ export default function CatchUpPage() {
     );
   }
 
-  // step === "question"
   const current = questions[index];
   if (!current) return <Centered>Se încarcă...</Centered>;
-  const revealed = !!response;
+  const isDiscover = current.question.kind === "discover";
+  const progressLabel = `Ziua ${current.question.day_number} · ${
+    SLOT_LABEL[current.question.slot ?? ""] ?? "Battle"
+  } · ${index + 1}/${questions.length}`;
 
+  if (step === "question") {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
+        <FlowHeader label="De recuperat" icon={<History size={15} />} onClose={goHome} />
+        <div className="flex flex-1 flex-col gap-5">
+          <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">{progressLabel}</p>
+          <h1 className="text-[22px] font-semibold leading-snug tracking-tight text-foreground">
+            {current.question.prompt}
+          </h1>
+          <div className="flex flex-col gap-2">
+            {current.options.map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => setSelected(opt)}
+                className={`w-full rounded-2xl border px-4 py-4 text-left text-[15px] transition-all duration-150 active:scale-[0.99] ${
+                  selected?.id === opt.id
+                    ? "border-primary bg-accent text-foreground"
+                    : "border-border bg-card text-foreground hover:border-disabled"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-auto pt-4">
+            <Btn onClick={handleSubmit} disabled={!selected}>
+              RĂSPUNDE
+            </Btn>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (step === "reveal") {
+    const isCorrect = !!response?.is_correct;
+    const message = isCorrect
+      ? current.question.correct_reveal_message
+      : current.question.alternative_reveal_message;
+    return (
+      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
+        <FlowHeader label="De recuperat" icon={<History size={15} />} onClose={goHome} />
+        <div className="flex flex-1 flex-col gap-6">
+          <div>
+            <p className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-primary">{progressLabel}</p>
+            <div
+              className={`mb-5 flex h-10 w-10 items-center justify-center rounded-full ${isCorrect ? "bg-accent" : "bg-secondary"}`}
+            >
+              {isCorrect ? <Check size={18} className="text-primary" /> : <X size={18} className="text-muted-foreground" />}
+            </div>
+            <p className="text-[24px] font-semibold leading-snug tracking-tight text-foreground">
+              {message ?? (isCorrect ? "Corect" : "Nu chiar 🙂")}
+            </p>
+          </div>
+
+          {current.question.common_core && (
+            <p className="text-[15px] leading-relaxed text-secondary-foreground">{current.question.common_core}</p>
+          )}
+
+          {current.question.one_thing && (
+            <div className="border-l-2 border-primary py-1 pl-4">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">The One Thing</p>
+              <p className="text-[15px] font-medium leading-snug text-foreground">{current.question.one_thing}</p>
+            </div>
+          )}
+
+          <div className="mt-auto pt-4">
+            <Btn onClick={isDiscover ? handleContinueToExtra : handleAdvance}>
+              {isDiscover ? "MERGI MAI DEPARTE" : "Continuă"}
+            </Btn>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // step === "extra"
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
       <FlowHeader label="De recuperat" icon={<History size={15} />} onClose={goHome} />
       <div className="flex flex-1 flex-col gap-5">
-        <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">
-          Ziua {current.question.day_number} ·{" "}
-          {SLOT_LABEL[current.question.slot ?? ""] ?? "Battle"} · {index + 1}/{questions.length}
-        </p>
-        <h1 className="text-[22px] font-semibold leading-snug tracking-tight text-foreground">
-          {current.question.prompt}
-        </h1>
-        <div className="flex flex-col gap-2">
-          {current.options.map((opt) => {
-            const isSelected = selected?.id === opt.id;
-            const isRight = opt.is_correct;
-            return (
-              <button
-                key={opt.id}
-                disabled={revealed}
-                onClick={() => setSelected(opt)}
-                className={`flex items-center justify-between gap-2 rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition-all ${
-                  revealed
-                    ? isRight
-                      ? "border-primary bg-accent text-foreground"
-                      : isSelected
-                        ? "border-destructive bg-destructive/10 text-foreground"
-                        : "border-border bg-card text-muted-foreground"
-                    : isSelected
-                      ? "border-primary bg-accent text-foreground"
-                      : "border-border bg-card text-foreground"
-                }`}
+        {extra ? (
+          <div className="flex flex-col gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
+              {extra.extra_type ? EXTRA_TYPE_LABEL[extra.extra_type] : "EXTRA"}
+            </span>
+            <p className="text-[17px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
+          </div>
+        ) : (
+          <p className="text-muted-foreground">Nu mai sunt Extra-uri disponibile pentru această întrebare.</p>
+        )}
+
+        {current.exploreLinks.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <p className="text-[12px] font-medium text-disabled">🐇 Vrei să afli mai mult?</p>
+            {current.exploreLinks.map((link) => (
+              <a
+                key={link.id}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-[14px] text-primary hover:underline"
               >
-                {opt.label}
-                {revealed && isRight && <Check size={16} className="shrink-0 text-primary" />}
-                {revealed && isSelected && !isRight && <X size={16} className="shrink-0 text-destructive" />}
-              </button>
-            );
-          })}
-        </div>
+                <ExternalLink size={13} />
+                {link.title}
+              </a>
+            ))}
+          </div>
+        )}
+
+        <p className="text-[14px] leading-relaxed text-disabled">
+          Ceilalți au descoperit ceva puțin diferit.
+          <br />
+          Întreabă-i ce au primit. 👋
+        </p>
+
         <div className="mt-auto pt-4">
-          <Btn onClick={revealed ? handleNext : handleSubmit} disabled={!selected}>
-            {revealed ? "Continuă" : "RĂSPUNDE"}
-          </Btn>
+          <Btn onClick={handleAdvance}>Continuă</Btn>
         </div>
       </div>
     </main>

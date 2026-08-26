@@ -151,6 +151,7 @@ export async function getOrAssignExtra(
 export interface CatchUpQuestion {
   question: Question;
   options: AnswerOption[];
+  exploreLinks: ExploreLink[];
 }
 
 // Every Discover or Battle question this specific participant hasn't
@@ -234,19 +235,27 @@ export async function getCatchUpQuestions(
     );
   if (pending.length === 0) return [];
 
-  const { data: options, error: optionsError } = await supabase
-    .from("answer_options")
-    .select("*")
-    .in(
-      "question_id",
-      pending.map((q) => q.id),
-    )
-    .order("order_index", { ascending: true });
+  const pendingIds = pending.map((q) => q.id);
+  const [{ data: options, error: optionsError }, { data: exploreLinks, error: exploreError }] =
+    await Promise.all([
+      supabase
+        .from("answer_options")
+        .select("*")
+        .in("question_id", pendingIds)
+        .order("order_index", { ascending: true }),
+      supabase
+        .from("explore_links")
+        .select("*")
+        .in("question_id", pendingIds)
+        .order("order_index", { ascending: true }),
+    ]);
   if (optionsError) throw optionsError;
+  if (exploreError) throw exploreError;
 
   return pending.map((q) => ({
     question: q,
     options: (options ?? []).filter((o) => o.question_id === q.id),
+    exploreLinks: (exploreLinks ?? []).filter((l) => l.question_id === q.id),
   }));
 }
 
