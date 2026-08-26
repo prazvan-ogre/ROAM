@@ -42,8 +42,9 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   const [selectedPrizeId, setSelectedPrizeId] = useState<string | null>(null);
 
   // Populated once the participant exists (right after the "role" step) --
-  // every past-day Discover/Battle question they haven't answered yet,
-  // shown one after another below. Answered individually via
+  // every Discover/Battle question they can no longer reach through the
+  // normal flow (a past day's, or today's own once its time window has
+  // closed), shown one after another below. Answered individually via
   // submitResponse, same as Discover -- this only ever builds up this
   // participant's own score (getParticipantLeaderboard), it never writes
   // to battle_scores, so it can't change any already-played Battle's
@@ -76,9 +77,8 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
       });
   }, [participantId, trip]);
 
-  // Nothing to catch up on (joined on day 1, or already answered
-  // everything) -- skip straight past the step instead of showing an
-  // empty screen.
+  // Nothing to catch up on -- skip straight past the step instead of
+  // showing an empty screen.
   useEffect(() => {
     if (step === "catchup" && catchUpQuestions !== null && catchUpQuestions.length === 0) {
       setStep("prize");
