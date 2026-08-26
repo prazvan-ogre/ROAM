@@ -1,44 +1,56 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Moon } from "lucide-react";
-import type { BattleContent } from "@/lib/battle";
-import { recordTeamAnswer } from "@/lib/battle";
-import type { AnswerOption } from "@/lib/discover";
+import { Moon, Check, X } from "lucide-react";
+import { supabase } from "@/lib/supabase/client";
+import type { BattleContent, BattleWindowStatus } from "@/lib/battle";
+import { recordBattleAnswer, getBattleWindowStatus, getBattleResult } from "@/lib/battle";
+import type { AnswerOption, Response } from "@/lib/discover";
 import { trackEvent } from "@/lib/analytics";
+import type { Participant } from "@/lib/participant";
 import type { BattleTeam } from "@/lib/supabase/types";
+import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Btn, FlowHeader, OptionButton } from "@/components/ui";
 
-type Step = "intro" | "parents" | "kids" | "reveal" | "result";
+type Step = "intro" | "select-profile" | "closed" | "question" | "reveal" | "done";
 
-const TEAM_LABEL: Record<BattleTeam, string> = { adults: "Părinților", kids: "Copiilor" };
-
+// Product owner spec: every participant answers individually now
+// (select their own profile, then work through this evening's Battle
+// questions one after another -- same pass-the-phone pattern as
+// Discover), instead of one shared submission per team via a
+// "controller" device. The team result stays hidden for 15 minutes from
+// the first individual answer (getBattleWindowStatus) so nobody sees a
+// partial score while others are still deciding.
 export function BattleFlow({
   content,
   tripId,
   slug,
   isFinal,
+  profiles,
   onFinished,
 }: {
   content: BattleContent;
   tripId: string;
   slug: string;
   isFinal: boolean;
+  profiles: Participant[];
   onFinished?: () => void;
 }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("intro");
+  const [activeProfile, setActiveProfile] = useState<Participant | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [parentsSelected, setParentsSelected] = useState<AnswerOption | null>(null);
-  const [kidsSelected, setKidsSelected] = useState<AnswerOption | null>(null);
-  const [parentsCorrect, setParentsCorrect] = useState(false);
-  const [kidsCorrect, setKidsCorrect] = useState(false);
-  const [tally, setTally] = useState({ adults: 0, kids: 0 });
+  const [selectedOption, setSelectedOption] = useState<AnswerOption | null>(null);
+  const [myResponse, setMyResponse] = useState<Response | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [passCorrect, setPassCorrect] = useState(0);
+  const [passAnswered, setPassAnswered] = useState(0);
+  const [windowStatus, setWindowStatus] = useState<BattleWindowStatus | null>(null);
+  const [result, setResult] = useState<Record<BattleTeam, number>>({ adults: 0, kids: 0 });
+  const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
   const current = content.questions[questionIndex];
-  const isLastQuestion = questionIndex === content.questions.length - 1;
 
   function goHome() {
     router.push(`/trip/${slug}`);
@@ -46,49 +58,112 @@ export function BattleFlow({
 
   async function handleStart() {
     await trackEvent(tripId, "battle_opened", undefined, { battle_id: content.battle.id });
-    setStep("parents");
+    setStep("select-profile");
   }
 
-  async function handleTeamSubmit(team: BattleTeam) {
-    const selected = team === "adults" ? parentsSelected : kidsSelected;
-    if (!selected || !current) return;
+  async function handleSelectProfile(profile: Participant) {
+    setActiveProfile(profile);
+    setPassCorrect(0);
+    setPassAnswered(0);
+
+    const questionIds = content.questions.map((q) => q.question.id);
+    const { data, error } = await supabase
+      .from("responses")
+      .select("*")
+      .eq("participant_id", profile.id)
+      .in("question_id", questionIds);
+    if (error) throw error;
+    const answered = new Map((data ?? []).map((r) => [r.question_id, r]));
+
+    const firstUnansweredIndex = content.questions.findIndex((q) => !answered.has(q.question.id));
+    if (firstUnansweredIndex === -1) {
+      await goToDone();
+      return;
+    }
+
+    // Already-answered participants can always review (above); a fresh
+    // attempt on the daily Battle is only allowed inside its time
+    // window -- the Final Battle has no such window (it's gated to the
+    // trip's last day instead, by the /final page).
+    if (!isFinal) {
+      const availability = getSlotAvailability("battle");
+      if (availability.status !== "open") {
+        setClosedInfo(availability);
+        setStep("closed");
+        return;
+      }
+    }
+
+    setQuestionIndex(firstUnansweredIndex);
+    setSelectedOption(null);
+    setMyResponse(null);
+    setStep("question");
+  }
+
+  // Skip the "Cine răspunde?" screen when there's only one profile on
+  // this device (same as Discover, spec section 8).
+  useEffect(() => {
+    if (step === "select-profile" && profiles.length === 1) {
+      handleSelectProfile(profiles[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, profiles]);
+
+  async function handleSubmit() {
+    if (!activeProfile || !current || !selectedOption) return;
     setSubmitting(true);
     try {
-      const isCorrect = selected.is_correct;
-      await recordTeamAnswer(content.battle.id, team, isCorrect, isFinal);
-      await trackEvent(tripId, "battle_answered", undefined, {
+      const team: BattleTeam = activeProfile.role === "adult" ? "adults" : "kids";
+      const response = await recordBattleAnswer(
+        activeProfile.id,
+        team,
+        content.battle.id,
+        current.question,
+        selectedOption,
+        isFinal,
+      );
+      setMyResponse(response);
+      setPassAnswered((n) => n + 1);
+      if (response.is_correct) setPassCorrect((n) => n + 1);
+      await trackEvent(tripId, "battle_answered", activeProfile.id, {
         battle_id: content.battle.id,
         question_id: current.question.id,
-        team,
       });
-      if (team === "adults") {
-        setParentsCorrect(isCorrect);
-        setStep("kids");
-      } else {
-        setKidsCorrect(isCorrect);
-        setTally((t) => ({
-          adults: t.adults + (parentsCorrect ? 1 : 0),
-          kids: t.kids + (isCorrect ? 1 : 0),
-        }));
-        setStep("reveal");
-      }
+      setStep("reveal");
     } finally {
       setSubmitting(false);
     }
   }
 
   async function handleNext() {
-    if (isLastQuestion) {
-      if (isFinal) {
-        await trackEvent(tripId, "final_battle_completed", undefined, { battle_id: content.battle.id });
-      }
-      setStep("result");
+    const nextIndex = questionIndex + 1;
+    if (nextIndex >= content.questions.length) {
+      await goToDone();
     } else {
-      setQuestionIndex((i) => i + 1);
-      setParentsSelected(null);
-      setKidsSelected(null);
-      setStep("parents");
+      setQuestionIndex(nextIndex);
+      setSelectedOption(null);
+      setMyResponse(null);
+      setStep("question");
     }
+  }
+
+  async function goToDone() {
+    const [w, r] = await Promise.all([
+      getBattleWindowStatus(content.battle.id),
+      getBattleResult(content.battle.id),
+    ]);
+    setWindowStatus(w);
+    setResult(r);
+    if (isFinal) {
+      await trackEvent(tripId, "final_battle_completed", activeProfile?.id, {
+        battle_id: content.battle.id,
+      });
+    }
+    setStep("done");
+  }
+
+  function handleAnotherProfile() {
+    setStep("select-profile");
   }
 
   if (step === "intro") {
@@ -99,7 +174,7 @@ export function BattleFlow({
           <div>
             <h1 className="mb-3 text-[28px] font-semibold tracking-tight text-foreground">{content.battle.title}</h1>
             <p className="text-[16px] leading-relaxed text-muted-foreground">
-              Părinții pretind că au experiență. Copiii pretind că știu tot. Să verificăm. 😈
+              Fiecare răspunde pe rând, de pe același telefon. Rezultatul apare abia după ce răspund toți. 😈
             </p>
           </div>
           <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_1px_6px_rgba(0,0,0,0.05)]">
@@ -127,6 +202,50 @@ export function BattleFlow({
     );
   }
 
+  if (step === "select-profile") {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
+        <FlowHeader label="Battle" icon={<Moon size={15} />} onClose={goHome} />
+        <h1 className="mb-2 text-[26px] font-semibold tracking-tight text-foreground">Cine răspunde?</h1>
+        <p className="mb-8 text-[15px] text-muted-foreground">Alege profilul tău.</p>
+        <div className="flex flex-col gap-2">
+          {profiles.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => handleSelectProfile(p)}
+              className="flex items-center gap-4 rounded-2xl border border-border bg-card px-4 py-4 text-left shadow-[0_1px_4px_rgba(0,0,0,0.04)] transition-all active:scale-[0.99] hover:border-primary/40"
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent">
+                <span className="text-[15px] font-semibold text-primary">{p.display_name[0]}</span>
+              </div>
+              <div>
+                <p className="text-[15px] font-medium text-foreground">{p.display_name}</p>
+                <p className="text-[13px] text-muted-foreground">
+                  {p.role === "adult" ? "Adult" : p.age ? `Copil · ${p.age} ani` : "Copil"}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </main>
+    );
+  }
+
+  if (step === "closed") {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 text-center">
+        {closedInfo?.status === "before" ? (
+          <p className="text-muted-foreground">Battle-ul devine disponibil la {closedInfo.opensAt}.</p>
+        ) : (
+          <p className="text-muted-foreground">Battle-ul s-a încheiat pentru azi.</p>
+        )}
+        <button onClick={goHome} className="mt-4 underline">
+          Înapoi acasă
+        </button>
+      </main>
+    );
+  }
+
   if (!current) {
     return (
       <main className="flex min-h-screen items-center justify-center px-6 text-center text-muted-foreground">
@@ -135,11 +254,7 @@ export function BattleFlow({
     );
   }
 
-  if (step === "parents" || step === "kids") {
-    const team: BattleTeam = step === "parents" ? "adults" : "kids";
-    const selected = step === "parents" ? parentsSelected : kidsSelected;
-    const setSelected = step === "parents" ? setParentsSelected : setKidsSelected;
-
+  if (step === "question") {
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
         <FlowHeader label="Battle" icon={<Moon size={15} />} onClose={goHome} />
@@ -147,24 +262,28 @@ export function BattleFlow({
           <div>
             <div className="mb-1 flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                Rândul {TEAM_LABEL[team]}
+                {activeProfile?.display_name}
               </span>
               <span className="text-[12px] font-medium text-disabled">
                 {questionIndex + 1} / {content.questions.length}
               </span>
             </div>
-            <p className="mt-1 text-[13px] text-disabled">
-              {step === "parents" ? "Copiii nu se uită." : "Adulții au răspuns. Acum e rândul vostru."}
-            </p>
           </div>
-          <h2 className="text-[20px] font-semibold leading-snug tracking-tight text-foreground">{current.question.prompt}</h2>
+          <h2 className="text-[20px] font-semibold leading-snug tracking-tight text-foreground">
+            {current.question.prompt}
+          </h2>
           <div className="flex flex-col gap-2">
             {current.options.map((opt) => (
-              <OptionButton key={opt.id} label={opt.label} selected={selected?.id === opt.id} onSelect={() => setSelected(opt)} />
+              <OptionButton
+                key={opt.id}
+                label={opt.label}
+                selected={selectedOption?.id === opt.id}
+                onSelect={() => setSelectedOption(opt)}
+              />
             ))}
           </div>
           <div className="mt-auto pt-4">
-            <Btn onClick={() => handleTeamSubmit(team)} disabled={!selected || submitting}>
+            <Btn onClick={handleSubmit} disabled={!selectedOption || submitting}>
               {submitting ? "..." : "RĂSPUNDE"}
             </Btn>
           </div>
@@ -174,97 +293,69 @@ export function BattleFlow({
   }
 
   if (step === "reveal") {
-    const revealMessage = parentsCorrect || kidsCorrect
-      ? current.question.correct_reveal_message
-      : current.question.alternative_reveal_message;
+    const isCorrect = !!myResponse?.is_correct;
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
         <FlowHeader label="Battle" icon={<Moon size={15} />} onClose={goHome} />
         <div className="flex flex-1 flex-col gap-5">
+          <div className={`flex h-10 w-10 items-center justify-center rounded-full ${isCorrect ? "bg-accent" : "bg-secondary"}`}>
+            {isCorrect ? <Check size={18} className="text-primary" /> : <X size={18} className="text-muted-foreground" />}
+          </div>
           <h3 className="text-[18px] font-semibold leading-snug tracking-tight text-foreground">{current.question.prompt}</h3>
           <div className="rounded-xl bg-accent px-4 py-3">
             <p className="text-[13px] font-semibold text-primary">
               Răspuns: {current.options.find((o) => o.is_correct)?.label}
             </p>
           </div>
-          <div className="flex gap-3">
-            <TeamRevealCard
-              label="Adulți"
-              correct={parentsCorrect}
-              answer={parentsSelected?.label ?? "—"}
-            />
-            <TeamRevealCard
-              label="Copii"
-              correct={kidsCorrect}
-              answer={kidsSelected?.label ?? "—"}
-            />
-          </div>
-          {revealMessage && <p className="text-[15px] leading-relaxed text-secondary-foreground">{revealMessage}</p>}
           <div className="mt-auto pt-4">
-            <Btn onClick={handleNext}>{isLastQuestion ? "VEZI SCORUL" : "URMĂTOAREA ÎNTREBARE"}</Btn>
+            <Btn onClick={handleNext}>
+              {questionIndex + 1 >= content.questions.length ? "GATA" : "URMĂTOAREA ÎNTREBARE"}
+            </Btn>
           </div>
         </div>
       </main>
     );
   }
 
-  // step === "result"
-  const winner = tally.kids > tally.adults ? "kids" : tally.adults > tally.kids ? "adults" : null;
-
+  // step === "done"
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
       <FlowHeader label="Battle" icon={<Moon size={15} />} onClose={goHome} />
       <div className="flex flex-1 flex-col gap-6 pt-4 text-center">
-        {isFinal ? (
+        <p className="text-[15px] text-muted-foreground">
+          {activeProfile?.display_name} · {passCorrect}/{passAnswered} corecte
+        </p>
+
+        {windowStatus?.visible ? (
           <>
-            <p className="text-[28px] font-bold uppercase tracking-tight text-foreground">
-              {winner === "kids" && "🏆 Copiii câștigă"}
-              {winner === "adults" && "🏆 Părinții câștigă"}
-              {winner === null && "🤝 Egalitate"}
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              {isFinal ? "Scor final" : "Scorul serii"}
             </p>
             <div className="text-[56px] font-semibold leading-none tracking-tight text-foreground">
-              {tally.adults} — {tally.kids}
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Scor final</p>
-            <div className="text-[56px] font-semibold leading-none tracking-tight text-foreground">
-              {tally.adults} — {tally.kids}
+              {result.adults} — {result.kids}
             </div>
             <div className="flex justify-center gap-8">
               <span className="text-[13px] text-muted-foreground">Adulți</span>
               <span className="text-[13px] text-muted-foreground">Copii</span>
             </div>
-            <div className="h-px bg-secondary" />
-            <p className="text-[17px] leading-relaxed text-secondary-foreground">
-              {winner === "kids" && "Copiii conduc azi. Părinți, situația începe să devină puțin jenantă."}
-              {winner === "adults" && "Se pare că experiența de viață încă valorează ceva."}
-              {winner === null && "Egalitate azi — revanșa e mâine seară."}
-            </p>
           </>
+        ) : (
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <p className="text-[15px] leading-relaxed text-secondary-foreground">
+              Rezultatul apare la 15 minute după primul răspuns — cât mai răspund toți.
+            </p>
+          </div>
         )}
 
-        <div className="pt-2">
+        <div className="flex flex-col gap-2 pt-2">
+          {profiles.length > 1 && (
+            <button onClick={handleAnotherProfile} className="text-[14px] font-semibold text-primary">
+              Alt profil răspunde
+            </button>
+          )}
           <Btn onClick={isFinal ? onFinished : goHome}>{isFinal ? "CONTINUĂ" : "ÎNAPOI ACASĂ"}</Btn>
         </div>
       </div>
     </main>
-  );
-}
-
-function TeamRevealCard({ label, correct, answer }: { label: string; correct: boolean; answer: string }) {
-  return (
-    <div
-      className={`flex-1 rounded-2xl border p-4 text-center transition-all ${
-        correct ? "border-primary/25 bg-accent" : "border-border bg-background"
-      }`}
-    >
-      <div className={`mb-1.5 text-[18px] font-semibold ${correct ? "text-primary" : "text-disabled"}`}>
-        {correct ? "✓" : "✗"}
-      </div>
-      <p className="text-[13px] font-semibold text-foreground">{label}</p>
-      <p className="mt-1 text-[12px] leading-tight text-muted-foreground">{answer}</p>
-    </div>
   );
 }

@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice } from "@/lib/participant";
-import { getDailyBattle, isBattleCompleted, getBattleResult, getTripBattleWinTally } from "@/lib/battle";
+import { getDailyBattle, getBattleWindowStatus, getBattleResult, getTripBattleWinTally } from "@/lib/battle";
 import { getParticipantLeaderboard, type LeaderboardEntry } from "@/lib/discover";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
@@ -44,11 +44,14 @@ export default function LeaderboardPage() {
       const d = currentTripDay(t);
       setDay(d);
 
+      // The evening's result stays hidden for 15 minutes after the
+      // first individual answer (product owner spec), so nobody can peek
+      // at a partial score here while others are still answering.
       const daily = await getDailyBattle(t.id, d);
-      const dailyPlayed = daily ? await isBattleCompleted(daily.battle.id) : false;
+      const dailyVisible = daily ? (await getBattleWindowStatus(daily.battle.id)).visible : false;
 
       const [dailyResult, tripWinTally, total, today] = await Promise.all([
-        daily && dailyPlayed ? getBattleResult(daily.battle.id) : Promise.resolve(EMPTY_SCORE),
+        daily && dailyVisible ? getBattleResult(daily.battle.id) : Promise.resolve(EMPTY_SCORE),
         getTripBattleWinTally(t.id),
         getParticipantLeaderboard(t.id),
         getParticipantLeaderboard(t.id, d),

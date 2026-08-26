@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import type { AnswerOption, Question } from "./discover";
+import { submitResponse, type AnswerOption, type Question, type Response } from "./discover";
 import type { Database, BattleTeam } from "./supabase/types";
 
 export type Battle = Database["public"]["Tables"]["battles"]["Row"];
@@ -70,71 +70,114 @@ export async function getFinalBattle(tripId: string): Promise<BattleContent | nu
   return loadBattleContent(battle);
 }
 
-export async function isBattleCompleted(battleId: string): Promise<boolean> {
-  const { count, error } = await supabase
+// Product owner spec: every participant answers Battle questions
+// individually now, not one submission per team via a shared
+// "controller" device. Correct answers are worth 10 points (Final
+// Battle: 5 points), same values as before.
+const BATTLE_POINTS = { normal: 10, final: 5 } as const;
+
+// A team's evening result stays open for 15 minutes after the first
+// individual answer, so everyone gets a chance to answer before anyone
+// sees the running score (product owner spec). Late answers past that
+// window still count personally (submitResponse below) but are excluded
+// from battle_scores, so they can't move the team result -- same
+// guarantee as a wizard catch-up answer to a past battle.
+const RESULT_WINDOW_MS = 15 * 60 * 1000;
+
+export interface BattleWindowStatus {
+  // Whether a fresh answer right now would still count toward the team
+  // result (true before anyone has answered yet, or within 15 minutes of
+  // the first individual answer).
+  countable: boolean;
+  // Whether the team result is old enough to reveal. False for the whole
+  // 15-minute window, even to someone who already answered -- the point
+  // is nobody sees a partial score while others might still be deciding.
+  visible: boolean;
+  opensAt: string | null;
+  closesAt: string | null;
+}
+
+export async function getBattleWindowStatus(battleId: string): Promise<BattleWindowStatus> {
+  const { data, error } = await supabase
     .from("battle_scores")
-    .select("id", { count: "exact", head: true })
-    .eq("battle_id", battleId);
-
+    .select("created_at")
+    .eq("battle_id", battleId)
+    .not("participant_id", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
   if (error) throw error;
-  return (count ?? 0) > 0;
-}
+  if (!data) return { countable: true, visible: false, opensAt: null, closesAt: null };
 
-// Daily Battle correct answers are worth 10 points, Final Battle correct
-// answers 5 points (product owner spec) -- these raw points accumulate
-// per battle and are the input to the win tally below, not a score shown
-// on their own as the "PĂRINȚI vs COPII" headline (see getBattleResult /
-// getTripBattleWinTally), though they're still surfaced as a secondary
-// "puncte acumulate" figure.
-export async function recordTeamAnswer(
-  battleId: string,
-  team: BattleTeam,
-  isCorrect: boolean,
-  isFinal: boolean,
-): Promise<void> {
-  const { error } = await supabase.from("battle_scores").insert({
-    battle_id: battleId,
-    team,
-    score: isCorrect ? (isFinal ? 5 : 10) : 0,
-  });
-  if (error) throw error;
-}
-
-// Raw point sum for one battle -- used for the secondary "puncte
-// acumulate" display, and as the input to getBattleResult below.
-export async function getBattleLeaderboard(
-  battleId: string,
-): Promise<Record<BattleTeam, number>> {
-  const { data, error } = await supabase.rpc("battle_leaderboard", { p_battle_id: battleId });
-  if (error) throw error;
-  const result: Record<BattleTeam, number> = { adults: 0, kids: 0 };
-  for (const row of data ?? []) {
-    result[row.team] = row.total_score;
-  }
-  return result;
-}
-
-// Trip-wide raw point sum -- secondary "puncte acumulate" display only.
-export async function getTripLeaderboard(tripId: string): Promise<Record<BattleTeam, number>> {
-  const { data, error } = await supabase.rpc("trip_battle_leaderboard", { p_trip_id: tripId });
-  if (error) throw error;
-  const result: Record<BattleTeam, number> = { adults: 0, kids: 0 };
-  for (const row of data ?? []) {
-    result[row.team] = row.total_score;
-  }
-  return result;
-}
-
-// The headline "PĂRINȚI X — COPII Y" for one evening: 1 for whichever team
-// had more points that battle, 1-1 on a tie. Only meaningful once the
-// battle has actually been played (caller should gate on
-// isBattleCompleted first) -- an unplayed battle has 0-0 points, which
-// this would otherwise read as a tie.
-export async function getBattleResult(battleId: string): Promise<Record<BattleTeam, number>> {
-  const points = await getBattleLeaderboard(battleId);
+  const opensAt = new Date(data.created_at).getTime();
+  const closesAt = opensAt + RESULT_WINDOW_MS;
+  const now = Date.now();
   return {
-    adults: points.adults >= points.kids ? 1 : 0,
-    kids: points.kids >= points.adults ? 1 : 0,
+    countable: now < closesAt,
+    visible: now >= closesAt,
+    opensAt: data.created_at,
+    closesAt: new Date(closesAt).toISOString(),
+  };
+}
+
+// One participant's answer to one Battle question, live (not a wizard
+// catch-up answer to a past battle -- see getCatchUpQuestions, which
+// never touches battle_scores at all). Always records a personal
+// `responses` row (submitResponse, same as Discover -- feeds the
+// individual leaderboard and prevents answering the same question
+// twice). Also adds a battle_scores row with this participant's team +
+// score, unless the 15-minute result window has already closed -- a
+// late answer still counts personally, just never moves the team
+// result.
+export async function recordBattleAnswer(
+  participantId: string,
+  team: BattleTeam,
+  battleId: string,
+  question: Question,
+  selectedOption: AnswerOption,
+  isFinal: boolean,
+): Promise<Response> {
+  const response = await submitResponse(participantId, question.id, selectedOption);
+
+  const window = await getBattleWindowStatus(battleId);
+  if (window.countable) {
+    const { error } = await supabase.from("battle_scores").insert({
+      battle_id: battleId,
+      participant_id: participantId,
+      team,
+      score: selectedOption.is_correct ? (isFinal ? BATTLE_POINTS.final : BATTLE_POINTS.normal) : 0,
+    });
+    if (error) throw error;
+  }
+
+  return response;
+}
+
+// A team's resolved score for one battle: the arithmetic mean of its
+// members' points (sum / distinct participants who answered), so an
+// uneven team size (e.g. 3 kids vs 2 adults) doesn't skew the result.
+// Battles played before this feature (participant_id null rows) keep
+// their original raw-sum result instead -- see the migration.
+export async function getBattleTeamScore(battleId: string): Promise<Record<BattleTeam, number>> {
+  const { data, error } = await supabase.rpc("battle_team_score", { p_battle_id: battleId });
+  if (error) throw error;
+  const result: Record<BattleTeam, number> = { adults: 0, kids: 0 };
+  for (const row of data ?? []) {
+    result[row.team] = row.score;
+  }
+  return result;
+}
+
+// The headline "PĂRINȚI X — COPII Y" for one evening: 1 for whichever
+// team has the higher resolved score (see getBattleTeamScore), 1-1 on a
+// tie. Only meaningful once the result window has closed (caller should
+// gate on getBattleWindowStatus().visible first) -- an unplayed or
+// still-open battle reads as a tie otherwise.
+export async function getBattleResult(battleId: string): Promise<Record<BattleTeam, number>> {
+  const scores = await getBattleTeamScore(battleId);
+  return {
+    adults: scores.adults >= scores.kids ? 1 : 0,
+    kids: scores.kids >= scores.adults ? 1 : 0,
   };
 }
 

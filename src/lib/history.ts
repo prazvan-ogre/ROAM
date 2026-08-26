@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { loadBattleContent, getBattleLeaderboard, type BattleContent } from "./battle";
+import { loadBattleContent, getBattleTeamScore, type BattleContent } from "./battle";
 import type { AnswerOption, Question, Response } from "./discover";
 import type { BattleTeam } from "./supabase/types";
 
@@ -11,7 +11,7 @@ export interface DiscoverHistoryItem {
 
 export interface BattleHistoryItem {
   content: BattleContent;
-  leaderboard: Record<BattleTeam, number>;
+  score: Record<BattleTeam, number>;
 }
 
 export interface TripHistory {
@@ -87,11 +87,11 @@ export async function getTripHistory(
       .eq("battle_id", battle.id);
     if (!count) continue;
 
-    const [content, leaderboard] = await Promise.all([
+    const [content, score] = await Promise.all([
       loadBattleContent(battle),
-      getBattleLeaderboard(battle.id),
+      getBattleTeamScore(battle.id),
     ]);
-    battles.push({ content, leaderboard });
+    battles.push({ content, score });
   }
   battles.sort((a, b) => (a.content.battle.day_number ?? 0) - (b.content.battle.day_number ?? 0));
 

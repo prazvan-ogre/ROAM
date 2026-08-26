@@ -48,7 +48,7 @@ Everything else maps 1:1 to the spec's entity list.
 | `participants` | One row per profile (adult *or* child) on a trip. Child rows set `age` and usually `managed_by_participant_id`, sharing the managing adult's `device_id` — but a child can also be the sole, unmanaged participant on their own device (onboarding wizard). |
 | `extra_assignments` | Which Extra a participant was assigned, and its viewed/completed status. |
 | `responses` | A participant's answer to a Discover or Battle question. |
-| `battle_scores` | Per-question team result rows (`team`: adults/kids, `score`: 1 or 0), summed for the "PĂRINȚI 2 — COPII 1" tally. Publicly readable — see point 4 below. |
+| `battle_scores` | One row per participant's answer to a Battle question (`participant_id`, `team`, `score`), written alongside a `responses` row for that same answer. A team's score for a battle is the average of its members' points (`battle_team_score()`), feeding the "PĂRINȚI 2 — COPII 1" tally. Publicly readable — see point 4 below. |
 | `feedback` | The 6-question end-of-trip survey from spec section 20 (`learned_new`, `generated_conversations`, `searched_more`, `anticipated_next`, `would_use_again`, `comment`). |
 | `analytics_events` | Product analytics events (see `src/lib/analytics.ts` for the event list). |
 
@@ -85,13 +85,21 @@ Row Level Security is the actual access boundary:
    or to run migrations. It lives only in Vercel's server-side env vars
    and GitHub Actions secrets, never in `NEXT_PUBLIC_*` vars.
 4. **`battle_scores` is publicly readable, unlike the other activity
-   tables** — deliberately. A row is a team's result on one question
-   (`team`, `score`), never an individual's, so there's no participant to
-   protect (spec section 17: "no individual scoring"); every device needs
-   to show the running "PĂRINȚI 2 — COPII 1" tally without waiting on a
-   fresh aggregate call. Two `SECURITY DEFINER` functions still exist for
-   convenience: `battle_leaderboard(battle_id)` (one battle's totals) and
-   `trip_battle_leaderboard(trip_id)` (the trip-wide tally).
+   tables** — deliberately. Every participant now answers Battle
+   questions individually (product owner spec), each one recorded as
+   both a `responses` row (personal score) and a `battle_scores` row
+   (team score); every device needs to show the running "PĂRINȚI 2 —
+   COPII 1" tally without waiting on a fresh aggregate call. Two
+   `SECURITY DEFINER` functions exist for this: `battle_team_score(battle_id)`
+   (one battle's resolved team score — the average of its members'
+   points, or the original raw sum for a battle played before this
+   feature, see the migration) and `trip_battle_win_tally(trip_id)` (the
+   season-long tally of evenings won). A team's evening result is
+   deliberately excluded from `battle_scores` — and so from both
+   functions — once it's more than 15 minutes past the first individual
+   answer for that battle; a late answer still writes its own
+   `responses` row (personal score) but never joins the team result
+   (`recordBattleAnswer`/`getBattleWindowStatus` in `battle.ts`).
    Note: because `responses`/`extra_assignments`/`participants` are
    select-able by anyone (point 2 and point 5), and `participants` is
    itself public, a device that already knows another participant's id
@@ -113,13 +121,14 @@ Row Level Security is the actual access boundary:
 ## Migrations
 
 - `supabase/migrations/20260825090000_initial_schema.sql` — content tables + RLS.
-- `supabase/migrations/20260825090100_activity_tables.sql` — activity tables + RLS + `battle_leaderboard()`.
-- `supabase/migrations/20260825120000_profiles_and_content_model.sql` — child profiles (`age`, `managed_by_participant_id`), the full Discover/Extra content shape, verified+published gating, and `trip_battle_leaderboard()`.
+- `supabase/migrations/20260825090100_activity_tables.sql` — activity tables + RLS + a per-battle raw point sum RPC (dropped, see the last entry below).
+- `supabase/migrations/20260825120000_profiles_and_content_model.sql` — child profiles (`age`, `managed_by_participant_id`), the full Discover/Extra content shape, verified+published gating, and a trip-wide raw point sum RPC (dropped, see the last entry below).
 - `supabase/migrations/20260825140000_feedback_form.sql` — the real 6-question feedback shape, and public read on `battle_scores`.
 - `supabase/migrations/20260825150000_trip_dashboard_fields.sql` — `destination`/`location_info` on `trips`, for the Home dashboard.
 - `supabase/migrations/20260826090000_settings_and_scoring.sql` — `prize` on `trips` (Setări > Configurare); a `delete` policy on `participants` (Setări > Utilizatori edit/delete, same accepted-risk model as point 5 above); `trip_battle_win_tally()`, the per-evening win-tally behind the "PĂRINȚI vs COPII" score on the Scor page.
 - `supabase/migrations/20260826110000_onboarding_wizard.sql` — drops `child_needs_manager`: the onboarding wizard lets a child be the first, unmanaged participant on their own device.
 - `supabase/migrations/20260826130000_prize_vote.sql` — `prize_options`/`prize_votes` (the wizard's prize step is a vote, not a static value).
+- `supabase/migrations/20260826153000_individual_battle_scoring.sql` — every participant answers Battle questions individually now (not one submission per team via a shared "controller" device); `battle_team_score()` (a battle's resolved team score — average of its members' points, or the original raw sum for a battle played before this feature) replaces the two raw-sum RPCs above (dropped); `trip_battle_win_tally()` updated to the same hybrid average/sum logic.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

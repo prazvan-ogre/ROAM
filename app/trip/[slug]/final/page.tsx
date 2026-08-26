@@ -5,15 +5,9 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
-import {
-  getFinalBattle,
-  isBattleCompleted,
-  getTripLeaderboard,
-  type BattleContent,
-} from "@/lib/battle";
+import { getFinalBattle, getTripBattleWinTally, type BattleContent } from "@/lib/battle";
 import { BattleFlow } from "@/components/BattleFlow";
 import { FeedbackForm } from "@/components/FeedbackForm";
-import { trackEvent } from "@/lib/analytics";
 import type { BattleTeam } from "@/lib/supabase/types";
 import { Centered } from "@/components/ui";
 
@@ -29,6 +23,7 @@ export default function FinalBattlePage() {
   const [step, setStep] = useState<Step>("loading");
   const [trip, setTrip] = useState<Trip | null>(null);
   const [content, setContent] = useState<BattleContent | null>(null);
+  const [profiles, setProfiles] = useState<Participant[]>([]);
   const [adult, setAdult] = useState<Participant | null>(null);
   const [tripScore, setTripScore] = useState<Record<BattleTeam, number>>({ adults: 0, kids: 0 });
 
@@ -41,13 +36,22 @@ export default function FinalBattlePage() {
         if (cancelled || !t) return;
         setTrip(t);
 
-        const profiles = await listProfilesForDevice(t.id);
+        const list = await listProfilesForDevice(t.id);
         if (cancelled) return;
-        if (profiles.length === 0) {
+        if (list.length === 0) {
           setStep("not-joined");
           return;
         }
-        setAdult(profiles.find((p) => p.role === "adult") ?? profiles[0]);
+        setProfiles(list);
+        setAdult(list.find((p) => p.role === "adult") ?? list[0]);
+
+        // The Final Battle recaps every previous day's content, so it's
+        // only playable on the trip's actual last day -- everyone plays
+        // it live then, whether or not this device already went.
+        if (currentTripDay(t) < t.duration_days) {
+          setStep("unavailable");
+          return;
+        }
 
         const battle = await getFinalBattle(t.id);
         if (cancelled) return;
@@ -56,38 +60,7 @@ export default function FinalBattlePage() {
           return;
         }
         setContent(battle);
-
-        const played = await isBattleCompleted(battle.battle.id);
-        if (cancelled) return;
-
-        if (!played) {
-          // A fresh attempt is only allowed on the trip's last day -- the
-          // Final Battle recaps every previous day's content, so unlike
-          // Discover/Daily Battle (each gated to just today's own day)
-          // this route had no day check at all, letting anyone play the
-          // whole trip's recap on day 1. Already-played battles stay
-          // reviewable below regardless of day, same as everywhere else.
-          if (currentTripDay(t) < t.duration_days) {
-            setStep("unavailable");
-            return;
-          }
-          await trackEvent(t.id, "final_battle_started", undefined, { battle_id: battle.battle.id });
-          setStep("battle");
-          return;
-        }
-
-        const alreadyGaveFeedback =
-          typeof window !== "undefined" &&
-          window.localStorage.getItem(feedbackStorageKey(t.id)) === "true";
-
-        if (alreadyGaveFeedback) {
-          const leaderboard = await getTripLeaderboard(t.id);
-          if (cancelled) return;
-          setTripScore(leaderboard);
-          setStep("thanks");
-        } else {
-          setStep("feedback");
-        }
+        setStep("battle");
       } catch {
         if (!cancelled) setStep("error");
       }
@@ -104,8 +77,8 @@ export default function FinalBattlePage() {
     const alreadyGaveFeedback =
       window.localStorage.getItem(feedbackStorageKey(trip.id)) === "true";
     if (alreadyGaveFeedback) {
-      const leaderboard = await getTripLeaderboard(trip.id);
-      setTripScore(leaderboard);
+      const tally = await getTripBattleWinTally(trip.id);
+      setTripScore(tally);
       setStep("thanks");
     } else {
       setStep("feedback");
@@ -115,7 +88,7 @@ export default function FinalBattlePage() {
   function handleFeedbackSubmitted() {
     if (!trip) return;
     window.localStorage.setItem(feedbackStorageKey(trip.id), "true");
-    getTripLeaderboard(trip.id).then(setTripScore);
+    getTripBattleWinTally(trip.id).then(setTripScore);
     setStep("thanks");
   }
 
@@ -158,6 +131,7 @@ export default function FinalBattlePage() {
         tripId={trip.id}
         slug={slug}
         isFinal
+        profiles={profiles}
         onFinished={handleBattleFinished}
       />
     );
