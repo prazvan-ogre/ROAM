@@ -5,26 +5,13 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { MapPin, Sun, Utensils, Moon, Check, ArrowRight, Clock, Trophy } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import {
-  listProfilesForDevice,
-  getOrCreateAdultParticipant,
-  getParticipantCounts,
-  type Participant,
-  type ParticipantCounts,
-} from "@/lib/participant";
+import { listProfilesForDevice, getOrCreateAdultParticipant, type Participant } from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
 import { Btn, Centered } from "@/components/ui";
 import { supabase } from "@/lib/supabase/client";
 import { trackEvent } from "@/lib/analytics";
-import {
-  getDailyBattle,
-  getFinalBattle,
-  isBattleCompleted,
-  getBattleLeaderboard,
-  getTripLeaderboard,
-} from "@/lib/battle";
+import { getDailyBattle, getFinalBattle, isBattleCompleted } from "@/lib/battle";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
-import type { BattleTeam } from "@/lib/supabase/types";
 
 interface SlotStatus {
   questionId: string | null;
@@ -38,8 +25,6 @@ interface BattleStatus {
 
 const EMPTY_STATUS: SlotStatus = { questionId: null, completed: false };
 const EMPTY_BATTLE_STATUS: BattleStatus = { available: false, completed: false };
-const EMPTY_SCORE: Record<BattleTeam, number> = { adults: 0, kids: 0 };
-const EMPTY_COUNTS: ParticipantCounts = { adults: 0, children: 0 };
 
 export default function TripHomePage() {
   const { slug } = useParams<{ slug: string }>();
@@ -54,9 +39,6 @@ export default function TripHomePage() {
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [finalStatus, setFinalStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
-  const [dailyScore, setDailyScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
-  const [tripScore, setTripScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
-  const [participantCounts, setParticipantCounts] = useState<ParticipantCounts>(EMPTY_COUNTS);
 
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
@@ -119,17 +101,6 @@ export default function TripHomePage() {
 
     setBattleStatus({ available: !!daily && daily.questions.length > 0, completed: dailyCompleted });
     setFinalStatus({ available: !!final && final.questions.length > 0, completed: finalCompleted });
-
-    const [dailyLeaderboard, tripLeaderboard] = await Promise.all([
-      daily ? getBattleLeaderboard(daily.battle.id) : Promise.resolve(EMPTY_SCORE),
-      getTripLeaderboard(tripId),
-    ]);
-    setDailyScore(dailyLeaderboard);
-    setTripScore(tripLeaderboard);
-  }, []);
-
-  const loadParticipantCounts = useCallback(async (tripId: string) => {
-    setParticipantCounts(await getParticipantCounts(tripId));
   }, []);
 
   useEffect(() => {
@@ -144,8 +115,6 @@ export default function TripHomePage() {
         setTrip(t);
         if (!t) return;
         const list = await loadProfiles(t.id);
-        if (cancelled) return;
-        await loadParticipantCounts(t.id);
         if (cancelled) return;
         if (list.length > 0) {
           const day = currentTripDay(t);
@@ -165,7 +134,7 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus, loadParticipantCounts]);
+  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus]);
 
   async function handleJoin(e: FormEvent) {
     e.preventDefault();
@@ -179,7 +148,6 @@ export default function TripHomePage() {
       await Promise.all([
         loadSlotStatus(trip.id, day, list.map((p) => p.id)),
         loadBattleStatus(trip.id, day),
-        loadParticipantCounts(trip.id),
       ]);
     } finally {
       setJoining(false);
@@ -244,7 +212,6 @@ export default function TripHomePage() {
 
   const day = currentTripDay(trip);
   const daysToFinal = trip.duration_days - day;
-  const daysPassed = Math.max(day - 1, 0);
 
   const completedToday = [morningStatus.completed, lunchStatus.completed, battleStatus.completed].filter(
     Boolean,
@@ -296,13 +263,6 @@ export default function TripHomePage() {
           )}
         </div>
       )}
-
-      <section className="grid grid-cols-2 gap-3">
-        <Stat label="Participanți" value={`${participantCounts.adults} adulți, ${participantCounts.children} copii`} />
-        <Stat label="Zile" value={`${daysPassed} trecute · ${Math.max(daysToFinal, 0)} rămase`} />
-        <Stat label="Scorul zilei" value={`${dailyScore.adults} — ${dailyScore.kids}`} />
-        <Stat label="Scor general" value={`${tripScore.adults} — ${tripScore.kids}`} />
-      </section>
 
       <section>
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Detalii</p>
@@ -365,15 +325,6 @@ function ProgressDots({ current, total }: { current: number; total: number }) {
           }`}
         />
       ))}
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-secondary px-3 py-3">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1 text-[15px] font-medium text-foreground">{value}</p>
     </div>
   );
 }

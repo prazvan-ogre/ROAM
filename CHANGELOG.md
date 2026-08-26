@@ -75,6 +75,11 @@
   version of the same list, to avoid duplicating it). `getParticipantLeaderboard`
   now accepts an optional `day` to scope the ranking to a single day for
   the "Scor zilnic" tab, and returns `age` for the child-profile subtitle.
+- Removed the Participanți/Zile/Scorul zilei/Scor general stat grid from
+  the Dashboard (product owner request, now that the dedicated Scor page
+  covers score and the Dashboard is action-focused) — dropped the
+  now-unused participant-count and battle-leaderboard fetches from that
+  page along with it.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
