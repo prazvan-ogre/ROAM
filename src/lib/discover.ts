@@ -146,3 +146,66 @@ export async function getOrAssignExtra(
   if (insertError) throw insertError;
   return leastAssigned;
 }
+
+export interface LeaderboardEntry {
+  participantId: string;
+  displayName: string;
+  role: ParticipantRole;
+  answered: number;
+  score: number;
+}
+
+// Trip-wide (every device, not just this one), Discover only -- Battle
+// scoring is team-based and has no individual to rank (see battle.ts).
+// This is a deliberate, explicit product-owner addition on top of the
+// spec, which lists individual leaderboards as out of scope; keep it
+// secondary to the Parents-vs-Kids score, not a replacement for it.
+export async function getParticipantLeaderboard(tripId: string): Promise<LeaderboardEntry[]> {
+  const { data: participantRows, error: participantsError } = await supabase
+    .from("participants")
+    .select("id, display_name, role")
+    .eq("trip_id", tripId);
+  if (participantsError) throw participantsError;
+
+  const { data: questionRows, error: questionsError } = await supabase
+    .from("questions")
+    .select("id, points")
+    .eq("trip_id", tripId)
+    .eq("kind", "discover");
+  if (questionsError) throw questionsError;
+
+  const pointsByQuestion = new Map((questionRows ?? []).map((q) => [q.id, q.points]));
+  const questionIds = (questionRows ?? []).map((q) => q.id);
+
+  let responseRows: Pick<Response, "participant_id" | "question_id" | "is_correct">[] = [];
+  if (questionIds.length > 0) {
+    const { data, error: responsesError } = await supabase
+      .from("responses")
+      .select("participant_id, question_id, is_correct")
+      .in("question_id", questionIds);
+    if (responsesError) throw responsesError;
+    responseRows = data ?? [];
+  }
+
+  const statsByParticipant = new Map<string, { answered: number; score: number }>();
+  for (const r of responseRows) {
+    const stats = statsByParticipant.get(r.participant_id) ?? { answered: 0, score: 0 };
+    stats.answered += 1;
+    if (r.is_correct) stats.score += pointsByQuestion.get(r.question_id) ?? 0;
+    statsByParticipant.set(r.participant_id, stats);
+  }
+
+  const leaderboard: LeaderboardEntry[] = (participantRows ?? []).map((p) => {
+    const stats = statsByParticipant.get(p.id) ?? { answered: 0, score: 0 };
+    return {
+      participantId: p.id,
+      displayName: p.display_name,
+      role: p.role,
+      answered: stats.answered,
+      score: stats.score,
+    };
+  });
+
+  leaderboard.sort((a, b) => b.score - a.score || b.answered - a.answered);
+  return leaderboard;
+}
