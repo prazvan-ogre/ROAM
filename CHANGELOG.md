@@ -326,6 +326,26 @@
   never showed Extras. Verified against a scratch local Postgres: all 28
   Battle/Final Battle questions resolve to exactly one Extra row after
   running the updated `seed.sql`.
+- Fixed (product owner: reported no Battle Extras showing after the
+  above): the Battle Extras only ever landed in `seed.sql`, which is
+  explicitly not safe to re-run once a project has real pilot activity
+  (its own header deletes and recreates the trip) — so a live project
+  never actually got the new rows, only a fresh local one seeded from
+  scratch would. Added `supabase/migrations/20260826190000_battle_extras_content.sql`,
+  the safe additive equivalent: the same 28 Extra rows, keyed off the
+  Battle/Final Battle questions that already exist (by day_number/
+  is_final + question order_index), guarded by `where not exists` so
+  re-running it is a no-op, and touching only `extras` — never `trips`/
+  `participants`/`responses`/`battle_scores`. Verified on a scratch
+  Postgres seeded to match a live project's actual current state (schema
+  + the pre-Battle-Extras `seed.sql`, 28 Battle questions/0 Battle
+  Extras): the migration inserts exactly 28 rows on first run and 0 on a
+  second run. Left `verified = false`/`published = false` like every
+  other seeded Extra — reaching a live project still needs `supabase db
+  push` (or pasting the migration into the Supabase SQL editor) run
+  against it, which nothing in this session can do on its own, and the
+  content still needs the same human review-and-publish pass as the rest
+  of the seed content before it's visible.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
