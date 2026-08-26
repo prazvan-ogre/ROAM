@@ -55,7 +55,7 @@ export default function QuestionsPage() {
         }
         setProfiles(list);
 
-        const h = await getTripHistory(t.id, list.map((p) => p.id));
+        const h = await getTripHistory(t.id, currentTripDay(t), list.map((p) => p.id));
         if (cancelled) return;
         setHistory(h);
         setStep("ready");

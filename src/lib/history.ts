@@ -25,22 +25,28 @@ export interface TripHistory {
   battles: BattleHistoryItem[];
 }
 
-// Recap of every Discover question in the trip (not just days already
-// reached -- product owner: the list should show all of them, locked
-// until answered, rather than hide later days entirely) plus every
-// Battle anyone's played. Only published/verified content can ever be
-// fetched (RLS) -- content for a future day that hasn't been reviewed
-// yet still won't appear. The correct answer, One Thing, Common Core,
-// and assigned Extra for a Discover question are only meaningful once
-// this device has actually answered it -- callers must gate the reveal
-// on `responsesByParticipant` having an entry, same spoiler-avoidance
-// the live Discover flow already has by construction.
-export async function getTripHistory(tripId: string, profileIds: string[]): Promise<TripHistory> {
+// Recap of every Discover question reached so far (day_number <=
+// uptoDay), plus every Battle anyone's played. Product owner follow-up:
+// a question the calendar hasn't reached yet must not appear at all --
+// even its bare prompt lets someone look the answer up elsewhere ahead
+// of time -- so this stays day-gated, unlike the reveal below. Only
+// published/verified content can ever be fetched (RLS) regardless. The
+// correct answer, One Thing, Common Core, and assigned Extra for a
+// Discover question are only meaningful once this device has actually
+// answered it -- callers must gate the reveal on `responsesByParticipant`
+// having an entry, same spoiler-avoidance the live Discover flow already
+// has by construction.
+export async function getTripHistory(
+  tripId: string,
+  uptoDay: number,
+  profileIds: string[],
+): Promise<TripHistory> {
   const { data: questionRows, error: questionsError } = await supabase
     .from("questions")
     .select("*")
     .eq("trip_id", tripId)
-    .eq("kind", "discover");
+    .eq("kind", "discover")
+    .lte("day_number", uptoDay);
   if (questionsError) throw questionsError;
 
   const sortedQuestions = (questionRows ?? []).slice().sort((a, b) => {
