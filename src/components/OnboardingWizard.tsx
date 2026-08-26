@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { getOrCreateAdultParticipant, addChildProfile } from "@/lib/participant";
+import { getPrizeStatus, castPrizeVote, type PrizeStatus } from "@/lib/prize";
 import { trackEvent } from "@/lib/analytics";
 import { Btn } from "@/components/ui";
 import type { Trip } from "@/lib/trip";
@@ -14,18 +15,27 @@ const STEP_ORDER: Step[] = ["intro", "name", "role", "how", "prize"];
 
 // First-visit onboarding, product owner spec: theme intro -> collect name
 // -> "adult sau copil" (participant is created right here) -> how the game
-// works -> the prize -> hands off to the Dashboard. Forward-only by
-// design -- no back nav -- so there's no path that could re-submit the
+// works -> vote for the prize -> hands off to the Dashboard. Forward-only
+// by design -- no back nav -- so there's no path that could re-submit the
 // join once it succeeds.
 export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete: () => Promise<void> }) {
   const [step, setStep] = useState<Step>("intro");
   const [name, setName] = useState("");
   const [role, setRole] = useState<ParticipantRole | null>(null);
   const [age, setAge] = useState("");
-  const [joined, setJoined] = useState(false);
+  const [participantId, setParticipantId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
+
+  const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
+  const [selectedPrizeId, setSelectedPrizeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getPrizeStatus(trip.id)
+      .then(setPrizeStatus)
+      .catch(() => setPrizeStatus({ options: [], votingOpen: false, winner: null, closesAt: null }));
+  }, [trip.id]);
 
   const stepIndex = STEP_ORDER.indexOf(step);
 
@@ -35,7 +45,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   }
 
   async function handleJoin() {
-    if (joined) {
+    if (participantId) {
       goNext();
       return;
     }
@@ -52,7 +62,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
           ? await getOrCreateAdultParticipant(trip.id, name.trim())
           : await addChildProfile(trip.id, name.trim(), Number(age));
       await trackEvent(trip.id, "trip_joined", participant.id);
-      setJoined(true);
+      setParticipantId(participant.id);
       goNext();
     } catch {
       setError("Nu s-a putut salva. Încearcă din nou.");
@@ -64,11 +74,16 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   async function handleFinish() {
     setFinishing(true);
     try {
+      if (canVote && selectedPrizeId && participantId) {
+        await castPrizeVote(trip.id, participantId, selectedPrizeId);
+      }
       await onComplete();
     } finally {
       setFinishing(false);
     }
   }
+
+  const canVote = !!prizeStatus && prizeStatus.votingOpen && prizeStatus.options.length > 0;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-12 pt-16">
@@ -157,12 +172,55 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
         )}
 
         {step === "prize" && (
-          <div className="flex flex-1 flex-col justify-center gap-4 text-center">
-            <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">Premiul</p>
-            <h1 className="text-[24px] font-semibold tracking-tight text-foreground">🏆 Cine câștigă</h1>
-            <p className="text-[17px] leading-relaxed text-muted-foreground">
-              {trip.prize ? trip.prize : "Va fi anunțat în curând."}
-            </p>
+          <div className="flex flex-1 flex-col justify-center gap-4">
+            {!prizeStatus ? (
+              <p className="text-center text-[15px] text-muted-foreground">Se încarcă...</p>
+            ) : prizeStatus.options.length === 0 ? (
+              <div className="text-center">
+                <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">Premiul</p>
+                <h1 className="mt-2 text-[24px] font-semibold tracking-tight text-foreground">🏆 Cine câștigă</h1>
+                <p className="mt-4 text-[17px] leading-relaxed text-muted-foreground">Va fi anunțat în curând.</p>
+              </div>
+            ) : !prizeStatus.votingOpen && prizeStatus.winner ? (
+              <div className="text-center">
+                <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">Premiul stabilit</p>
+                <h1 className="mt-2 text-[22px] font-semibold tracking-tight text-foreground">
+                  🏆 {prizeStatus.winner.title}
+                </h1>
+                {prizeStatus.winner.description && (
+                  <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+                    {prizeStatus.winner.description}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <>
+                <p className="text-center text-[13px] font-semibold uppercase tracking-wide text-primary">
+                  Alege premiul
+                </p>
+                <h1 className="text-center text-[22px] font-semibold tracking-tight text-foreground">
+                  Ce premiu ți-ar plăcea?
+                </h1>
+                <div className="flex flex-col gap-2">
+                  {prizeStatus.options.map((opt) => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSelectedPrizeId(opt.id)}
+                      className={`rounded-2xl border px-4 py-4 text-left transition-all ${
+                        selectedPrizeId === opt.id
+                          ? "border-primary bg-accent"
+                          : "border-border bg-card"
+                      }`}
+                    >
+                      <p className="text-[15px] font-semibold text-foreground">{opt.title}</p>
+                      {opt.description && (
+                        <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{opt.description}</p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -173,8 +231,8 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
             {submitting ? "..." : "Continuă"}
           </Btn>
         ) : step === "prize" ? (
-          <Btn onClick={handleFinish} disabled={finishing}>
-            {finishing ? "..." : <>Hai să începem <ArrowRight size={16} /></>}
+          <Btn onClick={handleFinish} disabled={finishing || !prizeStatus || (canVote && !selectedPrizeId)}>
+            {finishing ? "..." : <>{canVote ? "Votează și " : ""}Hai să începem <ArrowRight size={16} /></>}
           </Btn>
         ) : (
           <Btn onClick={goNext} disabled={step === "name" && !name.trim()}>

@@ -26,14 +26,33 @@
 
 delete from trips where slug = 'kassandra-2026';
 
-insert into trips (slug, name, language, start_date, duration_days, destination, location_info, prize, is_active, is_demo)
+-- prize is left unset: superseded by the prize_options vote below (the
+-- wizard's prize step), not a fixed value anymore.
+insert into trips (slug, name, language, start_date, duration_days, destination, location_info, is_active, is_demo)
 values (
   'kassandra-2026', 'Kassandra 2026', 'ro', '2026-09-01', 7,
   'Kassandra, Halkidiki, Grecia',
   'O peninsulă din nordul Greciei, cunoscută pentru plaje, măsline și istorie antică — pe aici au trecut fenicieni, greci și romani cu mii de ani în urmă.',
-  'Echipa câștigătoare e DJ pe drumul de întoarcere — alege muzica toată călătoria! 🎧',
   true, false
 );
+
+-- ---------------------------------------------------------------------
+-- Prize vote (product owner's 3 recommendations, wizard step 5): each
+-- participant votes for their favourite on first join; the option with
+-- the most votes 12h after the first vote becomes the competition prize.
+-- ---------------------------------------------------------------------
+insert into prize_options (trip_id, title, description, order_index)
+select id, o.title, o.description, o.order_index
+from trips
+join (values
+  (1, 'Master of the Playlist (Controlul Muzicii)',
+   'Echipa câștigătoare devine DJ-ul oficial al grupului pe tot drumul de întoarcere spre casă (sau în plimbările cu mașina), având control absolut asupra pieselor și melodiilor care rulează în difuzoare!'),
+  (2, 'Misiunea „Curățenie la Plajă”',
+   'Dacă părinții câștigă, copiii sunt responsabili să adune, să scuture și să strângă toate prosoapele, jucăriile de nisip și papucii la finalul zilei de plajă, fără nicio comentariu sau obiecție.'),
+  (3, 'Bugetul pentru Suvenirul Secret',
+   'Echipa câștigătoare primește dreptul de a-și alege un suvenir special și amuzant din piețele sau magazinele locale din Kassandra, finanțat/susținut de echipa învinsă!')
+) as o(order_index, title, description) on true
+where trips.slug = 'kassandra-2026';
 
 -- =======================================================================
 -- ZIUA 1: Sosirea în Kassandra & Legenda Tridentului

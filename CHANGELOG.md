@@ -115,15 +115,29 @@
 - First-visit onboarding wizard (product owner spec), replacing the old
   one-field join form: theme intro → name → "adult sau copil" (the
   participant is created here; age is collected for a child) → how the
-  game works → the prize (`trip.prize`) → hands off to the Dashboard.
+  game works → vote for the prize → hands off to the Dashboard.
   Forward-only, no back navigation, so there's no path that could
   re-submit the join once it succeeds. A child can now be the first (and
   possibly only) participant on their own device — `child_needs_manager`
   relaxed (dropped) since not every child shares the parent's phone;
-  `addChildProfile`'s `managingAdultId` is now optional. Seeded the
-  Kassandra 2026 trip's `prize`: "Echipa câștigătoare e DJ pe drumul de
-  întoarcere." Verified the no-manager child insert against the relaxed
-  constraint on the same scratch local Postgres.
+  `addChildProfile`'s `managingAdultId` is now optional. Verified the
+  no-manager child insert against the relaxed constraint on a scratch
+  local Postgres.
+- The prize is now decided by a vote (product owner spec), not a fixed
+  value: 3 options per trip (new `prize_options`/`prize_votes` tables),
+  each participant picks their favourite once during onboarding (1 vote
+  = 1 point, `unique(participant_id)`). 12 hours after the *first* vote,
+  the window closes and the option with the most votes becomes the
+  prize — computed on read (`getPrizeStatus` in `src/lib/prize.ts`), no
+  background job. The wizard's prize step shows the 3 options while
+  voting is open, or the decided winner once closed; Setări > Configurare
+  shows the same live/decided status instead of a static `trips.prize`
+  (that column is now unused, left in place rather than dropped). Seeded
+  the Kassandra 2026 trip's 3 options (Master of the Playlist / Misiunea
+  Curățenie la Plajă / Bugetul pentru Suvenirul Secret). Verified the
+  open/closed/winner/tie-break logic and the cascade-delete of a
+  participant's vote against seeded `prize_votes` rows at different
+  timestamps on the same scratch local Postgres.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
