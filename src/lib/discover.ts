@@ -151,6 +151,7 @@ export interface LeaderboardEntry {
   participantId: string;
   displayName: string;
   role: ParticipantRole;
+  age: number | null;
   answered: number;
   score: number;
 }
@@ -160,18 +161,26 @@ export interface LeaderboardEntry {
 // This is a deliberate, explicit product-owner addition on top of the
 // spec, which lists individual leaderboards as out of scope; keep it
 // secondary to the Parents-vs-Kids score, not a replacement for it.
-export async function getParticipantLeaderboard(tripId: string): Promise<LeaderboardEntry[]> {
+//
+// Pass `day` to scope to a single trip day (the "Scor zilnic" toggle on
+// the Scor page); omit it for the cumulative "Scor total" view.
+export async function getParticipantLeaderboard(
+  tripId: string,
+  day?: number,
+): Promise<LeaderboardEntry[]> {
   const { data: participantRows, error: participantsError } = await supabase
     .from("participants")
-    .select("id, display_name, role")
+    .select("id, display_name, role, age")
     .eq("trip_id", tripId);
   if (participantsError) throw participantsError;
 
-  const { data: questionRows, error: questionsError } = await supabase
+  let questionQuery = supabase
     .from("questions")
     .select("id, points")
     .eq("trip_id", tripId)
     .eq("kind", "discover");
+  if (day != null) questionQuery = questionQuery.eq("day_number", day);
+  const { data: questionRows, error: questionsError } = await questionQuery;
   if (questionsError) throw questionsError;
 
   const pointsByQuestion = new Map((questionRows ?? []).map((q) => [q.id, q.points]));
@@ -201,6 +210,7 @@ export async function getParticipantLeaderboard(tripId: string): Promise<Leaderb
       participantId: p.id,
       displayName: p.display_name,
       role: p.role,
+      age: p.age,
       answered: stats.answered,
       score: stats.score,
     };
