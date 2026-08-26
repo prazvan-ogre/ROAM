@@ -242,6 +242,39 @@
   favourite prize" — every state (voting open, winner decided, no
   options yet) now names "echipa câștigătoare — Copii sau Părinți"
   instead of leaving that connection implicit.
+- Fixed: catch-up questions were only ever reachable once, during the
+  onboarding wizard's one-time step right after a participant is
+  created — a participant who'd already finished onboarding (joined on
+  time, or caught up once already) had no way back to a question they
+  later realized they'd missed, since the Dashboard only ever shows
+  *today's* own Discover/Battle slots and the Întrebări/recap page is
+  read-only (product owner: manually confirmed unable to answer a
+  previous day's questions). Added `/trip/[slug]/catchup`, a standalone
+  page any already-joined participant can open at any time (profile
+  picker, same pattern as Discover/Battle, then their own pending
+  questions one after another via `getCatchUpQuestions` +
+  `submitResponse` — same as the wizard step, same guarantee that it
+  never touches `battle_scores`); the Dashboard now shows an "Ai
+  întrebări de recuperat" banner linking to it whenever any profile on
+  the device has something pending.
+- Fixed (same report, product owner follow-up): `getCatchUpQuestions`
+  only ever considered days strictly before the current one
+  (`day_number < currentDay`), so someone joining (or opening
+  `/catchup`) *today*, after a slot's own time-of-day window had already
+  closed — e.g. after lunch's 12:00-17:00, or after Battle's
+  19:00-23:00 — still couldn't reach that slot: it's not a past day, but
+  the normal Discover/Battle pages block a fresh answer once
+  `getSlotAvailability` reports `"after"`. `getCatchUpQuestions` now also
+  includes *today's* own Discover slot or Battle once its window has
+  actually closed (still excluding the Final Battle, and still leaving a
+  slot that's open or not yet open to the normal flow, not catch-up).
+  Verified the day/time matrix directly (no DB needed, this is pure date
+  logic): mid-morning on day 1 yields nothing (normal flow handles it);
+  mid-lunch on day 1 yields just that morning's question; late evening
+  on day 1 (all three windows closed) yields all of that day's Discover
+  + Battle questions; joining on day 2 still yields all of day 1
+  regardless of time (unchanged); and the Final Battle never appears
+  even when its own day's Battle window has closed.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

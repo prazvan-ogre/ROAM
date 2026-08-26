@@ -1,4 +1,5 @@
 import { supabase } from "./supabase/client";
+import { getSlotAvailability } from "./schedule";
 import type { Database, ParticipantRole, QuestionSlot } from "./supabase/types";
 
 export type Question = Database["public"]["Tables"]["questions"]["Row"];
@@ -152,33 +153,66 @@ export interface CatchUpQuestion {
   options: AnswerOption[];
 }
 
-// Every past-day Discover or Battle question this specific participant
-// hasn't answered yet -- product owner spec: someone who joins partway
-// through the trip gets an extra onboarding-wizard step, right after
-// they're created, that walks them through everything they missed one
-// after another (both kinds), building up their own personal score.
+// Every Discover or Battle question this specific participant hasn't
+// answered yet and can no longer answer through the normal flow --
+// product owner spec: someone who joins partway through the trip gets an
+// extra onboarding-wizard step, right after they're created, that walks
+// them through everything they missed one after another (both kinds),
+// building up their own personal score. Also reachable any time after
+// that, for any already-onboarded participant, via /trip/[slug]/catchup
+// (linked from a Dashboard banner) -- joining the wizard is not the only
+// moment this is needed: someone who joined on time can just as easily
+// miss a window (phone died, fell asleep) and need the same way back.
 // This never touches battle_scores (the team submission recorded live
 // during BattleFlow) -- it's a plain submitResponse, same as Discover --
 // so it can't retroactively change any already-played Battle's result.
-// Only days before today are considered; today's own Discover slot and
-// this evening's Battle are handled by the normal Dashboard flow, and
-// the Final Battle (day_number === trip.duration_days) is never
-// catch-up-able -- everyone plays it live, on the actual last day.
+//
+// Eligible questions are: every past day's (regardless of time of day --
+// those windows are long closed), plus *today's* own Discover slot or
+// Battle once its time-of-day window has actually closed (product owner
+// follow-up: joining today, after lunch or after Battle's 19:00-23:00
+// window, needs the same catch-up path, not just joining on a later
+// day). A slot still open or not yet open today is the normal Dashboard
+// flow's job, not catch-up. The Final Battle is never included --
+// everyone plays it live, on the actual last day, regardless of time.
 export async function getCatchUpQuestions(
   tripId: string,
   currentDay: number,
   participantId: string,
 ): Promise<CatchUpQuestion[]> {
-  if (currentDay <= 1) return [];
+  const { data: finalBattle, error: finalBattleError } = await supabase
+    .from("battles")
+    .select("id")
+    .eq("trip_id", tripId)
+    .eq("is_final", true)
+    .maybeSingle();
+  if (finalBattleError) throw finalBattleError;
 
   const { data: questions, error: questionsError } = await supabase
     .from("questions")
     .select("*")
     .eq("trip_id", tripId)
     .in("kind", ["discover", "battle"])
-    .lt("day_number", currentDay);
+    .lte("day_number", currentDay);
   if (questionsError) throw questionsError;
   if (!questions || questions.length === 0) return [];
+
+  const todayWindowClosed = {
+    morning: getSlotAvailability("morning").status === "after",
+    lunch: getSlotAvailability("lunch").status === "after",
+    battle: getSlotAvailability("battle").status === "after",
+  };
+
+  const eligible = questions.filter((q) => {
+    if (finalBattle && q.battle_id === finalBattle.id) return false;
+    if (q.day_number == null) return false;
+    if (q.day_number < currentDay) return true;
+    if (q.day_number > currentDay) return false;
+    return q.kind === "discover"
+      ? q.slot != null && todayWindowClosed[q.slot as "morning" | "lunch"]
+      : todayWindowClosed.battle;
+  });
+  if (eligible.length === 0) return [];
 
   const { data: answeredRows, error: answeredError } = await supabase
     .from("responses")
@@ -186,12 +220,12 @@ export async function getCatchUpQuestions(
     .eq("participant_id", participantId)
     .in(
       "question_id",
-      questions.map((q) => q.id),
+      eligible.map((q) => q.id),
     );
   if (answeredError) throw answeredError;
   const answeredIds = new Set((answeredRows ?? []).map((r) => r.question_id));
 
-  const pending = questions
+  const pending = eligible
     .filter((q) => !answeredIds.has(q.id))
     .sort(
       (a, b) =>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Sun, Utensils, Moon, Check, Clock, Trophy } from "lucide-react";
+import { Sun, Utensils, Moon, Check, Clock, Trophy, History } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
@@ -11,6 +11,7 @@ import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { Centered } from "@/components/ui";
 import { supabase } from "@/lib/supabase/client";
 import { getDailyBattle, getFinalBattle } from "@/lib/battle";
+import { getCatchUpQuestions } from "@/lib/discover";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
 
 interface SlotStatus {
@@ -37,6 +38,7 @@ export default function TripHomePage() {
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [finalStatus, setFinalStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
+  const [hasCatchUp, setHasCatchUp] = useState(false);
 
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
@@ -120,6 +122,20 @@ export default function TripHomePage() {
     [],
   );
 
+  // Catch-up questions (past days' Discover/Battle this device's profiles
+  // never answered) are otherwise only ever offered once, during the
+  // onboarding wizard right after a participant is created -- a returning
+  // participant who joined earlier and missed some has no other way back
+  // to them once the day rolls over. This surfaces that gap as a banner
+  // linking to /catchup, checked per profile since each has its own
+  // pending list.
+  const loadCatchUpStatus = useCallback(async (tripId: string, day: number, list: Participant[]) => {
+    const perProfile = await Promise.all(
+      list.map((p) => getCatchUpQuestions(tripId, day, p.id)),
+    );
+    setHasCatchUp(perProfile.some((pending) => pending.length > 0));
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -139,6 +155,7 @@ export default function TripHomePage() {
           await Promise.all([
             loadSlotStatus(t.id, day, profileIds),
             loadBattleStatus(t.id, day, day >= t.duration_days, profileIds),
+            loadCatchUpStatus(t.id, day, list),
           ]);
         }
       } catch {
@@ -152,7 +169,7 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus]);
+  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus, loadCatchUpStatus]);
 
   async function handleWizardComplete() {
     if (!trip) return;
@@ -162,6 +179,7 @@ export default function TripHomePage() {
     await Promise.all([
       loadSlotStatus(trip.id, day, profileIds),
       loadBattleStatus(trip.id, day, day >= trip.duration_days, profileIds),
+      loadCatchUpStatus(trip.id, day, list),
     ]);
   }
 
@@ -218,6 +236,19 @@ export default function TripHomePage() {
           </p>
         )}
       </header>
+
+      {hasCatchUp && (
+        <Link
+          href={`/trip/${slug}/catchup`}
+          className="flex items-center gap-3 rounded-[20px] border border-primary/30 bg-accent px-5 py-4 shadow-[0_2px_16px_rgba(0,0,0,0.06)] transition-all active:scale-[0.99]"
+        >
+          <History size={18} className="shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[14px] font-semibold text-foreground">Ai întrebări de recuperat</p>
+            <p className="text-[13px] text-muted-foreground">Din zilele anterioare</p>
+          </div>
+        </Link>
+      )}
 
       {totalToday > 0 && (
         <div className="rounded-[20px] border border-border bg-card p-5 shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
