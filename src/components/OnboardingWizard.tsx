@@ -1,23 +1,33 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Check, X } from "lucide-react";
 import { getOrCreateAdultParticipant, addChildProfile } from "@/lib/participant";
 import { getPrizeStatus, castPrizeVote, type PrizeStatus } from "@/lib/prize";
+import {
+  getCatchUpQuestions,
+  submitResponse,
+  type CatchUpQuestion,
+  type AnswerOption,
+  type Response,
+} from "@/lib/discover";
 import { trackEvent } from "@/lib/analytics";
 import { Btn } from "@/components/ui";
-import type { Trip } from "@/lib/trip";
+import { currentTripDay, type Trip } from "@/lib/trip";
 import type { ParticipantRole } from "@/lib/supabase/types";
 
-type Step = "intro" | "name" | "role" | "how" | "prize";
+type Step = "intro" | "name" | "role" | "how" | "catchup" | "prize";
 
-const STEP_ORDER: Step[] = ["intro", "name", "role", "how", "prize"];
+const STEP_ORDER: Step[] = ["intro", "name", "role", "how", "catchup", "prize"];
+
+const CATCHUP_SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
 
 // First-visit onboarding, product owner spec: theme intro -> collect name
 // -> "adult sau copil" (participant is created right here) -> how the game
-// works -> vote for the prize -> hands off to the Dashboard. Forward-only
-// by design -- no back nav -- so there's no path that could re-submit the
-// join once it succeeds.
+// works -> catch up on any previous days' questions missed by joining
+// partway through the trip -> vote for the prize -> hands off to the
+// Dashboard. Forward-only by design -- no back nav -- so there's no path
+// that could re-submit the join once it succeeds.
 export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete: () => Promise<void> }) {
   const [step, setStep] = useState<Step>("intro");
   const [name, setName] = useState("");
@@ -31,6 +41,18 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
   const [selectedPrizeId, setSelectedPrizeId] = useState<string | null>(null);
 
+  // Populated once the participant exists (right after the "role" step) --
+  // every past-day Discover/Battle question they haven't answered yet,
+  // shown one after another below. Answered individually via
+  // submitResponse, same as Discover -- this only ever builds up this
+  // participant's own score (getParticipantLeaderboard), it never writes
+  // to battle_scores, so it can't change any already-played Battle's
+  // result.
+  const [catchUpQuestions, setCatchUpQuestions] = useState<CatchUpQuestion[] | null>(null);
+  const [catchUpIndex, setCatchUpIndex] = useState(0);
+  const [catchUpSelected, setCatchUpSelected] = useState<AnswerOption | null>(null);
+  const [catchUpResponse, setCatchUpResponse] = useState<Response | null>(null);
+
   useEffect(() => {
     getPrizeStatus(trip.id)
       .then(setPrizeStatus)
@@ -43,6 +65,25 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
         setPrizeStatus({ options: [], votingOpen: false, winner: null, closesAt: null });
       });
   }, [trip.id]);
+
+  useEffect(() => {
+    if (!participantId) return;
+    getCatchUpQuestions(trip.id, currentTripDay(trip), participantId)
+      .then(setCatchUpQuestions)
+      .catch((err) => {
+        console.error("getCatchUpQuestions failed", err);
+        setCatchUpQuestions([]);
+      });
+  }, [participantId, trip]);
+
+  // Nothing to catch up on (joined on day 1, or already answered
+  // everything) -- skip straight past the step instead of showing an
+  // empty screen.
+  useEffect(() => {
+    if (step === "catchup" && catchUpQuestions !== null && catchUpQuestions.length === 0) {
+      setStep("prize");
+    }
+  }, [step, catchUpQuestions]);
 
   const stepIndex = STEP_ORDER.indexOf(step);
 
@@ -74,6 +115,25 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
     }
   }
 
+  async function handleCatchUpSubmit() {
+    if (!catchUpQuestions || !catchUpSelected || !participantId) return;
+    const current = catchUpQuestions[catchUpIndex];
+    const response = await submitResponse(participantId, current.question.id, catchUpSelected);
+    setCatchUpResponse(response);
+  }
+
+  function handleCatchUpNext() {
+    if (!catchUpQuestions) return;
+    const nextIndex = catchUpIndex + 1;
+    setCatchUpSelected(null);
+    setCatchUpResponse(null);
+    if (nextIndex >= catchUpQuestions.length) {
+      setStep("prize");
+      return;
+    }
+    setCatchUpIndex(nextIndex);
+  }
+
   async function handleFinish() {
     setFinishing(true);
     try {
@@ -87,6 +147,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   }
 
   const canVote = !!prizeStatus && prizeStatus.votingOpen && prizeStatus.options.length > 0;
+  const currentCatchUp = catchUpQuestions?.[catchUpIndex] ?? null;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-12 pt-16">
@@ -179,6 +240,54 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
           </div>
         )}
 
+        {step === "catchup" && (
+          <div className="flex flex-1 flex-col justify-center gap-4">
+            {!currentCatchUp ? (
+              <p className="text-center text-[15px] text-muted-foreground">Se încarcă...</p>
+            ) : (
+              <>
+                <p className="text-center text-[13px] font-semibold uppercase tracking-wide text-primary">
+                  De recuperat · Ziua {currentCatchUp.question.day_number} ·{" "}
+                  {CATCHUP_SLOT_LABEL[currentCatchUp.question.slot ?? ""] ?? "Battle"} · {catchUpIndex + 1}/
+                  {catchUpQuestions?.length ?? 0}
+                </p>
+                <h1 className="text-center text-[22px] font-semibold leading-snug tracking-tight text-foreground">
+                  {currentCatchUp.question.prompt}
+                </h1>
+                <div className="flex flex-col gap-2">
+                  {currentCatchUp.options.map((opt) => {
+                    const isSelected = catchUpSelected?.id === opt.id;
+                    const revealed = !!catchUpResponse;
+                    const isRight = opt.is_correct;
+                    return (
+                      <button
+                        key={opt.id}
+                        disabled={revealed}
+                        onClick={() => setCatchUpSelected(opt)}
+                        className={`flex items-center justify-between gap-2 rounded-2xl border px-4 py-4 text-left text-[15px] font-medium transition-all ${
+                          revealed
+                            ? isRight
+                              ? "border-primary bg-accent text-foreground"
+                              : isSelected
+                                ? "border-destructive bg-destructive/10 text-foreground"
+                                : "border-border bg-card text-muted-foreground"
+                            : isSelected
+                              ? "border-primary bg-accent text-foreground"
+                              : "border-border bg-card text-foreground"
+                        }`}
+                      >
+                        {opt.label}
+                        {revealed && isRight && <Check size={16} className="shrink-0 text-primary" />}
+                        {revealed && isSelected && !isRight && <X size={16} className="shrink-0 text-destructive" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {step === "prize" && (
           <div className="flex flex-1 flex-col justify-center gap-4">
             {!prizeStatus ? (
@@ -237,6 +346,13 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
         {step === "role" ? (
           <Btn onClick={handleJoin} disabled={submitting || !role || !name.trim()}>
             {submitting ? "..." : "Continuă"}
+          </Btn>
+        ) : step === "catchup" ? (
+          <Btn
+            onClick={catchUpResponse ? handleCatchUpNext : handleCatchUpSubmit}
+            disabled={!currentCatchUp || (!catchUpResponse && !catchUpSelected)}
+          >
+            {catchUpResponse ? "Continuă" : "Răspunde"} <ArrowRight size={16} />
           </Btn>
         ) : step === "prize" ? (
           <Btn onClick={handleFinish} disabled={finishing || !prizeStatus || (canVote && !selectedPrizeId)}>

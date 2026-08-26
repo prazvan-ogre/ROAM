@@ -147,56 +147,73 @@ export async function getOrAssignExtra(
   return leastAssigned;
 }
 
-export interface PendingDiscoverItem {
-  dayNumber: number;
-  slot: QuestionSlot;
-  questionId: string;
+export interface CatchUpQuestion {
+  question: Question;
+  options: AnswerOption[];
 }
 
-// Past days' Discover questions not yet answered by at least one of this
-// device's participants -- product owner spec: someone who joins partway
-// through the trip can still catch up on previous days' Discover
-// questions (unlike Battle, which is a once-per-evening team submission
-// with nothing to "catch up" on -- see getDailyBattle). Only days before
-// today are considered; today's own slot is handled by the normal
-// Dashboard flow. Time-of-day availability windows don't apply to these
-// -- see getSlotAvailability callers, which skip the window check for a
-// day in the past.
-export async function getPendingDiscoverCatchUp(
+// Every past-day Discover or Battle question this specific participant
+// hasn't answered yet -- product owner spec: someone who joins partway
+// through the trip gets an extra onboarding-wizard step, right after
+// they're created, that walks them through everything they missed one
+// after another (both kinds), building up their own personal score.
+// This never touches battle_scores (the team submission recorded live
+// during BattleFlow) -- it's a plain submitResponse, same as Discover --
+// so it can't retroactively change any already-played Battle's result.
+// Only days before today are considered; today's own Discover slot and
+// this evening's Battle are handled by the normal Dashboard flow, and
+// the Final Battle (day_number === trip.duration_days) is never
+// catch-up-able -- everyone plays it live, on the actual last day.
+export async function getCatchUpQuestions(
   tripId: string,
   currentDay: number,
-  participantIds: string[],
-): Promise<PendingDiscoverItem[]> {
-  if (currentDay <= 1 || participantIds.length === 0) return [];
+  participantId: string,
+): Promise<CatchUpQuestion[]> {
+  if (currentDay <= 1) return [];
 
   const { data: questions, error: questionsError } = await supabase
     .from("questions")
-    .select("id, day_number, slot")
+    .select("*")
     .eq("trip_id", tripId)
-    .eq("kind", "discover")
+    .in("kind", ["discover", "battle"])
     .lt("day_number", currentDay);
   if (questionsError) throw questionsError;
   if (!questions || questions.length === 0) return [];
 
-  const questionIds = questions.map((q) => q.id);
-  const { data: responseRows, error: responsesError } = await supabase
+  const { data: answeredRows, error: answeredError } = await supabase
     .from("responses")
-    .select("participant_id, question_id")
-    .in("question_id", questionIds)
-    .in("participant_id", participantIds);
-  if (responsesError) throw responsesError;
+    .select("question_id")
+    .eq("participant_id", participantId)
+    .in(
+      "question_id",
+      questions.map((q) => q.id),
+    );
+  if (answeredError) throw answeredError;
+  const answeredIds = new Set((answeredRows ?? []).map((r) => r.question_id));
 
-  const answeredByQuestion = new Map<string, Set<string>>();
-  for (const r of responseRows ?? []) {
-    const set = answeredByQuestion.get(r.question_id) ?? new Set<string>();
-    set.add(r.participant_id);
-    answeredByQuestion.set(r.question_id, set);
-  }
+  const pending = questions
+    .filter((q) => !answeredIds.has(q.id))
+    .sort(
+      (a, b) =>
+        (a.day_number ?? 0) - (b.day_number ?? 0) ||
+        (a.slot === "morning" ? -1 : a.slot === "lunch" ? 0 : 1),
+    );
+  if (pending.length === 0) return [];
 
-  return questions
-    .filter((q) => (answeredByQuestion.get(q.id)?.size ?? 0) < participantIds.length)
-    .map((q) => ({ dayNumber: q.day_number as number, slot: q.slot as QuestionSlot, questionId: q.id }))
-    .sort((a, b) => a.dayNumber - b.dayNumber || (a.slot === "morning" ? -1 : 1));
+  const { data: options, error: optionsError } = await supabase
+    .from("answer_options")
+    .select("*")
+    .in(
+      "question_id",
+      pending.map((q) => q.id),
+    )
+    .order("order_index", { ascending: true });
+  if (optionsError) throw optionsError;
+
+  return pending.map((q) => ({
+    question: q,
+    options: (options ?? []).filter((o) => o.question_id === q.id),
+  }));
 }
 
 export interface LeaderboardEntry {
@@ -208,11 +225,19 @@ export interface LeaderboardEntry {
   score: number;
 }
 
-// Trip-wide (every device, not just this one), Discover only -- Battle
-// scoring is team-based and has no individual to rank (see battle.ts).
-// This is a deliberate, explicit product-owner addition on top of the
-// spec, which lists individual leaderboards as out of scope; keep it
-// secondary to the Parents-vs-Kids score, not a replacement for it.
+// Trip-wide (every device, not just this one). This is a deliberate,
+// explicit product-owner addition on top of the spec, which lists
+// individual leaderboards as out of scope; keep it secondary to the
+// Parents-vs-Kids score, not a replacement for it.
+//
+// Sums every question a participant has an individual `responses` row
+// for, Discover or Battle alike -- Battle is a team submission during
+// live play (battle_scores, no individual `responses` row), so in
+// practice only catch-up answers (getCatchUpQuestions, answered
+// individually by someone who joined partway through the trip) ever add
+// Battle points here; a live Battle's team result is untouched either
+// way. The Final Battle is never catch-up-able (everyone plays it live
+// on the actual last day), so it never contributes here either.
 //
 // Pass `day` to scope to a single trip day (the "Scor zilnic" toggle on
 // the Scor page); omit it for the cumulative "Scor total" view.
@@ -226,11 +251,7 @@ export async function getParticipantLeaderboard(
     .eq("trip_id", tripId);
   if (participantsError) throw participantsError;
 
-  let questionQuery = supabase
-    .from("questions")
-    .select("id, points")
-    .eq("trip_id", tripId)
-    .eq("kind", "discover");
+  let questionQuery = supabase.from("questions").select("id, points").eq("trip_id", tripId);
   if (day != null) questionQuery = questionQuery.eq("day_number", day);
   const { data: questionRows, error: questionsError } = await questionQuery;
   if (questionsError) throw questionsError;
