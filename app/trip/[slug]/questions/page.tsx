@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { ChevronDown, Sun, Utensils, Moon } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import {
@@ -12,10 +13,12 @@ import {
   type BattleHistoryItem,
 } from "@/lib/history";
 import { TripNav } from "@/components/TripNav";
+import { Centered } from "@/components/ui";
 
 type Step = "loading" | "error" | "not-joined" | "ready";
 
 const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
+const SLOT_ICON: Record<string, typeof Sun> = { morning: Sun, lunch: Utensils };
 const FINAL_TAB = "final";
 
 export default function QuestionsPage() {
@@ -118,9 +121,9 @@ export default function QuestionsPage() {
 
   if (!history || (days.length === 0 && !hasFinal)) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-6 py-10">
-        <h1 className="text-center text-2xl font-semibold">Întrebări</h1>
-        <p className="text-center text-slate-500">Nimic de arătat încă.</p>
+      <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-5 pb-32 pt-14">
+        <h1 className="text-[28px] font-semibold tracking-tight text-foreground">Întrebări</h1>
+        <p className="text-center text-[15px] text-muted-foreground">Nimic de arătat încă.</p>
         <TripNav slug={slug} />
       </main>
     );
@@ -138,16 +141,16 @@ export default function QuestionsPage() {
   );
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-6 py-10">
-      <h1 className="text-center text-2xl font-semibold">Întrebări</h1>
+    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 pb-32 pt-14">
+      <h1 className="px-5 text-[28px] font-semibold tracking-tight text-foreground">Întrebări</h1>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="flex gap-2 overflow-x-auto px-5 pb-1" style={{ scrollbarWidth: "none" }}>
         {days.map((d) => (
           <button
             key={d}
             onClick={() => setSelectedTab(d)}
-            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-medium ${
-              selectedTab === d ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300"
+            className={`shrink-0 rounded-xl px-4 py-2 text-[13px] font-semibold transition-all ${
+              selectedTab === d ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
             }`}
           >
             Ziua {d}
@@ -156,8 +159,8 @@ export default function QuestionsPage() {
         {hasFinal && (
           <button
             onClick={() => setSelectedTab(FINAL_TAB)}
-            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-medium ${
-              selectedTab === FINAL_TAB ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300"
+            className={`shrink-0 rounded-xl px-4 py-2 text-[13px] font-semibold transition-all ${
+              selectedTab === FINAL_TAB ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
             }`}
           >
             Final
@@ -165,7 +168,7 @@ export default function QuestionsPage() {
         )}
       </div>
 
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2 px-5">
         {discoverForTab.map((item) => (
           <DiscoverRow
             key={item.question.id}
@@ -184,7 +187,7 @@ export default function QuestionsPage() {
           />
         ))}
         {discoverForTab.length === 0 && battlesForTab.length === 0 && (
-          <p className="text-center text-slate-400">Nimic pentru această zi.</p>
+          <p className="text-center text-[15px] text-disabled">Nimic pentru această zi.</p>
         )}
       </div>
 
@@ -206,38 +209,61 @@ function DiscoverRow({
 }) {
   const correctOption = item.options.find((o) => o.is_correct);
   const answers = Object.entries(item.responsesByParticipant);
+  const Icon = SLOT_ICON[item.question.slot ?? ""] ?? Sun;
 
   return (
-    <div className="rounded-2xl border border-slate-200 px-5 py-4">
-      <button onClick={onToggle} className="flex w-full items-center justify-between text-left">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+    <div className="overflow-hidden rounded-2xl border border-border bg-card">
+      <button onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-4 text-left">
+        <div className="text-muted-foreground">
+          <Icon size={15} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {SLOT_LABEL[item.question.slot ?? ""] ?? ""}
           </p>
-          <p className="mt-1 font-medium leading-snug">{item.question.prompt}</p>
+          <p className="mt-0.5 text-[15px] font-medium leading-snug text-foreground">{item.question.prompt}</p>
         </div>
-        <span className="ml-3 shrink-0 text-slate-400">{expanded ? "▾" : "▸"}</span>
+        <ChevronDown
+          size={15}
+          className={`shrink-0 text-disabled transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+        />
       </button>
 
       {expanded && (
-        <div className="mt-3 flex flex-col gap-2 border-t border-slate-100 pt-3">
+        <div className="flex flex-col gap-3 border-t border-secondary px-4 pb-5 pt-4">
           {correctOption && (
-            <p className="text-sm text-emerald-600">Răspuns corect: {correctOption.label}</p>
+            <div className="rounded-xl bg-accent px-3.5 py-3">
+              <p className="text-[13px] font-semibold text-primary">Răspuns: {correctOption.label}</p>
+            </div>
           )}
           {item.question.one_thing && (
-            <p className="rounded-xl bg-slate-100 px-3 py-2 text-sm">{item.question.one_thing}</p>
+            <div className="rounded-xl bg-background px-3.5 py-3">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-disabled">The One Thing</p>
+              <p className="text-[13px] leading-relaxed text-secondary-foreground">{item.question.one_thing}</p>
+            </div>
           )}
           {answers.length > 0 && (
-            <ul className="flex flex-col gap-1 text-sm text-slate-600">
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-disabled">Răspunsuri</p>
               {answers.map(([participantId, response]) => {
                 const chosen = item.options.find((o) => o.id === response.selected_option_id);
                 return (
-                  <li key={participantId}>
-                    {profileName(participantId)}: {chosen?.label ?? "—"} {response.is_correct ? "✓" : "✗"}
-                  </li>
+                  <div
+                    key={participantId}
+                    className="flex items-center justify-between border-b border-background py-2 last:border-0"
+                  >
+                    <span className="text-[14px] text-foreground">{profileName(participantId)}</span>
+                    <span className="text-[13px] font-medium">
+                      {response.is_correct ? (
+                        <span className="text-primary">{chosen?.label ?? "—"} · Corect</span>
+                      ) : (
+                        <span className="text-muted-foreground">{chosen?.label ?? "—"} · Aproape</span>
+                      )}
+                    </span>
+                  </div>
                 );
               })}
-            </ul>
+            </div>
           )}
         </div>
       )}
@@ -255,40 +281,39 @@ function BattleRow({
   onToggle: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 px-5 py-4">
-      <button onClick={onToggle} className="flex w-full items-center justify-between text-left">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Battle</p>
-          <p className="mt-1 font-medium">{item.content.battle.title}</p>
+    <div className="overflow-hidden rounded-2xl border border-border bg-card">
+      <button onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-4 text-left">
+        <div className="text-muted-foreground">
+          <Moon size={15} />
         </div>
-        <span className="ml-3 shrink-0 text-slate-400">{expanded ? "▾" : "▸"}</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Battle</p>
+          <p className="mt-0.5 text-[15px] font-medium text-foreground">{item.content.battle.title}</p>
+        </div>
+        <ChevronDown
+          size={15}
+          className={`shrink-0 text-disabled transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+        />
       </button>
 
       {expanded && (
-        <div className="mt-3 flex flex-col gap-2 border-t border-slate-100 pt-3">
-          <p className="text-sm text-slate-600">
+        <div className="flex flex-col gap-3 border-t border-secondary px-4 pb-5 pt-4">
+          <p className="text-[15px] font-semibold text-foreground">
             PĂRINȚI {item.leaderboard.adults} — COPII {item.leaderboard.kids}
           </p>
-          <ul className="flex flex-col gap-1 text-sm text-slate-600">
+          <div className="flex flex-col gap-2">
             {item.content.questions.map(({ question, options }) => {
               const correctOption = options.find((o) => o.is_correct);
               return (
-                <li key={question.id}>
-                  {question.prompt} — {correctOption?.label ?? "—"}
-                </li>
+                <div key={question.id} className="rounded-xl bg-background px-3.5 py-3">
+                  <p className="mb-1 text-[14px] text-foreground">{question.prompt}</p>
+                  <p className="text-[13px] font-semibold text-primary">{correctOption?.label ?? "—"}</p>
+                </div>
               );
             })}
-          </ul>
+          </div>
         </div>
       )}
     </div>
-  );
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6 text-center text-slate-600">
-      {children}
-    </main>
   );
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { MapPin, Sun, Utensils, Moon, Check, ArrowRight, Clock, Trophy } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import {
   listProfilesForDevice,
@@ -12,6 +13,7 @@ import {
   type ParticipantCounts,
 } from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
+import { Btn, Centered } from "@/components/ui";
 import { supabase } from "@/lib/supabase/client";
 import { trackEvent } from "@/lib/analytics";
 import {
@@ -192,50 +194,56 @@ export default function TripHomePage() {
   }
 
   if (loading) {
-    return <CenteredMessage>Se încarcă...</CenteredMessage>;
+    return <Centered>Se încarcă...</Centered>;
   }
 
   if (loadError) {
     return (
-      <CenteredMessage>
+      <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
         <button onClick={() => window.location.reload()} className="mt-4 underline">
           Încearcă din nou
         </button>
-      </CenteredMessage>
+      </Centered>
     );
   }
 
   if (!trip) {
-    return <CenteredMessage>Nu am găsit această călătorie.</CenteredMessage>;
+    return <Centered>Nu am găsit această călătorie.</Centered>;
   }
 
   if (profiles.length === 0) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 px-6 py-12">
-        <div className="text-center">
-          <h1 className="text-3xl font-semibold uppercase tracking-wide">{trip.name}</h1>
-          <p className="mt-2 text-slate-600">Hai să descoperim {trip.name} împreună.</p>
+      <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-12 pt-20">
+        <div className="mb-14">
+          {trip.destination && (
+            <div className="mb-8 flex items-center gap-1.5">
+              <MapPin size={14} className="text-primary" />
+              <span className="text-[13px] font-medium text-muted-foreground">{trip.destination}</span>
+            </div>
+          )}
+          <h1 className="mb-4 text-[40px] font-semibold leading-[1.1] tracking-tight text-foreground">
+            {trip.name}
+          </h1>
+          <p className="text-[17px] leading-relaxed text-muted-foreground">
+            Hai să descoperim {trip.name} împreună.
+          </p>
         </div>
         <form onSubmit={handleJoin} className="flex flex-col gap-3">
-          <label className="text-sm font-medium text-slate-700" htmlFor="joinName">
+          <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground" htmlFor="joinName">
             Cum te numești?
           </label>
           <input
             id="joinName"
-            className="rounded-xl border border-slate-300 px-4 py-3 text-lg"
+            className="rounded-2xl border border-border bg-card px-5 py-4 text-[17px] text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.04)] outline-none transition-colors placeholder:text-disabled focus:border-primary"
             value={joinName}
             onChange={(e) => setJoinName(e.target.value)}
             placeholder="Numele tău"
             autoFocus
           />
-          <button
-            type="submit"
-            disabled={joining || !joinName.trim()}
-            className="rounded-xl bg-slate-900 px-4 py-3 text-lg font-semibold text-white disabled:opacity-40"
-          >
-            {joining ? "..." : "ALĂTURĂ-TE"}
-          </button>
+          <Btn type="submit" disabled={joining || !joinName.trim()}>
+            {joining ? "..." : <>ALĂTURĂ-TE <ArrowRight size={16} /></>}
+          </Btn>
         </form>
       </main>
     );
@@ -243,69 +251,109 @@ export default function TripHomePage() {
 
   const day = currentTripDay(trip);
   const daysToFinal = trip.duration_days - day;
+  const daysPassed = Math.max(day - 1, 0);
+
+  const completedToday = [morningStatus.completed, lunchStatus.completed, battleStatus.completed].filter(
+    Boolean,
+  ).length;
+  const totalToday = [morningStatus.questionId, lunchStatus.questionId, battleStatus.available].filter(
+    Boolean,
+  ).length;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-6 py-10">
-      <header className="text-center">
-        <h1 className="text-3xl font-bold uppercase tracking-wide">{trip.name}</h1>
-        <p className="mt-1 text-slate-600">
-          Ziua {day} din {trip.duration_days}
-        </p>
+    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-5 pb-32 pt-14">
+      <header>
+        <div className="mb-2 flex items-start justify-between">
+          <h1 className="text-[34px] font-semibold leading-[1.1] tracking-tight text-foreground">{trip.name}</h1>
+          <NextChallengeCountdown compact />
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[15px] text-muted-foreground">
+            Ziua {day} din {trip.duration_days}
+          </span>
+          <span className="text-disabled">·</span>
+          <ProgressDots current={day} total={trip.duration_days} />
+        </div>
+        {trip.location_info && (
+          <p className="mt-3 max-w-[320px] text-[15px] leading-relaxed text-muted-foreground">
+            {trip.location_info}
+          </p>
+        )}
       </header>
 
-      <Dashboard
-        trip={trip}
-        day={day}
-        daysToFinal={daysToFinal}
-        counts={participantCounts}
-        dailyScore={dailyScore}
-        tripScore={tripScore}
-      />
+      {totalToday > 0 && (
+        <div className="rounded-[20px] border border-border bg-card p-5 shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
+            Provocarea de azi
+          </p>
+          <p className="mb-4 text-[14px] text-muted-foreground">
+            {completedToday} din {totalToday} completate
+          </p>
+          <div className="mb-1 h-[3px] rounded-full bg-secondary">
+            <div
+              className="h-[3px] rounded-full bg-primary transition-all duration-700"
+              style={{ width: `${(completedToday / totalToday) * 100}%` }}
+            />
+          </div>
+          {completedToday === totalToday && (
+            <div className="mt-4 flex items-center justify-center gap-2 py-1 text-[15px] font-semibold text-primary">
+              <Check size={16} />
+              Totul completat pentru azi
+            </div>
+          )}
+        </div>
+      )}
+
+      <section className="grid grid-cols-2 gap-3">
+        <Stat label="Participanți" value={`${participantCounts.adults} adulți, ${participantCounts.children} copii`} />
+        <Stat label="Zile" value={`${daysPassed} trecute · ${Math.max(daysToFinal, 0)} rămase`} />
+        <Stat label="Scorul zilei" value={`${dailyScore.adults} — ${dailyScore.kids}`} />
+        <Stat label="Scor general" value={`${tripScore.adults} — ${tripScore.kids}`} />
+      </section>
 
       <ParticipantLeaderboard entries={leaderboard} />
 
-      <section className="flex flex-col gap-4">
-        <SlotCard
-          emoji="☀️"
-          label="Dimineață"
-          status={morningStatus}
-          href={`/trip/${slug}/discover/morning`}
-          scheduledSlot="morning"
-        />
-        <SlotCard
-          emoji="🍉"
-          label="Prânz"
-          status={lunchStatus}
-          href={`/trip/${slug}/discover/lunch`}
-          scheduledSlot="lunch"
-        />
-        <div className="rounded-2xl border border-slate-200 px-5 py-4">
-          <div className="flex items-center gap-2 text-lg font-medium">
-            <span>🌙</span>
-            <span>Battle</span>
-          </div>
-          <BattleAvailability status={battleStatus} slug={slug} />
+      <section>
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Detalii</p>
+        <div className="mt-3">
+          <ChallengeRow
+            icon={<Sun size={17} />}
+            title="Dimineață"
+            status={morningStatus}
+            href={`/trip/${slug}/discover/morning`}
+            scheduledSlot="morning"
+          />
+          <ChallengeRow
+            icon={<Utensils size={17} />}
+            title="Prânz"
+            status={lunchStatus}
+            href={`/trip/${slug}/discover/lunch`}
+            scheduledSlot="lunch"
+          />
+          <BattleChallengeRow status={battleStatus} slug={slug} isLast />
         </div>
       </section>
 
       {finalStatus.available ? (
-        <div className="rounded-2xl border border-slate-200 px-5 py-4 text-center">
-          <p className="text-lg font-medium">🏆 Final Battle</p>
+        <div className="rounded-[20px] border border-border bg-card p-5 text-center shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
+          <p className="mb-3 flex items-center justify-center gap-2 text-[17px] font-semibold text-foreground">
+            <Trophy size={18} className="text-primary" /> Final Battle
+          </p>
           {finalStatus.completed ? (
-            <Link href={`/trip/${slug}/final`} className="mt-1 inline-block text-emerald-600 underline">
-              ✓ Completat — vezi rezultatul
+            <Link href={`/trip/${slug}/final`} className="inline-flex items-center gap-1 text-[15px] font-medium text-primary underline">
+              <Check size={14} /> Completat — vezi rezultatul
             </Link>
           ) : (
             <Link
               href={`/trip/${slug}/final`}
-              className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-[14px] text-[15px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98]"
             >
               HAI LA FINALĂ
             </Link>
           )}
         </div>
       ) : (
-        <p className="text-center text-sm text-slate-500">
+        <p className="text-center text-[13px] text-muted-foreground">
           {daysToFinal > 0 ? `Final Battle în ${daysToFinal} zile` : "Final Battle azi"}
         </p>
       )}
@@ -315,49 +363,26 @@ export default function TripHomePage() {
   );
 }
 
-function Dashboard({
-  trip,
-  day,
-  daysToFinal,
-  counts,
-  dailyScore,
-  tripScore,
-}: {
-  trip: Trip;
-  day: number;
-  daysToFinal: number;
-  counts: ParticipantCounts;
-  dailyScore: Record<BattleTeam, number>;
-  tripScore: Record<BattleTeam, number>;
-}) {
-  const daysPassed = Math.max(day - 1, 0);
-
+function ProgressDots({ current, total }: { current: number; total: number }) {
   return (
-    <section className="flex flex-col gap-3 rounded-2xl border border-slate-200 px-5 py-4">
-      {(trip.destination || trip.location_info) && (
-        <div>
-          {trip.destination && <p className="font-medium">📍 {trip.destination}</p>}
-          {trip.location_info && <p className="mt-1 text-sm text-slate-600">{trip.location_info}</p>}
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-3 text-center">
-        <Stat label="Participanți" value={`${counts.adults} adulți, ${counts.children} copii`} />
-        <Stat label="Zile" value={`${daysPassed} trecute · ${Math.max(daysToFinal, 0)} rămase`} />
-        <Stat label="Scorul zilei" value={`${dailyScore.adults} — ${dailyScore.kids}`} />
-        <Stat label="Scor general" value={`${tripScore.adults} — ${tripScore.kids}`} />
-      </div>
-
-      <NextChallengeCountdown />
-    </section>
+    <div className="flex items-center gap-1.5">
+      {Array.from({ length: total }, (_, i) => (
+        <div
+          key={i}
+          className={`rounded-full transition-all duration-300 ${
+            i < current ? "h-2 w-2 bg-primary" : "h-1.5 w-1.5 bg-disabled"
+          }`}
+        />
+      ))}
+    </div>
   );
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl bg-slate-50 px-3 py-2">
-      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 font-medium">{value}</p>
+    <div className="rounded-xl bg-secondary px-3 py-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 text-[15px] font-medium text-foreground">{value}</p>
     </div>
   );
 }
@@ -373,20 +398,24 @@ function ParticipantLeaderboard({ entries }: { entries: LeaderboardEntry[] }) {
   if (ranked.length === 0) return null;
 
   return (
-    <section className="flex flex-col gap-2 rounded-2xl border border-slate-200 px-5 py-4">
-      <p className="text-xs uppercase tracking-wide text-slate-500">
+    <section className="rounded-[20px] border border-border bg-card p-5 shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
+      <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         Cine răspunde la toate întrebările? (doar pentru distracție)
       </p>
-      <ol className="flex flex-col gap-1">
+      <ol className="flex flex-col">
         {ranked.map((e, i) => (
-          <li key={e.participantId} className="flex items-center justify-between text-sm">
-            <span>
-              {RANK_MEDAL[i] ?? `${i + 1}.`} {e.displayName}{" "}
-              <span className="text-xs uppercase text-slate-400">
+          <li
+            key={e.participantId}
+            className="flex items-center justify-between border-b border-secondary py-2.5 last:border-0"
+          >
+            <span className="text-[14px] text-foreground">
+              <span className="mr-1.5">{RANK_MEDAL[i] ?? `${i + 1}.`}</span>
+              {e.displayName}{" "}
+              <span className="text-[11px] uppercase text-disabled">
                 {e.role === "adult" ? "Adult" : "Copil"}
               </span>
             </span>
-            <span className="text-slate-600">
+            <span className="text-[13px] font-medium text-muted-foreground">
               {e.score} pct · {e.answered} răspunsuri
             </span>
           </li>
@@ -402,7 +431,7 @@ const COUNTDOWN_SLOT_LABEL: Record<string, string> = {
   battle: "Battle",
 };
 
-function NextChallengeCountdown() {
+function NextChallengeCountdown({ compact }: { compact?: boolean }) {
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -417,84 +446,127 @@ function NextChallengeCountdown() {
   const seconds = totalSeconds % 60;
   const pad = (n: number) => n.toString().padStart(2, "0");
 
+  if (compact) {
+    return (
+      <div className="flex flex-col items-end gap-0.5">
+        <div className="flex items-center gap-1">
+          <Clock size={11} className="text-muted-foreground" />
+          <span className="text-[11px] text-muted-foreground">{COUNTDOWN_SLOT_LABEL[next.slot]}</span>
+        </div>
+        <span className="font-mono text-[17px] font-semibold leading-none tracking-[0.03em] text-foreground">
+          {pad(hours)}:{pad(minutes)}:{pad(seconds)}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="text-center">
-      <p className="text-xs uppercase tracking-wide text-slate-500">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
         Următorul challenge: {COUNTDOWN_SLOT_LABEL[next.slot]}
       </p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums">
+      <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
         {pad(hours)}:{pad(minutes)}:{pad(seconds)}
       </p>
     </div>
   );
 }
 
-function SlotCard({
-  emoji,
-  label,
+function ChallengeRow({
+  icon,
+  title,
   status,
   href,
   scheduledSlot,
 }: {
-  emoji: string;
-  label: string;
+  icon: ReactNode;
+  title: string;
   status: SlotStatus;
   href: string;
   scheduledSlot: "morning" | "lunch";
 }) {
   const availability = getSlotAvailability(scheduledSlot);
 
+  let right: ReactNode;
+  if (status.completed) {
+    right = <Check size={16} className="shrink-0 text-primary" />;
+  } else if (!status.questionId) {
+    right = <span className="shrink-0 text-[13px] text-muted-foreground">nepublicat</span>;
+  } else if (availability.status === "before") {
+    right = <span className="shrink-0 text-[13px] text-muted-foreground">de la {availability.opensAt}</span>;
+  } else if (availability.status === "after") {
+    right = <span className="shrink-0 text-[13px] text-disabled">încheiat</span>;
+  } else {
+    right = (
+      <Link href={href} className="shrink-0 text-[13px] font-semibold text-primary active:opacity-60">
+        Descoperă
+      </Link>
+    );
+  }
+
   return (
-    <div className="rounded-2xl border border-slate-200 px-5 py-4">
-      <div className="flex items-center gap-2 text-lg font-medium">
-        <span>{emoji}</span>
-        <span>{label}</span>
+    <div className="flex items-center gap-3 border-b border-secondary py-4">
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+          status.completed || !status.questionId ? "bg-secondary" : "bg-accent"
+        }`}
+      >
+        <div className={status.completed ? "text-disabled" : status.questionId ? "text-primary" : "text-muted-foreground"}>
+          {icon}
+        </div>
       </div>
-      {status.completed ? (
-        <p className="mt-1 text-emerald-600">✓ Completat</p>
-      ) : !status.questionId ? (
-        <p className="mt-1 text-slate-400">Conținutul nu e încă disponibil</p>
-      ) : availability.status === "before" ? (
-        <p className="mt-1 text-slate-500">Disponibil de la {availability.opensAt}</p>
-      ) : availability.status === "after" ? (
-        <p className="mt-1 text-slate-400">S-a încheiat pentru azi</p>
-      ) : (
-        <Link href={href} className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white">
-          DESCOPERĂ
-        </Link>
-      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-[15px] font-medium leading-none text-foreground">{title}</p>
+      </div>
+      {right}
     </div>
   );
 }
 
-function BattleAvailability({ status, slug }: { status: BattleStatus; slug: string }) {
+function BattleChallengeRow({
+  status,
+  slug,
+  isLast,
+}: {
+  status: BattleStatus;
+  slug: string;
+  isLast?: boolean;
+}) {
+  let right: ReactNode;
   if (!status.available) {
-    return <p className="mt-1 text-slate-500">Disponibil diseară</p>;
+    right = <span className="shrink-0 text-[13px] text-muted-foreground">diseară</span>;
+  } else if (status.completed) {
+    right = <Check size={16} className="shrink-0 text-primary" />;
+  } else {
+    const availability = getSlotAvailability("battle");
+    if (availability.status === "before") {
+      right = <span className="shrink-0 text-[13px] text-muted-foreground">de la {availability.opensAt}</span>;
+    } else if (availability.status === "after") {
+      right = <span className="shrink-0 text-[13px] text-disabled">încheiat</span>;
+    } else {
+      right = (
+        <Link href={`/trip/${slug}/battle`} className="shrink-0 text-[13px] font-semibold text-primary active:opacity-60">
+          Începe
+        </Link>
+      );
+    }
   }
-  if (status.completed) {
-    return <p className="mt-1 text-emerald-600">✓ Completat</p>;
-  }
-  const availability = getSlotAvailability("battle");
-  if (availability.status === "before") {
-    return <p className="mt-1 text-slate-500">Disponibil de la {availability.opensAt}</p>;
-  }
-  if (availability.status === "after") {
-    return <p className="mt-1 text-slate-400">S-a încheiat pentru azi</p>;
-  }
-  return (
-    <Link
-      href={`/trip/${slug}/battle`}
-      className="mt-2 inline-block rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white"
-    >
-      HAI LA BATTLE
-    </Link>
-  );
-}
 
-function CenteredMessage({ children }: { children: ReactNode }) {
   return (
-    <main className="flex min-h-screen items-center justify-center px-6 text-center text-slate-600">
-      {children}
-    </main>
+    <div className={`flex items-center gap-3 py-4 ${!isLast ? "border-b border-secondary" : ""}`}>
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+          status.completed || !status.available ? "bg-secondary" : "bg-accent"
+        }`}
+      >
+        <div className={status.completed ? "text-disabled" : status.available ? "text-primary" : "text-muted-foreground"}>
+          <Moon size={17} />
+        </div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-[15px] font-medium leading-none text-foreground">Battle</p>
+      </div>
+      {right}
+    </div>
   );
 }

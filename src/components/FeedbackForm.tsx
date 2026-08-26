@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { submitFeedback } from "@/lib/feedback";
 import { trackEvent } from "@/lib/analytics";
+import { Btn } from "@/components/ui";
 
 const SCALE = [1, 2, 3, 4, 5] as const;
 const ANTICIPATED_OPTIONS = [
@@ -63,8 +64,8 @@ export function FeedbackForm({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-6 py-10">
-      <h1 className="text-center text-2xl font-semibold">Câteva întrebări rapide</h1>
+    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-5 pb-12 pt-14">
+      <h1 className="text-[26px] font-semibold tracking-tight text-foreground">Câteva întrebări rapide</h1>
 
       <ScaleQuestion
         label="Ai aflat lucruri pe care nu le știai?"
@@ -106,25 +107,21 @@ export function FeedbackForm({
       />
 
       <div className="flex flex-col gap-2">
-        <label className="font-medium" htmlFor="comment">
+        <label className="text-[15px] font-medium text-foreground" htmlFor="comment">
           Ce ai schimba?
         </label>
         <textarea
           id="comment"
-          className="min-h-24 rounded-xl border border-slate-300 px-4 py-3"
+          className="min-h-24 rounded-xl border border-border bg-card px-4 py-3 text-[15px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
           value={comment}
           onChange={(e) => setComment(e.target.value)}
           placeholder="Opțional"
         />
       </div>
 
-      <button
-        onClick={handleSubmit}
-        disabled={!canSubmit || submitting}
-        className="rounded-xl bg-slate-900 px-4 py-3 text-lg font-semibold text-white disabled:opacity-40"
-      >
+      <Btn onClick={handleSubmit} disabled={!canSubmit || submitting}>
         {submitting ? "..." : "TRIMITE"}
-      </button>
+      </Btn>
     </main>
   );
 }
@@ -144,21 +141,21 @@ function ScaleQuestion({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <p className="font-medium">{label}</p>
+      <p className="text-[15px] font-medium text-foreground">{label}</p>
       <div className="flex justify-between gap-2">
         {SCALE.map((n) => (
           <button
             key={n}
             onClick={() => onChange(n)}
-            className={`h-11 w-11 rounded-full border text-lg font-medium ${
-              value === n ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300"
+            className={`flex h-11 w-11 items-center justify-center rounded-full border text-[16px] font-medium transition-all ${
+              value === n ? "border-primary bg-primary text-primary-foreground" : "border-border text-foreground"
             }`}
           >
             {n}
           </button>
         ))}
       </div>
-      <div className="flex justify-between text-xs text-slate-500">
+      <div className="flex justify-between text-[12px] text-muted-foreground">
         <span>{lowLabel}</span>
         <span>{highLabel}</span>
       </div>
@@ -179,14 +176,14 @@ function ChoiceQuestion({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <p className="font-medium">{label}</p>
+      <p className="text-[15px] font-medium text-foreground">{label}</p>
       <div className="flex flex-wrap gap-2">
         {options.map((opt) => (
           <button
             key={opt.value}
             onClick={() => onChange(opt.value)}
-            className={`rounded-lg border px-4 py-2 ${
-              value === opt.value ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300"
+            className={`rounded-lg border px-4 py-2 text-[14px] font-medium transition-all ${
+              value === opt.value ? "border-primary bg-primary text-primary-foreground" : "border-border text-foreground"
             }`}
           >
             {opt.label}

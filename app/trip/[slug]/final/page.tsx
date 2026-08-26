@@ -15,6 +15,7 @@ import { BattleFlow } from "@/components/BattleFlow";
 import { FeedbackForm } from "@/components/FeedbackForm";
 import { trackEvent } from "@/lib/analytics";
 import type { BattleTeam } from "@/lib/supabase/types";
+import { Centered } from "@/components/ui";
 
 type Step = "loading" | "error" | "not-joined" | "unavailable" | "battle" | "feedback" | "thanks";
 
@@ -165,13 +166,16 @@ export default function FinalBattlePage() {
   if (step === "thanks") {
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 px-6 py-12 text-center">
-        <h1 className="text-2xl font-semibold">Mulțumim! 🙌</h1>
-        <p className="text-lg">
+        <h1 className="text-[26px] font-semibold text-foreground">Mulțumim! 🙌</h1>
+        <p className="text-[17px] text-secondary-foreground">
           {trip?.name} — scorul final:
           <br />
           PĂRINȚI {tripScore.adults} — COPII {tripScore.kids}
         </p>
-        <Link href={`/trip/${slug}`} className="mt-4 rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white">
+        <Link
+          href={`/trip/${slug}`}
+          className="mt-4 w-full max-w-xs rounded-2xl bg-primary py-[14px] text-[15px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98]"
+        >
           ÎNAPOI ACASĂ
         </Link>
       </main>
@@ -179,12 +183,4 @@ export default function FinalBattlePage() {
   }
 
   return <Centered>Se încarcă...</Centered>;
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6 text-center text-slate-600">
-      {children}
-    </main>
-  );
 }

@@ -58,6 +58,16 @@
   Framed as a secondary "just for fun" list below the real competition,
   the Parents-vs-Kids score.
 
+- Visual redesign (product owner request, ported from a Figma Make export
+  based on the app's own UI inventory): new colour tokens (Aegean blue
+  primary `#2076A3`, warm off-white background `#F7F7F5`, plus
+  secondary/accent/border/destructive tokens) wired into
+  `tailwind.config.ts`, `lucide-react` icons replacing plain text markers,
+  a floating pill bottom nav, restyled cards/buttons/inputs across all
+  screens (Dashboard, Întrebări, Utilizatori, Discover, Battle, Final
+  Battle, Feedback). Purely visual — no routes, data-fetching, or state
+  machines changed.
+
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
   `docs/DATABASE.md` "Security model").

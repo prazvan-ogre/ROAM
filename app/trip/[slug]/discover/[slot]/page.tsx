@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { Sun, Utensils, Check, X, ExternalLink } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import {
@@ -18,6 +19,7 @@ import {
 import { trackEvent } from "@/lib/analytics";
 import type { QuestionSlot } from "@/lib/supabase/types";
 import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
+import { Btn, FlowHeader, OptionButton, Centered } from "@/components/ui";
 
 type Step =
   | "loading"
@@ -31,6 +33,7 @@ type Step =
   | "error";
 
 const SLOT_LABEL: Record<QuestionSlot, string> = { morning: "Dimineață", lunch: "Prânz" };
+const SLOT_ICON: Record<QuestionSlot, typeof Sun> = { morning: Sun, lunch: Utensils };
 const EXTRA_TYPE_LABEL: Record<string, string> = {
   know: "ȘTIAI CĂ",
   think: "GÂNDEȘTE-TE",
@@ -41,6 +44,7 @@ const EXTRA_TYPE_LABEL: Record<string, string> = {
 
 export default function DiscoverPage() {
   const { slug, slot } = useParams<{ slug: string; slot: string }>();
+  const router = useRouter();
   const discoverSlot = slot as QuestionSlot;
 
   const [step, setStep] = useState<Step>("loading");
@@ -160,6 +164,10 @@ export default function DiscoverPage() {
     await trackEvent(trip.id, "explore_clicked", activeProfile?.id, { explore_link_id: linkId });
   }
 
+  function goHome() {
+    router.push(`/trip/${slug}`);
+  }
+
   if (step === "loading") return <Centered>Se încarcă...</Centered>;
   if (step === "error") {
     return (
@@ -212,18 +220,30 @@ export default function DiscoverPage() {
     return <Centered>Se încarcă...</Centered>;
   }
 
+  const SlotIcon = SLOT_ICON[discoverSlot] ?? Sun;
+
   if (step === "select-profile") {
     return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 px-6 py-12">
-        <h1 className="text-center text-2xl font-semibold">Cine răspunde?</h1>
-        <div className="flex flex-col gap-3">
+      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
+        <FlowHeader label={SLOT_LABEL[discoverSlot]} icon={<SlotIcon size={15} />} onClose={goHome} />
+        <h1 className="mb-2 text-[26px] font-semibold tracking-tight text-foreground">Cine răspunde?</h1>
+        <p className="mb-8 text-[15px] text-muted-foreground">Alege profilul tău.</p>
+        <div className="flex flex-col gap-2">
           {profiles.map((p) => (
             <button
               key={p.id}
               onClick={() => handleSelectProfile(p)}
-              className="rounded-xl border border-slate-300 px-4 py-4 text-lg font-medium hover:bg-slate-50"
+              className="flex items-center gap-4 rounded-2xl border border-border bg-card px-4 py-4 text-left shadow-[0_1px_4px_rgba(0,0,0,0.04)] transition-all active:scale-[0.99] hover:border-primary/40"
             >
-              {p.display_name}
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent">
+                <span className="text-[15px] font-semibold text-primary">{p.display_name[0]}</span>
+              </div>
+              <div>
+                <p className="text-[15px] font-medium text-foreground">{p.display_name}</p>
+                <p className="text-[13px] text-muted-foreground">
+                  {p.role === "adult" ? "Adult" : `Copil · ${p.age} ani`}
+                </p>
+              </div>
             </button>
           ))}
         </div>
@@ -235,33 +255,28 @@ export default function DiscoverPage() {
 
   if (step === "question") {
     return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-6 py-10">
-        <p className="text-center text-sm font-medium uppercase tracking-wide text-slate-500">
-          {SLOT_LABEL[discoverSlot]}
-        </p>
-        <h1 className="text-xl font-semibold leading-snug">{content.question.prompt}</h1>
-        <div className="flex flex-col gap-3">
-          {content.options.map((opt) => (
-            <button
-              key={opt.id}
-              onClick={() => setSelectedOption(opt)}
-              className={`rounded-xl border px-4 py-3 text-left text-lg ${
-                selectedOption?.id === opt.id
-                  ? "border-slate-900 bg-slate-900 text-white"
-                  : "border-slate-300"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
+        <FlowHeader label={SLOT_LABEL[discoverSlot]} icon={<SlotIcon size={15} />} onClose={goHome} />
+        <div className="flex flex-1 flex-col gap-5">
+          <h1 className="text-[22px] font-semibold leading-snug tracking-tight text-foreground">
+            {content.question.prompt}
+          </h1>
+          <div className="flex flex-col gap-2">
+            {content.options.map((opt) => (
+              <OptionButton
+                key={opt.id}
+                label={opt.label}
+                selected={selectedOption?.id === opt.id}
+                onSelect={() => setSelectedOption(opt)}
+              />
+            ))}
+          </div>
+          <div className="mt-auto pt-4">
+            <Btn onClick={handleSubmitAnswer} disabled={!selectedOption || submitting}>
+              {submitting ? "..." : "RĂSPUNDE"}
+            </Btn>
+          </div>
         </div>
-        <button
-          onClick={handleSubmitAnswer}
-          disabled={!selectedOption || submitting}
-          className="mt-auto rounded-xl bg-slate-900 px-4 py-3 text-lg font-semibold text-white disabled:opacity-40"
-        >
-          {submitting ? "..." : "RĂSPUNDE"}
-        </button>
       </main>
     );
   }
@@ -272,81 +287,82 @@ export default function DiscoverPage() {
       ? content.question.correct_reveal_message
       : content.question.alternative_reveal_message;
     return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-6 py-10">
-        <p className="text-center text-2xl">{message ?? (isCorrect ? "✓ Corect" : "Nu chiar 🙂")}</p>
-
-        {content.question.common_core && (
-          <p className="text-lg leading-relaxed text-slate-700">{content.question.common_core}</p>
-        )}
-
-        {content.question.one_thing && (
-          <div className="rounded-2xl bg-slate-100 px-5 py-4 text-lg font-medium">
-            {content.question.one_thing}
+      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
+        <FlowHeader label={SLOT_LABEL[discoverSlot]} icon={<SlotIcon size={15} />} onClose={goHome} />
+        <div className="flex flex-1 flex-col gap-6">
+          <div>
+            <div className={`mb-5 flex h-10 w-10 items-center justify-center rounded-full ${isCorrect ? "bg-accent" : "bg-secondary"}`}>
+              {isCorrect ? <Check size={18} className="text-primary" /> : <X size={18} className="text-muted-foreground" />}
+            </div>
+            <p className="text-[24px] font-semibold leading-snug tracking-tight text-foreground">
+              {message ?? (isCorrect ? "Corect" : "Nu chiar 🙂")}
+            </p>
           </div>
-        )}
 
-        <button
-          onClick={handleContinueToExtra}
-          className="mt-auto rounded-xl bg-slate-900 px-4 py-3 text-lg font-semibold text-white"
-        >
-          MERGI MAI DEPARTE
-        </button>
+          {content.question.common_core && (
+            <p className="text-[15px] leading-relaxed text-secondary-foreground">{content.question.common_core}</p>
+          )}
+
+          {content.question.one_thing && (
+            <div className="border-l-2 border-primary py-1 pl-4">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">The One Thing</p>
+              <p className="text-[15px] font-medium leading-snug text-foreground">{content.question.one_thing}</p>
+            </div>
+          )}
+
+          <div className="mt-auto pt-4">
+            <Btn onClick={handleContinueToExtra}>MERGI MAI DEPARTE</Btn>
+          </div>
+        </div>
       </main>
     );
   }
 
   // step === "extra"
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-6 py-10">
-      {extra ? (
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {extra.extra_type ? EXTRA_TYPE_LABEL[extra.extra_type] : "EXTRA"}
-          </span>
-          <p className="text-lg leading-relaxed">{extra.description ?? extra.title}</p>
+    <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
+      <FlowHeader label={SLOT_LABEL[discoverSlot]} icon={<SlotIcon size={15} />} onClose={goHome} />
+      <div className="flex flex-1 flex-col gap-5">
+        {extra ? (
+          <div className="flex flex-col gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
+              {extra.extra_type ? EXTRA_TYPE_LABEL[extra.extra_type] : "EXTRA"}
+            </span>
+            <p className="text-[17px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
+          </div>
+        ) : (
+          <p className="text-muted-foreground">Nu mai sunt Extra-uri disponibile azi.</p>
+        )}
+
+        {content.exploreLinks.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <p className="text-[12px] font-medium text-disabled">🐇 Vrei să afli mai mult?</p>
+            {content.exploreLinks.map((link) => (
+              <a
+                key={link.id}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => handleExploreClick(link.id)}
+                className="flex items-center gap-2 text-[14px] text-primary hover:underline"
+              >
+                <ExternalLink size={13} />
+                {link.title}
+              </a>
+            ))}
+          </div>
+        )}
+
+        <p className="text-[14px] leading-relaxed text-disabled">
+          Ceilalți au descoperit ceva puțin diferit.
+          <br />
+          Întreabă-i ce au primit. 👋
+        </p>
+
+        <div className="mt-auto pt-4">
+          <Btn onClick={goHome}>ÎNAPOI ACASĂ</Btn>
         </div>
-      ) : (
-        <p className="text-slate-500">Nu mai sunt Extra-uri disponibile azi.</p>
-      )}
-
-      {content.exploreLinks.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <p className="font-medium">🐇 Vrei să afli mai mult?</p>
-          {content.exploreLinks.map((link) => (
-            <a
-              key={link.id}
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => handleExploreClick(link.id)}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-slate-700 underline"
-            >
-              {link.title}
-            </a>
-          ))}
-        </div>
-      )}
-
-      <p className="text-center text-slate-600">
-        Ceilalți au descoperit ceva puțin diferit.
-        <br />
-        Întreabă-i ce au primit. 👋
-      </p>
-
-      <Link
-        href={`/trip/${slug}`}
-        className="mt-auto rounded-xl bg-slate-900 px-4 py-3 text-center text-lg font-semibold text-white"
-      >
-        ÎNAPOI ACASĂ
-      </Link>
-    </main>
-  );
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6 text-center text-slate-600">
-      {children}
+      </div>
     </main>
   );
 }
