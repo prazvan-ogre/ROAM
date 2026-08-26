@@ -223,16 +223,16 @@ export default function TripHomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-5 pb-32 pt-14">
       <header>
-        <div className="mb-2 flex items-start justify-between">
-          <h1 className="text-[34px] font-semibold leading-[1.1] tracking-tight text-foreground">{trip.name}</h1>
+        <h1 className="mb-2 text-[34px] font-semibold leading-[1.1] tracking-tight text-foreground">{trip.name}</h1>
+        <div className="flex items-end justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-[15px] text-muted-foreground">
+              Ziua {day} din {trip.duration_days}
+            </span>
+            <span className="text-disabled">·</span>
+            <ProgressDots current={day} total={trip.duration_days} />
+          </div>
           <NextChallengeCountdown compact />
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[15px] text-muted-foreground">
-            Ziua {day} din {trip.duration_days}
-          </span>
-          <span className="text-disabled">·</span>
-          <ProgressDots current={day} total={trip.duration_days} />
         </div>
         {trip.location_info && (
           <p className="mt-3 max-w-[320px] text-[15px] leading-relaxed text-muted-foreground">
