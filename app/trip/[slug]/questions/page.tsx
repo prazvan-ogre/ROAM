@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, Sun, Utensils, Moon, ExternalLink, Lock } from "lucide-react";
+import { ChevronDown, Sun, Utensils, Moon, ExternalLink } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
 import { listProfilesForDevice, type Participant } from "@/lib/participant";
 import {
@@ -141,7 +141,7 @@ export default function QuestionsPage() {
   const profileName = (id: string) => profiles.find((p) => p.id === id)?.display_name ?? "?";
 
   const discoverForTab = history.discover.filter(
-    (item) => item.question.day_number === selectedTab,
+    (item) => item.question.day_number === selectedTab && Object.keys(item.responsesByParticipant).length > 0,
   );
   const battlesForTab = history.battles.filter((item) =>
     selectedTab === FINAL_TAB
@@ -218,7 +218,6 @@ function DiscoverRow({
 }) {
   const correctOption = item.options.find((o) => o.is_correct);
   const answers = Object.entries(item.responsesByParticipant);
-  const answered = answers.length > 0;
   const Icon = SLOT_ICON[item.question.slot ?? ""] ?? Sun;
   const extra = answers.map(([pid]) => item.extrasByParticipant[pid]).find((e) => e != null);
 
@@ -234,22 +233,13 @@ function DiscoverRow({
           </p>
           <p className="mt-0.5 text-[15px] font-medium leading-snug text-foreground">{item.question.prompt}</p>
         </div>
-        {!answered && <Lock size={13} className="shrink-0 text-disabled" />}
         <ChevronDown
           size={15}
           className={`shrink-0 text-disabled transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
         />
       </button>
 
-      {expanded && !answered && (
-        <div className="border-t border-secondary px-4 pb-5 pt-4">
-          <p className="text-[13px] leading-relaxed text-muted-foreground">
-            Răspunsul corect și informațiile extra apar aici după ce răspunzi la întrebare.
-          </p>
-        </div>
-      )}
-
-      {expanded && answered && (
+      {expanded && (
         <div className="flex flex-col gap-3 border-t border-secondary px-4 pb-5 pt-4">
           {correctOption && (
             <div className="rounded-xl bg-accent px-3.5 py-3">

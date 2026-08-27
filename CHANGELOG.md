@@ -387,6 +387,25 @@
   step is gone; reviewing an already-answered question (via the
   "Cine răspunde?" picker) goes straight to this same merged reveal.
   Discover, Battle, and catch-up now all reveal the same way.
+- Fixed (product owner, restating the ask): the recap page's per-question
+  lock (unanswered questions listed with a lock icon, reachable day)
+  still went further than intended -- the Întrebări menu should only
+  ever list questions this device has actually answered, full stop, not
+  list every reached day's questions with the unanswered ones locked.
+  `discoverForTab` in `questions/page.tsx` now filters to
+  `responsesByParticipant` having an entry, so an unanswered question
+  simply isn't in the list at all. `DiscoverRow` no longer has an
+  unanswered/locked render path (every row it receives is now guaranteed
+  answered) -- the lock icon and the "answer it first" placeholder are
+  gone as dead code.
+- Reworded two spots in the onboarding wizard (product owner request):
+  the "role" step's heading is now "În ce echipă faci parte?" instead of
+  "Ești adult sau copil?", with its two buttons relabeled "Adulți"/
+  "Copii" (plural, team-framed) instead of "Adult"/"Copil"; the prize
+  step's active-vote heading is now just "Copii vs. Părinți" instead of
+  "Ce ar trebui să primească echipa câștigătoare — Copii sau Părinți?".
+  Copy-only -- `role` is still stored as `'adult' | 'child'` internally,
+  unaffected.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
