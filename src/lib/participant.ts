@@ -116,6 +116,25 @@ export async function deleteParticipant(id: string): Promise<void> {
 // adult around yet to manage them (child_needs_manager was relaxed for
 // exactly this -- see the onboarding_wizard migration). age is optional
 // too (product owner request) -- a family may not want to enter it.
+const ACTIVE_PROFILE_KEY_PREFIX = "roam_active_profile_";
+
+// The "Cine răspunde?" picker in Discover/Battle/Catchup lets anyone on
+// this device answer a given question, but has no memory of who to
+// default to -- product owner request: the Home page lets this device's
+// user pick, once, which of this device's own profiles they mean to use,
+// so it's clear at a glance whose answers are being tracked when a
+// device has more than one (e.g. a parent's phone with a child's profile
+// too). Scoped per trip, same as the device id itself.
+export function getStoredActiveProfileId(tripId: string): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(ACTIVE_PROFILE_KEY_PREFIX + tripId);
+}
+
+export function setStoredActiveProfileId(tripId: string, participantId: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(ACTIVE_PROFILE_KEY_PREFIX + tripId, participantId);
+}
+
 export async function addChildProfile(
   tripId: string,
   displayName: string,
