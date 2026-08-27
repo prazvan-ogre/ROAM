@@ -145,7 +145,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
         {step === "role" && (
           <div className="flex flex-1 flex-col justify-center gap-5">
             <h1 className="text-center text-[24px] font-semibold tracking-tight text-foreground">
-              Ești adult sau copil?
+              În ce echipă faci parte?
             </h1>
             <div className="flex flex-col gap-2">
               {(["adult", "child"] as const).map((r) => (
@@ -156,7 +156,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
                     role === r ? "border-primary bg-accent text-foreground" : "border-border bg-card text-foreground"
                   }`}
                 >
-                  {r === "adult" ? "Adult" : "Copil"}
+                  {r === "adult" ? "Adulți" : "Copii"}
                 </button>
               ))}
             </div>
@@ -225,7 +225,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
                   Premiul câștigătorilor
                 </p>
                 <h1 className="text-center text-[22px] font-semibold tracking-tight text-foreground">
-                  Ce ar trebui să primească echipa câștigătoare — Copii sau Părinți?
+                  Copii vs. Părinți
                 </h1>
                 <div className="flex flex-col gap-2">
                   {prizeStatus.options.map((opt) => (
