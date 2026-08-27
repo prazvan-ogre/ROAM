@@ -473,6 +473,24 @@
   intentional raw-sum tie of 60 each) previously showed adults 10.0 /
   kids 6.67, now correctly shows adults 30 / kids 20; a legacy
   (pre-feature) battle's raw-sum resolution was confirmed unchanged.
+- Fixed: `trip_battle_win_tally()` (the "Scor total" headline) counted
+  every battle with any `battle_scores` rows at all, with no check on
+  whether that evening's own 15-minute reveal window had actually
+  closed -- so as soon as a single person answered tonight's Battle, the
+  cumulative tally already counted the (partial, one-answer) outcome as
+  a win for whichever team was ahead so far, even though "Scor zilnic" on
+  the same Scor page correctly stays hidden for those same 15 minutes so
+  nobody can peek at a partial score. Confirmed against production
+  screenshots: "Scor total" already showed 1-1 on Ziua 1 while "Scor
+  zilnic" correctly showed 0-0, meaning the total had already absorbed
+  an in-progress result the daily view was still hiding. Reproduced on a
+  scratch Postgres -- inserting one battle_scores row flipped the tally
+  from 1-1 to 2-1 instantly -- and fixed by excluding a battle from the
+  tally until 15 minutes past its first individual answer, exactly
+  matching `getBattleWindowStatus()`'s own rule; confirmed the same
+  battle correctly re-enters the tally once that time passes. Legacy
+  (pre-individual-scoring) battles never had a reveal window and stay
+  counted unconditionally, unaffected.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
