@@ -491,6 +491,17 @@
   battle correctly re-enters the tally once that time passes. Legacy
   (pre-individual-scoring) battles never had a reveal window and stay
   counted unconditionally, unaffected.
+- Fixed: the Scor page's "Scor zilnic" score fetched once on page load and
+  never again -- so if it was opened before a battle's 15-minute reveal
+  window closed (or before anyone had answered at all), it stayed frozen
+  at 0-0 for as long as the tab stayed open, even long after the real
+  result became available in the database. Traced end-to-end against a
+  live production report: the trip hadn't started yet (`start_date` in
+  the future, clamped to "Ziua 1" for pre-launch testing), the correct
+  battle was being matched, individual `battle_scores` rows were
+  recording correctly with real participant IDs -- the data was right
+  the whole time, the page just never asked again. Now re-fetches every
+  30 seconds and immediately when the tab regains focus.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
