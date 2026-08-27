@@ -519,6 +519,15 @@
   again, so a Battle played (or any question answered) after the page's
   first load never appeared until a manual reload. Now re-fetches every
   30 seconds and immediately on tab focus, matching the Scor page.
+- Active profile switcher on the Home page (product owner request): when
+  a device has more than one profile (e.g. a parent's phone also holding
+  a child's profile), a name pill in the top-right corner of Home shows
+  which one is "active" and opens a picker to switch. Purely a per-device
+  preference (stored in localStorage, same pattern as the device id
+  itself) -- it doesn't yet change the "Cine răspunde?" step in Discover/
+  Battle/Catchup, which still asks fresh each time; this only gives a
+  device with several profiles a clear, persistent answer to "which one
+  am I right now."
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

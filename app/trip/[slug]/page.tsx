@@ -5,7 +5,12 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Moon, Check, Clock, Trophy, History } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, type Participant } from "@/lib/participant";
+import {
+  listProfilesForDevice,
+  getStoredActiveProfileId,
+  setStoredActiveProfileId,
+  type Participant,
+} from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { Centered } from "@/components/ui";
@@ -34,6 +39,7 @@ export default function TripHomePage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [profiles, setProfiles] = useState<Participant[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [morningStatus, setMorningStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
@@ -43,8 +49,19 @@ export default function TripHomePage() {
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
     setProfiles(list);
+    if (list.length > 0) {
+      const stored = getStoredActiveProfileId(tripId);
+      const resolved = list.find((p) => p.id === stored) ?? list[0];
+      setActiveProfileId(resolved.id);
+    }
     return list;
   }, []);
+
+  function handleChangeActiveProfile(participantId: string) {
+    if (!trip) return;
+    setStoredActiveProfileId(trip.id, participantId);
+    setActiveProfileId(participantId);
+  }
 
   const loadSlotStatus = useCallback(
     async (tripId: string, day: number, profileIds: string[]) => {
@@ -219,7 +236,18 @@ export default function TripHomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-5 pb-32 pt-14">
       <header>
-        <h1 className="mb-2 text-[34px] font-semibold leading-[1.1] tracking-tight text-foreground">{trip.name}</h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="mb-2 text-[34px] font-semibold leading-[1.1] tracking-tight text-foreground">
+            {trip.name}
+          </h1>
+          {profiles.length > 1 && (
+            <ActiveProfileSwitcher
+              profiles={profiles}
+              activeId={activeProfileId}
+              onChange={handleChangeActiveProfile}
+            />
+          )}
+        </div>
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
             <span className="text-[15px] text-muted-foreground">
@@ -322,6 +350,56 @@ export default function TripHomePage() {
 
       <TripNav slug={slug} />
     </main>
+  );
+}
+
+function ActiveProfileSwitcher({
+  profiles,
+  activeId,
+  onChange,
+}: {
+  profiles: Participant[];
+  activeId: string | null;
+  onChange: (participantId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = profiles.find((p) => p.id === activeId) ?? profiles[0];
+
+  return (
+    <div className="relative shrink-0 pt-1">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-full bg-secondary py-1.5 pl-1.5 pr-3 transition-transform active:scale-[0.97]"
+      >
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-[12px] font-semibold text-primary-foreground">
+          {active.display_name.charAt(0).toUpperCase()}
+        </span>
+        <span className="max-w-[80px] truncate text-[13px] font-medium text-foreground">{active.display_name}</span>
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-[calc(100%+6px)] z-20 w-48 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_4px_20px_rgba(0,0,0,0.12)]">
+            {profiles.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => {
+                  onChange(p.id);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between px-4 py-3 text-left text-[14px] ${
+                  p.id === active.id ? "font-semibold text-primary" : "text-foreground"
+                }`}
+              >
+                <span className="truncate">{p.display_name}</span>
+                {p.id === active.id && <Check size={14} className="shrink-0" />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
