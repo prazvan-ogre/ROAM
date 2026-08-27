@@ -450,6 +450,29 @@
   stays visible on the Scor page. The Final Battle's "GATA" is
   unchanged -- still `goToDone()` -> "done" -> "CONTINUĂ" into the
   feedback flow, which wasn't reported broken.
+- Fixed: `battle_team_score()`/`trip_battle_win_tally()` (added in
+  `20260826153000_individual_battle_scoring.sql`) resolved a battle's team
+  score with `avg(score)`, which averages over `battle_scores` *rows* --
+  one per participant per question -- not over participants. The spec is
+  "sum of correct-answer points divided by the number of participants in
+  that team." With every participant answering the same number of
+  questions (the normal case) this happened to preserve which team had
+  the higher score, so no evening's win/loss actually flipped, but the
+  displayed magnitude on the Întrebări recap page ("PĂRINȚI X — COPII Y")
+  was wrong -- understated by roughly the question count -- and would
+  have become a real win/loss bug the moment participation went uneven
+  across a battle's questions (e.g. someone finishing only part of it
+  within the window). Fixed to `sum(score) / count(distinct
+  participant_id)`, exactly matching the spec; the legacy raw-sum branch
+  (battles played before individual scoring, `participant_id is null`)
+  is untouched. Both functions are `security definer` and computed live
+  on every read rather than stored, so deploying the fixed migration
+  retroactively corrects every past and future read with no data
+  backfill. Verified on a scratch Postgres against both branches: an
+  uneven-team scenario (2 adults 3/3 correct, 3 kids 2/3 correct -- an
+  intentional raw-sum tie of 60 each) previously showed adults 10.0 /
+  kids 6.67, now correctly shows adults 30 / kids 20; a legacy
+  (pre-feature) battle's raw-sum resolution was confirmed unchanged.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
