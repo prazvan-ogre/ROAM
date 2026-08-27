@@ -71,6 +71,22 @@ export default function LeaderboardPage() {
 
   useEffect(() => {
     load();
+
+    // The evening's score can flip from hidden to revealed (the 15-minute
+    // window in getBattleWindowStatus) while someone is just sitting on
+    // this screen -- without a refresh, "Scor zilnic" would stay frozen at
+    // 0-0 from whenever the page happened to load, even long after the
+    // real result became available. Re-fetch periodically, and immediately
+    // when the tab regains focus (e.g. coming back from another app).
+    const interval = setInterval(load, 30_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load]);
 
   if (step === "loading") return <Centered>Se încarcă...</Centered>;
