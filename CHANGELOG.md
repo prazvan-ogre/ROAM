@@ -406,6 +406,18 @@
   "Ce ar trebui să primească echipa câștigătoare — Copii sau Părinți?".
   Copy-only -- `role` is still stored as `'adult' | 'child'` internally,
   unaffected.
+- Added `app/trip/[slug]/error.tsx` and `app/global-error.tsx`: a bug
+  report from a real user only ever arrives as a phone screenshot, never
+  a browser console, and Next.js's own fallback for an uncaught
+  client-side exception ("Eroare de aplicație: a apărut o excepție la
+  nivelul clientului") hides the actual error entirely. These show
+  `error.message` (and `error.digest`, if any) directly on screen, with
+  a retry button and a link home, so the *next* screenshot of a crash
+  carries the real cause instead of a dead end. `error.tsx` covers
+  everything under `/trip/[slug]` (the wizard, Discover, Battle,
+  catch-up, recap, Settings, Scor); `global-error.tsx` covers the bare
+  root layout (its own `<html>`/`<body>`, per Next.js's requirement for
+  a root-level error boundary).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
