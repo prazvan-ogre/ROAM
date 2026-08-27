@@ -26,7 +26,6 @@ type Step =
   | "select-profile"
   | "question"
   | "reveal"
-  | "extra"
   | "unavailable"
   | "closed"
   | "not-joined"
@@ -105,7 +104,7 @@ export default function DiscoverPage() {
         setMyResponse(existing);
         const assignedExtra = await getOrAssignExtra(profile.id, profile.role, content.question.id);
         setExtra(assignedExtra);
-        setStep("extra");
+        setStep("reveal");
         return;
       }
 
@@ -134,8 +133,12 @@ export default function DiscoverPage() {
     if (!trip || !content || !activeProfile || !selectedOption) return;
     setSubmitting(true);
     try {
-      const response = await submitResponse(activeProfile.id, content.question.id, selectedOption);
+      const [response, assignedExtra] = await Promise.all([
+        submitResponse(activeProfile.id, content.question.id, selectedOption),
+        getOrAssignExtra(activeProfile.id, activeProfile.role, content.question.id),
+      ]);
       setMyResponse(response);
+      setExtra(assignedExtra);
       await trackEvent(trip.id, "answer_submitted", activeProfile.id, {
         question_id: content.question.id,
         response_time_ms: Date.now() - openedAt,
@@ -143,20 +146,13 @@ export default function DiscoverPage() {
       if (response.is_correct) {
         await trackEvent(trip.id, "answer_correct", activeProfile.id, { question_id: content.question.id });
       }
+      if (assignedExtra) {
+        await trackEvent(trip.id, "extra_viewed", activeProfile.id, { extra_id: assignedExtra.id });
+      }
       setStep("reveal");
     } finally {
       setSubmitting(false);
     }
-  }
-
-  async function handleContinueToExtra() {
-    if (!trip || !content || !activeProfile) return;
-    const assignedExtra = await getOrAssignExtra(activeProfile.id, activeProfile.role, content.question.id);
-    setExtra(assignedExtra);
-    if (assignedExtra) {
-      await trackEvent(trip.id, "extra_viewed", activeProfile.id, { extra_id: assignedExtra.id });
-    }
-    setStep("extra");
   }
 
   async function handleExploreClick(linkId: string) {
@@ -310,59 +306,49 @@ export default function DiscoverPage() {
             </div>
           )}
 
+          {extra && (
+            <div className="flex flex-col gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
+                {extra.extra_type ? EXTRA_TYPE_LABEL[extra.extra_type] : "EXTRA"}
+              </span>
+              <p className="text-[15px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
+            </div>
+          )}
+
+          {content.exploreLinks.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-[12px] font-medium text-disabled">🐇 Vrei să afli mai mult?</p>
+              {content.exploreLinks.map((link) => (
+                <a
+                  key={link.id}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => handleExploreClick(link.id)}
+                  className="flex items-center gap-2 text-[14px] text-primary hover:underline"
+                >
+                  <ExternalLink size={13} />
+                  {link.title}
+                </a>
+              ))}
+            </div>
+          )}
+
+          {extra && (
+            <p className="text-[13px] leading-relaxed text-disabled">
+              Ceilalți au descoperit ceva puțin diferit.
+              <br />
+              Întreabă-i ce au primit. 👋
+            </p>
+          )}
+
           <div className="mt-auto pt-4">
-            <Btn onClick={handleContinueToExtra}>MERGI MAI DEPARTE</Btn>
+            <Btn onClick={goHome}>ÎNAPOI ACASĂ</Btn>
           </div>
         </div>
       </main>
     );
   }
 
-  // step === "extra"
-  return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
-      <FlowHeader label={SLOT_LABEL[discoverSlot]} icon={<SlotIcon size={15} />} onClose={goHome} />
-      <div className="flex flex-1 flex-col gap-5">
-        {extra ? (
-          <div className="flex flex-col gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
-              {extra.extra_type ? EXTRA_TYPE_LABEL[extra.extra_type] : "EXTRA"}
-            </span>
-            <p className="text-[17px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
-          </div>
-        ) : (
-          <p className="text-muted-foreground">Nu mai sunt Extra-uri disponibile azi.</p>
-        )}
-
-        {content.exploreLinks.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <p className="text-[12px] font-medium text-disabled">🐇 Vrei să afli mai mult?</p>
-            {content.exploreLinks.map((link) => (
-              <a
-                key={link.id}
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => handleExploreClick(link.id)}
-                className="flex items-center gap-2 text-[14px] text-primary hover:underline"
-              >
-                <ExternalLink size={13} />
-                {link.title}
-              </a>
-            ))}
-          </div>
-        )}
-
-        <p className="text-[14px] leading-relaxed text-disabled">
-          Ceilalți au descoperit ceva puțin diferit.
-          <br />
-          Întreabă-i ce au primit. 👋
-        </p>
-
-        <div className="mt-auto pt-4">
-          <Btn onClick={goHome}>ÎNAPOI ACASĂ</Btn>
-        </div>
-      </div>
-    </main>
-  );
+  return null;
 }
