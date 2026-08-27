@@ -502,6 +502,18 @@
   recording correctly with real participant IDs -- the data was right
   the whole time, the page just never asked again. Now re-fetches every
   30 seconds and immediately when the tab regains focus.
+- Fixed: `getTripHistory()` included a Battle in the Întrebări recap the
+  moment *anyone at all* had a `battle_scores` row for it, regardless of
+  whether this device's own participants had actually played -- so a
+  family member's device could see another family member's Battle
+  answers (and the correct options) revealed purely because someone else
+  answered first, breaking the same spoiler-avoidance rule Discover
+  questions already follow ("only what you've answered appears at all").
+  Now gates Battle inclusion, and each individual Battle question within
+  it, on this device's own participants having an individual `responses`
+  row for that specific question -- exactly mirroring the Discover
+  filter, and consistent whether the answer came from live play or a
+  catch-up session.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

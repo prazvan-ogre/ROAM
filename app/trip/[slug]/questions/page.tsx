@@ -77,15 +77,15 @@ export default function QuestionsPage() {
       if (item.question.day_number != null) dayNumbers.add(item.question.day_number);
     }
     for (const item of history.battles) {
-      if (!item.content.battle.is_final && item.content.battle.day_number != null) {
-        dayNumbers.add(item.content.battle.day_number);
+      if (!item.battle.is_final && item.battle.day_number != null) {
+        dayNumbers.add(item.battle.day_number);
       }
     }
     return Array.from(dayNumbers).sort((a, b) => a - b);
   }, [history]);
 
   const hasFinal = useMemo(
-    () => (history?.battles ?? []).some((b) => b.content.battle.is_final),
+    () => (history?.battles ?? []).some((b) => b.battle.is_final),
     [history],
   );
 
@@ -144,9 +144,7 @@ export default function QuestionsPage() {
     (item) => item.question.day_number === selectedTab && Object.keys(item.responsesByParticipant).length > 0,
   );
   const battlesForTab = history.battles.filter((item) =>
-    selectedTab === FINAL_TAB
-      ? item.content.battle.is_final
-      : item.content.battle.day_number === selectedTab,
+    selectedTab === FINAL_TAB ? item.battle.is_final : item.battle.day_number === selectedTab,
   );
 
   return (
@@ -189,10 +187,10 @@ export default function QuestionsPage() {
         ))}
         {battlesForTab.map((item) => (
           <BattleRow
-            key={item.content.battle.id}
+            key={item.battle.id}
             item={item}
-            expanded={expandedIds.has(item.content.battle.id)}
-            onToggle={() => toggle(item.content.battle.id)}
+            expanded={expandedIds.has(item.battle.id)}
+            onToggle={() => toggle(item.battle.id)}
           />
         ))}
         {discoverForTab.length === 0 && battlesForTab.length === 0 && (
@@ -326,7 +324,7 @@ function BattleRow({
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Battle</p>
-          <p className="mt-0.5 text-[15px] font-medium text-foreground">{item.content.battle.title}</p>
+          <p className="mt-0.5 text-[15px] font-medium text-foreground">{item.battle.title}</p>
         </div>
         <ChevronDown
           size={15}
@@ -340,7 +338,7 @@ function BattleRow({
             PĂRINȚI {Math.round(item.score.adults)} — COPII {Math.round(item.score.kids)}
           </p>
           <div className="flex flex-col gap-2">
-            {item.content.questions.map(({ question, options }) => {
+            {item.questions.map(({ question, options }) => {
               const correctOption = options.find((o) => o.is_correct);
               return (
                 <div key={question.id} className="rounded-xl bg-background px-3.5 py-3">

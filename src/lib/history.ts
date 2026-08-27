@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { loadBattleContent, getBattleTeamScore, type BattleContent } from "./battle";
+import { loadBattleContent, getBattleTeamScore, type Battle } from "./battle";
 import type { AnswerOption, Extra, ExploreLink, Question, Response } from "./discover";
 import type { BattleTeam } from "./supabase/types";
 
@@ -15,9 +15,17 @@ export interface DiscoverHistoryItem {
   exploreLinks: ExploreLink[];
 }
 
+export interface BattleHistoryQuestion {
+  question: Question;
+  options: AnswerOption[];
+  exploreLinks: ExploreLink[];
+  responsesByParticipant: Record<string, Response>;
+}
+
 export interface BattleHistoryItem {
-  content: BattleContent;
+  battle: Battle;
   score: Record<BattleTeam, number>;
+  questions: BattleHistoryQuestion[];
 }
 
 export interface TripHistory {
@@ -118,28 +126,51 @@ export async function getTripHistory(
     };
   });
 
-  const { data: battleRows, error: battlesError } = await supabase
-    .from("battles")
-    .select("*")
-    .eq("trip_id", tripId)
-    .eq("is_active", true);
-  if (battlesError) throw battlesError;
-
   const battles: BattleHistoryItem[] = [];
-  for (const battle of battleRows ?? []) {
-    const { count } = await supabase
-      .from("battle_scores")
-      .select("id", { count: "exact", head: true })
-      .eq("battle_id", battle.id);
-    if (!count) continue;
+  if (profileIds.length > 0) {
+    const { data: battleRows, error: battlesError } = await supabase
+      .from("battles")
+      .select("*")
+      .eq("trip_id", tripId)
+      .eq("is_active", true);
+    if (battlesError) throw battlesError;
 
-    const [content, score] = await Promise.all([
-      loadBattleContent(battle),
-      getBattleTeamScore(battle.id),
-    ]);
-    battles.push({ content, score });
+    for (const battle of battleRows ?? []) {
+      const content = await loadBattleContent(battle);
+      const battleQuestionIds = content.questions.map((q) => q.question.id);
+      if (battleQuestionIds.length === 0) continue;
+
+      // Same spoiler-avoidance rule as Discover above: a Battle question
+      // only appears once this device's own participants have actually
+      // answered it, via their individual `responses` row (live play or
+      // catch-up alike) -- not merely because the battle has been played
+      // by someone, somewhere, on another device.
+      const { data: battleResponseRows, error: battleResponsesError } = await supabase
+        .from("responses")
+        .select("*")
+        .in("question_id", battleQuestionIds)
+        .in("participant_id", profileIds);
+      if (battleResponsesError) throw battleResponsesError;
+
+      const questions: BattleHistoryQuestion[] = content.questions
+        .map(({ question, options, exploreLinks }) => ({
+          question,
+          options,
+          exploreLinks,
+          responsesByParticipant: Object.fromEntries(
+            (battleResponseRows ?? [])
+              .filter((r) => r.question_id === question.id)
+              .map((r) => [r.participant_id, r]),
+          ),
+        }))
+        .filter((q) => Object.keys(q.responsesByParticipant).length > 0);
+      if (questions.length === 0) continue;
+
+      const score = await getBattleTeamScore(battle.id);
+      battles.push({ battle, score, questions });
+    }
+    battles.sort((a, b) => (a.battle.day_number ?? 0) - (b.battle.day_number ?? 0));
   }
-  battles.sort((a, b) => (a.content.battle.day_number ?? 0) - (b.content.battle.day_number ?? 0));
 
   return { discover, battles };
 }
