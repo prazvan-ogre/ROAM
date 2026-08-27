@@ -8,7 +8,7 @@
 // since a bug report here only ever arrives as a phone screenshot.
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
-    <html lang="ro">
+    <html lang="ro" translate="no" className="notranslate">
       <body className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#F7F7F5] px-6 text-center font-sans">
         <p className="text-[15px] font-semibold text-[#1a1a1a]">A apărut o eroare neașteptată.</p>
         <p className="max-w-sm break-words text-[13px] text-[#6b6b6b]">{error.message || "(fără mesaj)"}</p>

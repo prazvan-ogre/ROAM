@@ -418,6 +418,23 @@
   catch-up, recap, Settings, Scor); `global-error.tsx` covers the bare
   root layout (its own `<html>`/`<body>`, per Next.js's requirement for
   a root-level error boundary).
+- Found the actual cause of the crash the error screen above was built
+  to diagnose: "Obiectul nu poate fi găsit aici" (Chrome's own
+  translation of `DOMException: NotFoundError: The object can not be
+  found here`) is a well-known React/Chrome-Translate incompatibility --
+  when Chrome's page-translate feature rewrites text nodes in place,
+  React's next DOM update (removing/reordering nodes it thinks are still
+  where it left them, e.g. moving from the wizard's "name" step to
+  "role") throws this exact error. Two contributing bugs, both fixed:
+  `app/layout.tsx` had `<html lang="en">` despite 100% Romanian content,
+  a language mismatch that makes Chrome more likely to offer translation
+  in the first place; and nothing told Chrome not to translate at all.
+  Fixed `lang` to `"ro"`, added `translate="no"` + `class="notranslate"`
+  on `<html>` (root layout and both error boundaries, since
+  `global-error.tsx` renders its own), and a `<meta name="google"
+  content="notranslate">` tag (via `metadata.other` in `layout.tsx`) --
+  the combination Chrome actually honors to skip the translate offer
+  entirely. Verified the rendered HTML directly (`next dev` + `curl`).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
