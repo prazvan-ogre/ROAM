@@ -377,6 +377,16 @@
   previous entry -- so a *reached* day's questions still show in the
   list, still locked until this device answers, but a day the calendar
   hasn't reached yet doesn't appear at all anymore.
+- Live Discover (`/discover/[slot]`) gets the same treatment already
+  given to Battle and catch-up: answering a morning/lunch question no
+  longer needs a second "MERGI MAI DEPARTE" tap to see the Extra --
+  `handleSubmitAnswer` now fetches the assigned Extra (`getOrAssignExtra`)
+  in the same call as recording the response, and the single "reveal"
+  screen shows the correct-answer message, Common Core, One Thing,
+  Extra, and Explore links together, immediately. The separate "extra"
+  step is gone; reviewing an already-answered question (via the
+  "Cine răspunde?" picker) goes straight to this same merged reveal.
+  Discover, Battle, and catch-up now all reveal the same way.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
