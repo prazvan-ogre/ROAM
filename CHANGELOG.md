@@ -435,6 +435,21 @@
   content="notranslate">` tag (via `metadata.other` in `layout.tsx`) --
   the combination Chrome actually honors to skip the translate offer
   entirely. Verified the rendered HTML directly (`next dev` + `curl`).
+- Fixed: the Daily Battle's "GATA" button (shown on the last question's
+  reveal) could look completely unresponsive -- `handleNext` awaited
+  `goToDone()`, which made two network calls
+  (`getBattleWindowStatus`/`getBattleResult`) with no error handling; if
+  either failed, the click silently did nothing; a phone doesn't have a
+  console to see why. Two changes: `goToDone()` now catches that failure
+  and still reaches the "done" screen (with its safe "not visible yet"
+  default) instead of leaving the button looking stuck -- covers the
+  review path and the Final Battle, both of which still go through it.
+  For the Daily Battle specifically (product owner request), "GATA" now
+  skips the score screen entirely and goes straight home, sidestepping
+  those network calls on this specific click path altogether; the score
+  stays visible on the Scor page. The Final Battle's "GATA" is
+  unchanged -- still `goToDone()` -> "done" -> "CONTINUĂ" into the
+  feedback flow, which wasn't reported broken.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

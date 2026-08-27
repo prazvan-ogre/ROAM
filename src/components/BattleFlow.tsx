@@ -152,7 +152,17 @@ export function BattleFlow({
   async function handleNext() {
     const nextIndex = questionIndex + 1;
     if (nextIndex >= content.questions.length) {
-      await goToDone();
+      // Daily Battle: "GATA" goes straight home (product owner request) --
+      // the score stays visible on the Scor page, and this also sidesteps
+      // goToDone()'s network calls (getBattleWindowStatus/getBattleResult)
+      // failing silently and leaving the button looking unresponsive. The
+      // Final Battle keeps going through goToDone() -> "done" -> onFinished
+      // (the feedback flow), which "GATA" was never reported broken for.
+      if (isFinal) {
+        await goToDone();
+      } else {
+        goHome();
+      }
     } else {
       setQuestionIndex(nextIndex);
       setSelectedOption(null);
@@ -163,12 +173,21 @@ export function BattleFlow({
   }
 
   async function goToDone() {
-    const [w, r] = await Promise.all([
-      getBattleWindowStatus(content.battle.id),
-      getBattleResult(content.battle.id),
-    ]);
-    setWindowStatus(w);
-    setResult(r);
+    // Never let a failed score lookup leave the button looking
+    // unresponsive (still reachable here from the review path, and from
+    // the Final Battle's own "GATA") -- fall through to the "done" screen
+    // regardless, with its safe "not visible yet" default, rather than
+    // getting stuck on "reveal".
+    try {
+      const [w, r] = await Promise.all([
+        getBattleWindowStatus(content.battle.id),
+        getBattleResult(content.battle.id),
+      ]);
+      setWindowStatus(w);
+      setResult(r);
+    } catch (err) {
+      console.error("goToDone score lookup failed", err);
+    }
     if (isFinal) {
       await trackEvent(tripId, "final_battle_completed", activeProfile?.id, {
         battle_id: content.battle.id,
