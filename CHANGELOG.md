@@ -514,6 +514,11 @@
   row for that specific question -- exactly mirroring the Discover
   filter, and consistent whether the answer came from live play or a
   catch-up session.
+- Fixed: the Întrebări page had the same fetch-once staleness bug just
+  fixed on the Scor page -- it loaded its data once on mount and never
+  again, so a Battle played (or any question answered) after the page's
+  first load never appeared until a manual reload. Now re-fetches every
+  30 seconds and immediately on tab focus, matching the Scor page.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

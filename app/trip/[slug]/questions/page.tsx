@@ -65,8 +65,20 @@ export default function QuestionsPage() {
     }
 
     load();
+
+    // Same staleness bug as the Scor page (leaderboard/page.tsx): a Battle
+    // played, or a question answered, after this page's first fetch never
+    // showed up until a manual reload. Re-fetch periodically, and
+    // immediately when the tab regains focus.
+    const interval = setInterval(load, 30_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [slug]);
 
