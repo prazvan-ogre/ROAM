@@ -528,6 +528,12 @@
   Battle/Catchup, which still asks fresh each time; this only gives a
   device with several profiles a clear, persistent answer to "which one
   am I right now."
+- Clasamentul familiei (product owner request): participants with the
+  same score now share the same place and medal, with the next distinct
+  score resuming at its position in the list (1, 1, 3 -- not 1, 1, 2 or
+  each row getting a strictly increasing number regardless of ties).
+  Previously every row's rank was just its position in the sorted list,
+  so two people tied on points still showed as e.g. 1st and 2nd.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
