@@ -537,6 +537,45 @@
   (1, 1, 2), not skip a place per person tied above it (1, 1, 3 --
   "standard competition ranking", which is what shipped first). Switched
   to dense ranking to match.
+- Public trip creation (product owner request, a real pivot from "private
+  Kassandra pilot" toward "anyone can create their own ROAM trip"): the
+  root `/` -- an untouched scaffold placeholder since the very first
+  commit -- is now a public landing page with a form (destination, start
+  date, 3-10 days). Submitting it POSTs to the new
+  `app/api/trips/create` server route, which:
+  1. Rejects a hidden honeypot field, then enforces a per-device 24h
+     limit and a global daily cap across all devices (a circuit breaker
+     on real cost, since every submission is a Claude API call) --
+     `trips.created_by_device_id`/`created_at`, both indexed
+     (`20260828100000_public_trip_creation.sql`). This is Phase 1 only:
+     no real bot protection (CAPTCHA) and no payments yet, both
+     explicitly deferred by the product owner to a later phase.
+  2. Creates the `trips` row (`content_status: 'generating'`).
+  3. Calls the Claude API (`src/lib/ai/generateTripContent.ts`) with a
+     prompt describing ROAM's exact content shape, asking for a full
+     Discover/Battle set for that destination -- "keeping the same logic
+     and learning objective as Kassandra" (product owner's words): a
+     morning + lunch Discover question per day (options, Common Core,
+     One Thing, an Extra, explore links), a daily Battle (3 questions),
+     and on the last day a Final Battle (5 questions) plus 3 prize-vote
+     options, reusing the existing prize_options/prize_votes flow rather
+     than a static prize. The response is strictly validated (exact
+     question/option counts, exactly one correct option each, etc.)
+     before any of it is trusted.
+  4. Inserts everything (`src/lib/ai/insertGeneratedContent.ts`) via a
+     new service-role client (`src/lib/supabase/admin.ts`) -- content
+     tables have never had an anon-writable policy, so this is the only
+     way this route could write them anyway -- landing with the schema's
+     own `verified = false, published = false` defaults, exactly as
+     hidden pending human review as Kassandra's own seed content was.
+     `content_status` becomes `'ready'` on success or `'failed'` if
+     generation or insertion didn't work out; either way the trip itself
+     still exists. The Home page shows a "still preparing"/"generation
+     failed" state instead of an empty-looking dashboard while it isn't
+     `'ready'`.
+  Needs two new server-only env vars in Vercel: `SUPABASE_SERVICE_ROLE_KEY`
+  (already documented, newly used) and `ANTHROPIC_API_KEY` (new, from
+  console.anthropic.com) -- see `.env.example` and `README.md`.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
@@ -555,3 +594,13 @@
   local dev-server smoke tests, and a standalone check of the time-window
   boundary logic only. Please exercise the real flows on a phone against
   your Supabase project before trusting them for the pilot.
+- Public trip creation (`app/api/trips/create`) has no real bot
+  protection (no CAPTCHA) and no payment mechanism yet — both explicitly
+  deferred by the product owner to a later phase. Phase 1's only defenses
+  against abuse are a hidden honeypot field, a per-device 24h limit, and
+  a global daily cap; a determined attacker with many device ids could
+  still exhaust the daily cap. The Claude API call itself was never
+  reachable from this sandboxed environment (no network access to
+  `api.anthropic.com`), so the actual generation call is unverified
+  end-to-end — reviewed carefully for correctness, but please test it for
+  real once `ANTHROPIC_API_KEY` is set in Vercel.

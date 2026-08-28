@@ -61,7 +61,11 @@ direct API call can't see draft content either. Everything seeded is
 deliberately left `verified = false`: only a human fact-check + approval
 pass may flip that flag (see `supabase/seed.sql` for the exact `update`
 statements to run once content is reviewed). An AI assistant authoring a
-migration is not that pass.
+migration is not that pass — and neither is the live Claude API call
+`app/api/trips/create` makes for a publicly-created trip: it relies on
+the same column defaults, not an explicit `verified: false`, so a new
+trip's content is exactly as hidden as Kassandra's was before its own
+review pass.
 
 ## Security model (RLS)
 
@@ -117,6 +121,26 @@ Row Level Security is the actual access boundary:
    grows beyond that trust model, the fix is to add Supabase Auth
    (anonymous sign-in still avoids a login screen, but gives RLS a real
    `auth.uid()` to scope `using (device_id = auth.jwt() ->> 'device_id')`).
+6. **Public trip creation is the first real move beyond that trust model**
+   (product owner request: anyone can spin up their own trip from
+   `app/page.tsx`, not just the private Kassandra pilot) — and it does
+   *not* go through a new anon-writable policy on `trips`. The only
+   write path is `app/api/trips/create`, a server route holding the
+   service-role key; the anon key still cannot insert a trip, a question,
+   or anything else content-related directly. That route is itself the
+   attack surface now (it's reachable by anyone, scripted or not, and
+   each call is a real Claude API cost), so it enforces its own limits
+   before doing anything: a hidden honeypot field, at most one new trip
+   per device per 24h (`trips.created_by_device_id`), and a global daily
+   cap across all devices as a circuit breaker
+   (`trips.created_at`-based, both indexed). `trips.content_status`
+   (`pending` → `generating` → `ready`/`failed`) tracks whether that
+   trip's Discover/Battle content generation actually succeeded — the
+   Home page (`app/trip/[slug]/page.tsx`) shows a "still preparing" or
+   "generation failed" state instead of an empty dashboard while it
+   isn't `ready`. None of this is real bot/abuse protection (no CAPTCHA)
+   or payment — both are explicitly deferred to a later phase, per the
+   product owner.
 
 ## Migrations
 
@@ -132,6 +156,7 @@ Row Level Security is the actual access boundary:
 - `supabase/migrations/20260826190000_battle_extras_content.sql` — data-only, not a schema change: one AI-drafted `extras` row per Battle/Final Battle question (28 total), the additive equivalent of the Battle Extras added to `seed.sql` the same day — `seed.sql` itself is never safe to re-run against a project with real pilot activity (see "Seed data" below), so this is how that content actually reaches a live project. Idempotent (`where not exists` per question) and touches only `extras` — never `trips`/`participants`/`responses`/`battle_scores`. Left `verified = false`, `published = false` like all seeded content; the migration's own header has the exact `update` statement to run once reviewed.
 - `supabase/migrations/20260827190000_fix_battle_team_score_average.sql` — bug fix for `battle_team_score()`/`trip_battle_win_tally()` from the individual-scoring migration above: the "average" branch used `avg(score)` (averaging over `battle_scores` rows — one per participant per question) instead of `sum(score) / count(distinct participant_id)` (averaging over participants, the actual spec). Understated the displayed score magnitude on the Întrebări recap page whenever a battle had more than one question; win/loss was only ever at risk once participation became uneven across a battle's questions. The legacy raw-sum branch (`participant_id is null`, pre-feature battles) is untouched. Both functions are `security definer`, computed live on every read — no stored values, so applying this migration retroactively corrects all past and future reads immediately.
 - `supabase/migrations/20260827200000_fix_trip_tally_reveal_leak.sql` — second bug fix for `trip_battle_win_tally()`, found while verifying the daily score against production: it counted every battle with any `battle_scores` rows at all, with no check on whether that evening's own 15-minute reveal window (`getBattleWindowStatus()` in `src/lib/battle.ts`) had closed — so the cumulative "Scor total" tally already counted tonight's in-progress (possibly one-answer-old) outcome as a win, even though "Scor zilnic" on the same page correctly stays hidden for those 15 minutes. Fixed by excluding a has-individual-scoring battle from the tally until `now() >= first individual answer + 15 minutes`, exactly matching the app's own reveal rule; legacy (pre-individual-scoring) battles never had a reveal window and stay counted unconditionally.
+- `supabase/migrations/20260828100000_public_trip_creation.sql` — `trips.created_by_device_id` and `trips.content_status` (`pending`/`generating`/`ready`/`failed`, default `ready` so existing trips are unaffected), plus indexes on `created_at` and `(created_by_device_id, created_at)`. Backs the public trip-creation flow (`app/page.tsx` → `app/api/trips/create`, see "Security model" point 6 above) — no new RLS policies, since that route writes through the service-role key like every other content write.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

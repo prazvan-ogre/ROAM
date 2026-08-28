@@ -219,6 +219,31 @@ export default function TripHomePage() {
     return <Centered>Nu am găsit această călătorie.</Centered>;
   }
 
+  // A publicly-created trip (app/api/trips/create) exists the instant its
+  // row is inserted, but its Discover/Battle content is generated right
+  // after -- showing the join wizard (or an empty dashboard) in the
+  // meantime would look broken rather than "still preparing."
+  if (trip.content_status === "generating" || trip.content_status === "pending") {
+    return (
+      <Centered>
+        <p className="text-[17px] font-semibold text-foreground">Pregătim {trip.name}...</p>
+        <p className="mt-2 max-w-xs text-[14px] text-muted-foreground">
+          Generăm întrebările și provocările pentru această călătorie. Revino în câteva momente.
+        </p>
+      </Centered>
+    );
+  }
+  if (trip.content_status === "failed") {
+    return (
+      <Centered>
+        <p className="text-[17px] font-semibold text-foreground">Generarea conținutului a eșuat</p>
+        <p className="mt-2 max-w-xs text-[14px] text-muted-foreground">
+          Călătoria {trip.name} există, dar întrebările nu au putut fi generate. Contactează administratorul.
+        </p>
+      </Centered>
+    );
+  }
+
   if (profiles.length === 0) {
     return <OnboardingWizard trip={trip} onComplete={handleWizardComplete} />;
   }

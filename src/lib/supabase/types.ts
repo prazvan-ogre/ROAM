@@ -11,6 +11,7 @@ export type ExtraType = "know" | "think" | "connect" | "ask" | "explore";
 export type ExtraAudience = "all" | "adult" | "child";
 export type AssignmentStatus = "assigned" | "viewed" | "completed";
 export type BattleTeam = "adults" | "kids";
+export type TripContentStatus = "pending" | "generating" | "ready" | "failed";
 
 type TableDef<Row, InsertRequired extends keyof Row> = {
   Row: Row;
@@ -33,6 +34,8 @@ export interface Database {
           destination: string | null;
           location_info: string | null;
           prize: string | null;
+          created_by_device_id: string | null;
+          content_status: TripContentStatus;
           is_active: boolean;
           is_demo: boolean;
           created_at: string;
