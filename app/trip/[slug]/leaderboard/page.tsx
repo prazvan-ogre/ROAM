@@ -115,6 +115,15 @@ export default function LeaderboardPage() {
   const teamScore = isTotal ? tripScore : dailyScore;
   const ranking = (isTotal ? totalRanking : todayRanking).filter((e) => e.answered > 0);
 
+  // Standard competition ranking: equal scores share the same place (and
+  // medal), and the next distinct score resumes at its position in the
+  // list (1, 1, 3 -- not 1, 1, 2) rather than each row getting a
+  // strictly increasing number regardless of ties.
+  const ranks: number[] = [];
+  ranking.forEach((e, i) => {
+    ranks.push(i > 0 && ranking[i - 1].score === e.score ? ranks[i - 1] : i + 1);
+  });
+
   const todayDiff = dailyScore.adults - dailyScore.kids;
   const todayChip =
     todayDiff > 0
@@ -178,10 +187,12 @@ export default function LeaderboardPage() {
         <div className="px-5">
           <h2 className="mb-5 text-[22px] font-bold tracking-tight text-foreground">Clasamentul familiei</h2>
           <div>
-            {ranking.map((e, i) => (
+            {ranking.map((e, i) => {
+              const rank = ranks[i];
+              return (
               <div key={e.participantId} className="flex items-center border-b border-secondary py-3.5 last:border-0">
-                <span className={`w-6 shrink-0 text-[14px] font-bold ${i === 0 ? "text-primary" : "text-disabled"}`}>
-                  {RANK_MEDAL[i] ?? i + 1}
+                <span className={`w-6 shrink-0 text-[14px] font-bold ${rank === 1 ? "text-primary" : "text-disabled"}`}>
+                  {RANK_MEDAL[rank - 1] ?? rank}
                 </span>
                 <div className="ml-3 min-w-0 flex-1">
                   <p className="text-[16px] font-semibold text-foreground">{e.displayName}</p>
@@ -189,11 +200,12 @@ export default function LeaderboardPage() {
                     {e.role === "adult" ? "Adult" : e.age ? `Copil · ${e.age} ani` : "Copil"}
                   </p>
                 </div>
-                <p className={`shrink-0 text-[16px] font-bold ${i === 0 ? "text-primary" : "text-foreground"}`}>
+                <p className={`shrink-0 text-[16px] font-bold ${rank === 1 ? "text-primary" : "text-foreground"}`}>
                   {e.score}
                 </p>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
