@@ -576,6 +576,15 @@
   Needs two new server-only env vars in Vercel: `SUPABASE_SERVICE_ROLE_KEY`
   (already documented, newly used) and `ANTHROPIC_API_KEY` (new, from
   console.anthropic.com) -- see `.env.example` and `README.md`.
+- Fixed, found while walking through what the above actually costs to
+  run: `app/api/trips/create` had no explicit function duration, so it
+  fell back to Vercel's plan default -- 10s on Hobby -- which a
+  multi-day trip's Claude call (routinely 20-40s+ for the JSON content
+  alone, before the inserts) would blow past on nearly every request,
+  wasting the API spend on a call that times out anyway before the trip
+  ever reaches `content_status: 'ready'`. Set `maxDuration = 60` (the
+  maximum Hobby allows); Pro allows more if longer trips still need it
+  once this is live.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

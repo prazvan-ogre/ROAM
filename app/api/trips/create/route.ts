@@ -8,6 +8,15 @@ import { slugify } from "@/lib/slug";
 // fetch to the Claude API) -- not edge-compatible.
 export const runtime = "nodejs";
 
+// Without this, Vercel falls back to the plan's default function
+// duration -- 10s on Hobby -- which a multi-day trip's Claude call
+// (routinely 20-40s+ for the JSON alone, before the content inserts)
+// would blow through every time, wasting the API spend on a request that
+// times out anyway. 60s is the maximum allowed on Hobby; Pro allows more
+// (up to 300s standard, higher with Fluid Compute) if longer trips still
+// need it once this is deployed for real.
+export const maxDuration = 60;
+
 const MIN_DURATION_DAYS = 3;
 const MAX_DURATION_DAYS = 10;
 const MAX_TRIPS_PER_DEVICE_PER_DAY = 1;
