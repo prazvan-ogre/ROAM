@@ -1,29 +1,19 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { generateTripContent } from "@/lib/ai/generateTripContent";
-import { insertGeneratedContent } from "@/lib/ai/insertGeneratedContent";
 import { slugify } from "@/lib/slug";
 
-// Needs the Node runtime (service-role Supabase client + a long-running
-// fetch to the Claude API) -- not edge-compatible.
+// Needs the Node runtime for the service-role Supabase client -- not
+// edge-compatible.
 export const runtime = "nodejs";
-
-// Without this, Vercel falls back to the plan's default function
-// duration -- 10s on Hobby -- which a multi-day trip's Claude call
-// (routinely 20-40s+ for the JSON alone, before the content inserts)
-// would blow through every time, wasting the API spend on a request that
-// times out anyway. 60s is the maximum allowed on Hobby; Pro allows more
-// (up to 300s standard, higher with Fluid Compute) if longer trips still
-// need it once this is deployed for real.
-export const maxDuration = 60;
 
 const MIN_DURATION_DAYS = 3;
 const MAX_DURATION_DAYS = 10;
 const MAX_TRIPS_PER_DEVICE_PER_DAY = 1;
-// A circuit breaker on top of the per-device limit: this page is public
-// and each submission is a real Claude API call, so this bounds the
-// worst case cost even if someone works around the per-device check
-// (e.g. by clearing localStorage between requests).
+// A circuit breaker on top of the per-device limit: this page is public,
+// and every trip it creates lands in a manual content-review queue (see
+// below) -- this bounds how many can pile up in a day even if someone
+// works around the per-device check (e.g. by clearing localStorage
+// between requests).
 const MAX_TRIPS_GLOBAL_PER_DAY = 20;
 const MAX_DESTINATION_LENGTH = 80;
 
@@ -100,39 +90,26 @@ export async function POST(request: Request) {
   const baseSlug = slugify(destinationName) || "calatorie";
   const slug = `${baseSlug}-${tripYear}-${Math.random().toString(36).slice(2, 6)}`;
 
-  const { data: trip, error: insertTripError } = await admin
-    .from("trips")
-    .insert({
-      slug,
-      name: `${destinationName} ${tripYear}`,
-      language: "ro",
-      start_date: start.toISOString().slice(0, 10),
-      duration_days: duration,
-      destination: destinationName,
-      created_by_device_id: deviceId,
-      content_status: "generating",
-    })
-    .select()
-    .single();
+  // Content generation is a deliberate manual step (product owner
+  // decision, reversing the earlier live-Claude-API-call design) -- this
+  // route only ever creates the bare trip shell, left at 'pending'.
+  // Someone (today: asking an assistant to draft it, the same way
+  // Kassandra's content was written) drafts and inserts the
+  // Discover/Battle content afterward as an additive migration, then
+  // flips content_status to 'ready' as part of that same migration. See
+  // docs/DATABASE.md "Security model" point 6 and docs/ARCHITECTURE.md
+  // "Public trip creation".
+  const { error: insertTripError } = await admin.from("trips").insert({
+    slug,
+    name: `${destinationName} ${tripYear}`,
+    language: "ro",
+    start_date: start.toISOString().slice(0, 10),
+    duration_days: duration,
+    destination: destinationName,
+    created_by_device_id: deviceId,
+    content_status: "pending",
+  });
   if (insertTripError) throw insertTripError;
-
-  try {
-    const content = await generateTripContent(destinationName, duration, tripYear);
-    await insertGeneratedContent(admin, trip.id, content);
-    await admin.from("trips").update({ content_status: "ready" }).eq("id", trip.id);
-  } catch (err) {
-    // Logged rather than swallowed -- this is the only place that will
-    // ever explain why a given public trip's content_status is 'failed'.
-    console.error("Trip content generation failed for", trip.id, trip.slug, err);
-    await admin.from("trips").update({ content_status: "failed" }).eq("id", trip.id);
-    return NextResponse.json(
-      {
-        error: "Călătoria a fost creată, dar generarea conținutului a eșuat. O poți deschide, dar întrebările nu sunt încă disponibile.",
-        slug,
-      },
-      { status: 502 },
-    );
-  }
 
   return NextResponse.json({ slug });
 }

@@ -70,18 +70,20 @@ server route that:
    the actual security boundary, since this route (unlike the rest of the
    app) is the one place the service-role key is used, so RLS alone
    doesn't gate it. See `docs/DATABASE.md` "Security model" point 6.
-2. Inserts the `trips` row (`content_status: 'generating'`).
-3. Calls the Claude API (`src/lib/ai/generateTripContent.ts`) to draft a
-   full set of Discover/Battle content for that destination, matching the
-   structure and tone of the original Kassandra content, then validates
-   the response's shape before using any of it.
-4. Inserts everything (`src/lib/ai/insertGeneratedContent.ts`) with the
-   schema's own `verified = false, published = false` defaults -- exactly
-   as hidden as Kassandra's seed content was before its own review pass
-   (`docs/DATABASE.md` "Content integrity") -- and sets
-   `content_status: 'ready'` (or `'failed'` if generation didn't work
-   out; the trip still exists, just without content, and its Home page
-   shows that state instead of an empty dashboard).
+2. Inserts the `trips` row (`content_status: 'pending'`) and returns.
+
+That's the entire route -- product owner decision: drafting a new trip's
+Discover/Battle content is a deliberate manual step, not a live API call
+at creation time. In practice that means asking an assistant (in a
+session like this one) to draft the content for that destination, the
+same way Kassandra's content was written, then landing it as an additive
+migration (`docs/DATABASE.md` "Migrations") -- content lands with the
+schema's own `verified = false, published = false` defaults, exactly as
+hidden as Kassandra's seed content was before its own review pass
+(`docs/DATABASE.md` "Content integrity") -- and flipping
+`content_status` to `'ready'` as part of that same migration. Until
+then, the trip's Home page shows a "still being put together" state
+instead of an empty dashboard.
 
 ## Environments
 

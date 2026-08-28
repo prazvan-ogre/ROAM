@@ -61,11 +61,11 @@ direct API call can't see draft content either. Everything seeded is
 deliberately left `verified = false`: only a human fact-check + approval
 pass may flip that flag (see `supabase/seed.sql` for the exact `update`
 statements to run once content is reviewed). An AI assistant authoring a
-migration is not that pass — and neither is the live Claude API call
-`app/api/trips/create` makes for a publicly-created trip: it relies on
-the same column defaults, not an explicit `verified: false`, so a new
-trip's content is exactly as hidden as Kassandra's was before its own
-review pass.
+migration is not that pass — including for a publicly-created trip
+(`app/api/trips/create`, `docs/ARCHITECTURE.md` "Public trip creation"):
+its content is drafted and inserted the same way Kassandra's was, an
+additive migration relying on the same column defaults rather than an
+explicit `verified: false`, so it's exactly as hidden pending review.
 
 ## Security model (RLS)
 
@@ -128,19 +128,22 @@ Row Level Security is the actual access boundary:
    write path is `app/api/trips/create`, a server route holding the
    service-role key; the anon key still cannot insert a trip, a question,
    or anything else content-related directly. That route is itself the
-   attack surface now (it's reachable by anyone, scripted or not, and
-   each call is a real Claude API cost), so it enforces its own limits
-   before doing anything: a hidden honeypot field, at most one new trip
-   per device per 24h (`trips.created_by_device_id`), and a global daily
-   cap across all devices as a circuit breaker
-   (`trips.created_at`-based, both indexed). `trips.content_status`
-   (`pending` → `generating` → `ready`/`failed`) tracks whether that
-   trip's Discover/Battle content generation actually succeeded — the
-   Home page (`app/trip/[slug]/page.tsx`) shows a "still preparing" or
-   "generation failed" state instead of an empty dashboard while it
-   isn't `ready`. None of this is real bot/abuse protection (no CAPTCHA)
-   or payment — both are explicitly deferred to a later phase, per the
-   product owner.
+   attack surface now (reachable by anyone, scripted or not), so it
+   enforces its own limits before doing anything: a hidden honeypot
+   field, at most one new trip per device per 24h
+   (`trips.created_by_device_id`), and a global daily cap across all
+   devices as a circuit breaker (`trips.created_at`-based, both indexed)
+   — keeping a spammer from flooding the manual content-review queue
+   below, not (any longer) bounding a per-call API cost. `trips.
+   content_status` (`pending` → `ready`, `generating`/`failed` reserved
+   for a human to set by hand if useful) tracks whether that trip's
+   Discover/Battle content has actually been drafted and published yet —
+   see "Content integrity" above and `docs/ARCHITECTURE.md` "Public trip
+   creation" for that manual step. The Home page
+   (`app/trip/[slug]/page.tsx`) shows a "still being put together" state
+   instead of an empty dashboard while it isn't `ready`. None of this is
+   real bot/abuse protection (no CAPTCHA) or payment — both are
+   explicitly deferred to a later phase, per the product owner.
 
 ## Migrations
 
