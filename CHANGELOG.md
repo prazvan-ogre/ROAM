@@ -602,6 +602,15 @@
   Landing page and Home page copy adjusted to stop implying an imminent
   automatic result ("poate dura până la un minut" -> "Se creează
   călătoria...").
+- Fixed, found from a production screenshot: `app/api/trips/create` had
+  no top-level error handling, so any unhandled error (a missing
+  `SUPABASE_SERVICE_ROLE_KEY`, the trip-creation migration not yet
+  applied to production, ...) returned a generic non-JSON 500 page,
+  which the client could only ever surface as the same "Nu am putut
+  crea călătoria" fallback message regardless of the real cause --
+  undiagnosable from a phone. Wrapped the whole handler so the real
+  error is now logged server-side (visible in Vercel's function logs
+  for this route) while the client still gets a safe generic message.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
