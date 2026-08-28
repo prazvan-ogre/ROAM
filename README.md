@@ -41,7 +41,8 @@ See `.env.example` for the full list. Get Supabase values from
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | client | safe to expose |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | client | safe to expose — RLS is the real boundary |
-| `SUPABASE_SERVICE_ROLE_KEY` | CI / scripts only | **never** ship to the browser, never prefix `NEXT_PUBLIC_` |
+| `SUPABASE_SERVICE_ROLE_KEY` | CI / scripts / `app/api/trips/create` | **never** ship to the browser, never prefix `NEXT_PUBLIC_` |
+| `ANTHROPIC_API_KEY` | `app/api/trips/create` only | from console.anthropic.com; generates a new public trip's content, never exposed to the client |
 | `NEXT_PUBLIC_APP_ENV` | client | `local` \| `preview` \| `production` |
 | `NEXT_PUBLIC_ACTIVE_TRIP_SLUG` | client | which trip this deployment serves |
 

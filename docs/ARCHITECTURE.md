@@ -58,6 +58,31 @@ Supabase (Postgres + RLS)
    `battle_scores` table, so no device can read another participant's row
    directly.
 
+## Public trip creation
+
+`app/page.tsx` is a public landing page, not a product screen scoped to
+one trip: anyone can request a new trip for any destination. It never
+talks to Supabase directly -- it POSTs to `app/api/trips/create`, a
+server route that:
+
+1. Rejects a hidden honeypot field, then enforces a per-device 24h limit
+   and a global daily cap (`trips.created_by_device_id`/`created_at`) --
+   the actual security boundary, since this route (unlike the rest of the
+   app) is the one place the service-role key is used, so RLS alone
+   doesn't gate it. See `docs/DATABASE.md` "Security model" point 6.
+2. Inserts the `trips` row (`content_status: 'generating'`).
+3. Calls the Claude API (`src/lib/ai/generateTripContent.ts`) to draft a
+   full set of Discover/Battle content for that destination, matching the
+   structure and tone of the original Kassandra content, then validates
+   the response's shape before using any of it.
+4. Inserts everything (`src/lib/ai/insertGeneratedContent.ts`) with the
+   schema's own `verified = false, published = false` defaults -- exactly
+   as hidden as Kassandra's seed content was before its own review pass
+   (`docs/DATABASE.md` "Content integrity") -- and sets
+   `content_status: 'ready'` (or `'failed'` if generation didn't work
+   out; the trip still exists, just without content, and its Home page
+   shows that state instead of an empty dashboard).
+
 ## Environments
 
 | Environment | Frontend | Database |
