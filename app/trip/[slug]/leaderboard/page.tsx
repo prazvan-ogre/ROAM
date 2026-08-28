@@ -115,13 +115,14 @@ export default function LeaderboardPage() {
   const teamScore = isTotal ? tripScore : dailyScore;
   const ranking = (isTotal ? totalRanking : todayRanking).filter((e) => e.answered > 0);
 
-  // Standard competition ranking: equal scores share the same place (and
-  // medal), and the next distinct score resumes at its position in the
-  // list (1, 1, 3 -- not 1, 1, 2) rather than each row getting a
-  // strictly increasing number regardless of ties.
+  // Dense ranking: equal scores share the same place (and medal), and
+  // the next distinct score is only ever one place below, regardless of
+  // how many people were tied above it (1, 1, 2 -- not 1, 1, 3, and not
+  // each row getting a strictly increasing number regardless of ties).
   const ranks: number[] = [];
   ranking.forEach((e, i) => {
-    ranks.push(i > 0 && ranking[i - 1].score === e.score ? ranks[i - 1] : i + 1);
+    if (i === 0) ranks.push(1);
+    else ranks.push(ranking[i - 1].score === e.score ? ranks[i - 1] : ranks[i - 1] + 1);
   });
 
   const todayDiff = dailyScore.adults - dailyScore.kids;
