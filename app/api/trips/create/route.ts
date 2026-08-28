@@ -18,6 +18,21 @@ const MAX_TRIPS_GLOBAL_PER_DAY = 20;
 const MAX_DESTINATION_LENGTH = 80;
 
 export async function POST(request: Request) {
+  try {
+    return await handleCreate(request);
+  } catch (err) {
+    // Logged rather than swallowed -- without this, any unhandled error
+    // here (a missing SUPABASE_SERVICE_ROLE_KEY, a migration not yet
+    // applied to production, ...) returned a generic non-JSON 500 page,
+    // which the client only ever saw as "Nu am putut crea călătoria" --
+    // impossible to diagnose from a phone. Check Vercel's function logs
+    // for this route to see the real cause.
+    console.error("Trip creation failed", err);
+    return NextResponse.json({ error: "Nu am putut crea călătoria. Încearcă din nou." }, { status: 500 });
+  }
+}
+
+async function handleCreate(request: Request): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
