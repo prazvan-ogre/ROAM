@@ -585,6 +585,23 @@
   ever reaches `content_status: 'ready'`. Set `maxDuration = 60` (the
   maximum Hobby allows); Pro allows more if longer trips still need it
   once this is live.
+- Product owner decision, reversing the live-generation design above:
+  content drafting for a publicly-created trip goes back to being a
+  manual step, the same way Kassandra's content was written, instead of
+  a live Claude API call at creation time. `app/api/trips/create` now
+  only ever creates the bare `trips` row (`content_status: 'pending'`)
+  and returns immediately -- no more in-request generation, insertion,
+  `content_status: 'generating'`/`'failed'` transitions, or `maxDuration`
+  need (removed along with it). Deleted `src/lib/ai/generateTripContent.ts`
+  and `src/lib/ai/insertGeneratedContent.ts` entirely rather than leaving
+  them unused; `ANTHROPIC_API_KEY` is no longer needed anywhere in this
+  app (removed from `.env.example`/`README.md`). The per-device/global
+  rate limits stay exactly as they were -- their job is now keeping a
+  manual content-review queue from being spammed, not bounding a
+  per-call API cost, but the same numbers still serve that purpose.
+  Landing page and Home page copy adjusted to stop implying an imminent
+  automatic result ("poate dura până la un minut" -> "Se creează
+  călătoria...").
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
@@ -605,11 +622,9 @@
   your Supabase project before trusting them for the pilot.
 - Public trip creation (`app/api/trips/create`) has no real bot
   protection (no CAPTCHA) and no payment mechanism yet — both explicitly
-  deferred by the product owner to a later phase. Phase 1's only defenses
-  against abuse are a hidden honeypot field, a per-device 24h limit, and
+  deferred by the product owner to a later phase. Its only defenses
+  against spam are a hidden honeypot field, a per-device 24h limit, and
   a global daily cap; a determined attacker with many device ids could
-  still exhaust the daily cap. The Claude API call itself was never
-  reachable from this sandboxed environment (no network access to
-  `api.anthropic.com`), so the actual generation call is unverified
-  end-to-end — reviewed carefully for correctness, but please test it for
-  real once `ANTHROPIC_API_KEY` is set in Vercel.
+  still exhaust the daily cap. Content drafting for a new trip is a
+  manual step (see the entry above) rather than a live API call, so
+  there is no generation call left to verify end-to-end here.

@@ -50,8 +50,8 @@ export default function HomePage() {
           Pornește o vacanță plină de descoperiri
         </h1>
         <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
-          Spune-ne destinația, data și durata — pregătim automat întrebările, provocările de seară și un vot pentru
-          premiul familiei, ca la Kassandra 2026.
+          Spune-ne destinația, data și durata — pregătim întrebările, provocările de seară și un vot pentru premiul
+          familiei, ca la Kassandra 2026.
         </p>
       </div>
 
@@ -130,7 +130,7 @@ export default function HomePage() {
           {submitting ? (
             <>
               <Loader2 size={18} className="animate-spin" />
-              Se generează călătoria... poate dura până la un minut
+              Se creează călătoria...
             </>
           ) : (
             <>
