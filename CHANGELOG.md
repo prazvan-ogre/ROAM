@@ -642,6 +642,14 @@
   `20260830110000_replace_admin_account.sql` demotes `0721345678` back
   to a normal account and promotes `0721234567` (PIN `1234`) as the sole
   admin instead.
+- Trip switcher on Setări: whoever is logged into "Călătoriile mele" on a
+  device now gets a dropdown at the top of `/trip/[slug]/settings`
+  listing every trip available to them (their own trips, or every trip
+  on the platform for the admin account) and jumps straight to another
+  trip's Setări on selection — no need to go back through `/trips`.
+  Hidden entirely for the common case (a participant who only ever
+  joined by device id and never created a "Călătoriile mele" account),
+  and for an account tied to just one trip.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
