@@ -228,6 +228,7 @@ export interface Database {
           phone_number: string;
           pin_hash: string;
           is_admin: boolean;
+          display_name: string | null;
           created_at: string;
         },
         "phone_number" | "pin_hash"

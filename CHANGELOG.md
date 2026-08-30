@@ -659,6 +659,20 @@
   own load short-circuits on a non-`ready` trip before the "did this
   device join yet" check, since neither profiles nor prize status mean
   anything until content exists.
+- A trip's creator is now auto-joined as its first participant. Right
+  after creating a trip, `app/trips/page.tsx` first asks "Ai deja cont?":
+  choosing "Nu" also asks for a name (mandatory, alongside phone+PIN, new
+  migration `20260830120000_creator_account_display_name.sql` adding
+  `creator_accounts.display_name`); choosing "Da" only asks for the
+  existing phone+PIN and reuses the name already on file. Either way,
+  once the account is set up or verified, the client immediately calls
+  the same `getOrCreateAdultParticipant()` the onboarding wizard uses, so
+  the creator shows up as a participant on their own trip without going
+  through the wizard separately once its content is ready. "Da, am cont"
+  with a phone/PIN that doesn't match now returns a real login error
+  instead of silently creating a second, blank account (that branch's UI
+  has no name field to fall back on) — the plain `/trips` login (not
+  right after creating a trip) is unaffected either way.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

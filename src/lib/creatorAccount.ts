@@ -43,9 +43,23 @@ export interface AuthenticateInput {
   phoneNumber: string;
   pin: string;
   linkTripSlug?: string;
+  // Only meaningful alongside linkTripSlug (app/trips/page.tsx "Ai deja
+  // cont?" step, right after creating a trip): displayName is required
+  // when creating a brand-new account there (so it can auto-join the
+  // trip as its first adult participant); expectExisting=true turns a
+  // not-found phone/PIN into a real login error instead of silently
+  // creating a blank account, since that branch's UI has no name field.
+  displayName?: string;
+  expectExisting?: boolean;
 }
 
-export async function authenticateCreatorAccount(input: AuthenticateInput): Promise<string> {
+export interface AuthenticateResult {
+  accountId: string;
+  isAdmin: boolean;
+  displayName: string | null;
+}
+
+export async function authenticateCreatorAccount(input: AuthenticateInput): Promise<AuthenticateResult> {
   const response = await fetch("/api/account", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -59,5 +73,5 @@ export async function authenticateCreatorAccount(input: AuthenticateInput): Prom
   const accountId = body.accountId as string;
   setStoredAccountId(accountId);
   setStoredIsAdmin(Boolean(body.isAdmin));
-  return accountId;
+  return { accountId, isAdmin: Boolean(body.isAdmin), displayName: body.displayName ?? null };
 }
