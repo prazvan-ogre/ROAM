@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Plus, MapPin, Calendar, Trophy, Repeat } from "lucide-react";
-import { getAllTrips, getTripBySlug, getTripsForAccount, type Trip } from "@/lib/trip";
+import { Plus, MapPin, Calendar, Trophy } from "lucide-react";
+import { getTripBySlug, type Trip } from "@/lib/trip";
 import {
   listProfilesForDevice,
   addChildProfile,
@@ -14,7 +14,6 @@ import {
 } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
-import { getStoredAccountId, getStoredIsAdmin } from "@/lib/creatorAccount";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 
@@ -29,7 +28,6 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function SettingsPage() {
   const { slug } = useParams<{ slug: string }>();
-  const router = useRouter();
 
   const [step, setStep] = useState<Step>("loading");
   const [tab, setTab] = useState<Tab>("users");
@@ -40,17 +38,6 @@ export default function SettingsPage() {
   const [childAge, setChildAge] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
-  const [switchableTrips, setSwitchableTrips] = useState<Trip[]>([]);
-
-  // Only shown to whoever is logged into "Călătoriile mele" on this device
-  // (app/trips/page.tsx) -- most participants just join a trip by device
-  // id and never create that account, so this stays hidden for them.
-  useEffect(() => {
-    const accountId = getStoredAccountId();
-    if (!accountId) return;
-    const list = getStoredIsAdmin() ? getAllTrips() : getTripsForAccount(accountId);
-    list.then(setSwitchableTrips).catch(() => setSwitchableTrips([]));
-  }, []);
 
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
@@ -152,24 +139,6 @@ export default function SettingsPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-2 px-5 pb-32 pt-14">
       <h1 className="mb-4 text-[28px] font-semibold tracking-tight text-foreground">Setări</h1>
-
-      {switchableTrips.length > 1 && (
-        <label className="mb-6 flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3">
-          <Repeat size={17} className="shrink-0 text-muted-foreground" />
-          <span className="shrink-0 text-[13px] font-medium text-muted-foreground">Călătorie</span>
-          <select
-            value={slug}
-            onChange={(e) => router.push(`/trip/${e.target.value}/settings`)}
-            className="w-full truncate bg-transparent text-[15px] font-medium text-foreground outline-none"
-          >
-            {switchableTrips.map((t) => (
-              <option key={t.slug} value={t.slug}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
 
       <div className="mb-6 flex rounded-xl bg-secondary p-1">
         {TABS.map((t) => (
