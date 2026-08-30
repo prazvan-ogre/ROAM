@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Loader2, Sparkles } from "lucide-react";
 import { createPublicTrip } from "@/lib/publicTripCreation";
 
@@ -35,7 +36,7 @@ export default function HomePage() {
     setSubmitting(true);
     try {
       const result = await createPublicTrip({ destination, startDate, durationDays, website });
-      router.push(`/trip/${result.slug}`);
+      router.push(`/trips?link=${result.slug}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nu am putut crea călătoria. Încearcă din nou.");
       setSubmitting(false);
@@ -140,6 +141,10 @@ export default function HomePage() {
           )}
         </button>
       </form>
+
+      <Link href="/trips" className="text-center text-[13px] font-medium text-muted-foreground underline">
+        Ai creat deja o călătorie? Vezi-le aici
+      </Link>
     </main>
   );
 }

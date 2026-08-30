@@ -611,6 +611,25 @@
   undiagnosable from a phone. Wrapped the whole handler so the real
   error is now logged server-side (visible in Vercel's function logs
   for this route) while the client still gets a safe generic message.
+- "Călătoriile mele" (product owner request): a trip's creator can now
+  find their history again from any device, not just the one used to
+  create it. `/` now redirects to `/trips?link=<slug>` after creating a
+  trip instead of straight into it. `/trips` asks for a phone number +
+  PIN the first time on a device (skippable via a "Sari peste" link,
+  right after creating a trip only); `app/api/account/route.ts`
+  (service-role key) creates or verifies a `creator_accounts` row
+  (PIN hashed with `node:crypto` scrypt, `src/lib/security/pin.ts` --
+  no new dependency), links the just-created trip to that account only
+  if the request's device id matches the trip's own
+  `created_by_device_id` (so a stranger can't claim someone else's trip
+  into their history by guessing its slug), and returns an account id
+  the client trusts from then on (`localStorage`, same accepted-risk
+  model as `device_id` itself -- deliberately not real auth, no OTP, no
+  session token). Revisiting `/trips` with that id already stored skips
+  straight to the list (`trips` is fully publicly readable, so no server
+  route is needed for the read side). New migration
+  `20260830090000_creator_accounts.sql`. `/` also links to `/trips`
+  directly, for someone returning without having just created anything.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
@@ -637,3 +656,10 @@
   still exhaust the daily cap. Content drafting for a new trip is a
   manual step (see the entry above) rather than a live API call, so
   there is no generation call left to verify end-to-end here.
+- "Călătoriile mele" (`app/api/account`) has no rate limiting on login
+  attempts, so a 4-digit PIN is brute-forceable against a known phone
+  number given enough requests -- acceptable for now since the only
+  thing at stake is a spot in someone's trip list (every trip is public
+  regardless), not content access. Phone numbers are also never
+  verified (no OTP) -- anyone can claim any number as long as they set
+  the PIN first.
