@@ -210,7 +210,7 @@ function TripsPageInner() {
           {trips.map((trip) => (
             <Link
               key={trip.id}
-              href={`/trip/${trip.slug}`}
+              href={trip.content_status === "ready" ? `/trip/${trip.slug}` : `/trip/${trip.slug}/settings`}
               className="flex items-center justify-between rounded-2xl border border-border bg-card px-5 py-4 transition-all active:scale-[0.99]"
             >
               <div className="min-w-0">

@@ -650,6 +650,15 @@
   Hidden entirely for the common case (a participant who only ever
   joined by device id and never created a "Călătoriile mele" account),
   and for an account tied to just one trip.
+- Tapping a not-yet-ready trip (`content_status` `pending`/`generating`/
+  `failed`) from `/trips` now opens that trip's Setări instead of its
+  Home page, showing the same "Pregătim {name}..." message as the Home
+  page's existing pending state (`app/trip/[slug]/page.tsx`) but with
+  the bottom nav still visible, so an admin or trip creator stays inside
+  the app instead of hitting a dead end and having to go back. Settings'
+  own load short-circuits on a non-`ready` trip before the "did this
+  device join yet" check, since neither profiles nor prize status mean
+  anything until content exists.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

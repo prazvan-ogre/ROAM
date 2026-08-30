@@ -18,7 +18,7 @@ import { getStoredAccountId, getStoredIsAdmin } from "@/lib/creatorAccount";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 
-type Step = "loading" | "error" | "not-joined" | "ready";
+type Step = "loading" | "error" | "not-joined" | "ready" | "content-pending";
 type Tab = "config" | "users" | "info";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -66,6 +66,15 @@ export default function SettingsPage() {
         const t = await getTripBySlug(slug);
         if (cancelled || !t) return;
         setTrip(t);
+
+        // Content (Discover/Battle) is drafted as a separate manual step
+        // after a publicly-created trip's row exists (see app/trip/[slug]/
+        // page.tsx) -- nothing else on this page (profiles, prize, tabs)
+        // is meaningful yet, so short-circuit before the join check below.
+        if (t.content_status !== "ready") {
+          setStep("content-pending");
+          return;
+        }
 
         const [list] = await Promise.all([loadProfiles(t.id), getPrizeStatus(t.id).then(setPrizeStatus)]);
         if (cancelled) return;
@@ -126,6 +135,17 @@ export default function SettingsPage() {
           Înapoi acasă
         </Link>
       </Centered>
+    );
+  }
+  if (step === "content-pending" && trip) {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-2 px-5 pb-32 pt-14">
+        <p className="text-center text-[17px] font-semibold text-foreground">Pregătim {trip.name}...</p>
+        <p className="mx-auto mt-2 max-w-xs text-center text-[14px] text-muted-foreground">
+          Întrebările și provocările pentru această călătorie sunt în lucru. Revino mai târziu.
+        </p>
+        <TripNav slug={slug} />
+      </main>
     );
   }
 
