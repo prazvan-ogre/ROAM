@@ -14,6 +14,20 @@ export async function getTripBySlug(slug: string): Promise<Trip | null> {
   return data;
 }
 
+// "Călătoriile mele" (app/trips/page.tsx) -- trips are publicly readable
+// (docs/DATABASE.md "Security model"), so this is a plain filtered read
+// with the anon key, no server route needed.
+export async function getTripsForAccount(accountId: string): Promise<Trip[]> {
+  const { data, error } = await supabase
+    .from("trips")
+    .select("*")
+    .eq("created_by_account_id", accountId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
 // Trip day is 1-indexed and clamped to [1, duration_days] so a stale
 // device clock or a trip that hasn't started yet doesn't produce day 0
 // or a day past the end of the pilot.

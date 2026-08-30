@@ -85,6 +85,29 @@ hidden as Kassandra's seed content was before its own review pass
 then, the trip's Home page shows a "still being put together" state
 instead of an empty dashboard.
 
+After a trip is created, `/` redirects to `/trips?link=<slug>` rather
+than straight into the trip -- product owner request: someone who
+creates a public trip should be able to find it again later, from any
+device, not just the one they used to create it (`trips.
+created_by_device_id` alone can't survive that). `/trips` ("Călătoriile
+mele") asks for a phone number + PIN the first time on a given device;
+`app/api/account/route.ts` (service-role key, same reasoning as trip
+creation) either creates a `creator_accounts` row or verifies an
+existing one's PIN, links the just-created trip to that account (only
+if the request's `deviceId` matches the trip's own
+`created_by_device_id` -- a cheap check against linking someone else's
+trip by guessing its slug), and returns an account id that the client
+trusts from then on (stored in localStorage, same model as `device_id`
+itself). Revisiting `/trips` with that id already stored skips the
+phone/PIN step and reads every trip tied to the account directly
+(`trips` is fully publicly readable, so no server route is needed for
+the read side). This is explicitly not real authentication -- no OTP,
+no session token -- see `docs/DATABASE.md` "Security model" point 7 for
+the accepted-risk reasoning. Skipping the phone/PIN step (a "Sari
+peste" link, shown only right after creating a trip) is always
+available; the trip still exists and still works, it just won't show up
+in anyone's "Călătoriile mele" list later.
+
 ## Environments
 
 | Environment | Frontend | Database |

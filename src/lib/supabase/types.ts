@@ -35,6 +35,7 @@ export interface Database {
           location_info: string | null;
           prize: string | null;
           created_by_device_id: string | null;
+          created_by_account_id: string | null;
           content_status: TripContentStatus;
           is_active: boolean;
           is_demo: boolean;
@@ -220,6 +221,15 @@ export interface Database {
           created_at: string;
         },
         "trip_id" | "event_name"
+      >;
+      creator_accounts: TableDef<
+        {
+          id: string;
+          phone_number: string;
+          pin_hash: string;
+          created_at: string;
+        },
+        "phone_number" | "pin_hash"
       >;
     };
     Views: Record<string, never>;
