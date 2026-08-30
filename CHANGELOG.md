@@ -638,6 +638,10 @@
   of only the trips linked to it. No new data exposure -- `trips` was
   already fully public -- this only changes which rows the client
   chooses to render for that account.
+- Fixed: the seeded admin phone number was wrong. New migration
+  `20260830110000_replace_admin_account.sql` demotes `0721345678` back
+  to a normal account and promotes `0721234567` (PIN `1234`) as the sole
+  admin instead.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
