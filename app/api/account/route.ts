@@ -38,25 +38,28 @@ async function handleAccount(request: Request): Promise<Response> {
 
   const { data: existing, error: lookupError } = await admin
     .from("creator_accounts")
-    .select("id, pin_hash")
+    .select("id, pin_hash, is_admin")
     .eq("phone_number", normalizedPhone)
     .maybeSingle();
   if (lookupError) throw lookupError;
 
   let accountId: string;
+  let isAdmin: boolean;
   if (existing) {
     if (!verifyPin(pin, existing.pin_hash)) {
       return NextResponse.json({ error: "Număr de telefon sau PIN incorect." }, { status: 401 });
     }
     accountId = existing.id;
+    isAdmin = existing.is_admin;
   } else {
     const { data: created, error: insertError } = await admin
       .from("creator_accounts")
       .insert({ phone_number: normalizedPhone, pin_hash: hashPin(pin) })
-      .select("id")
+      .select("id, is_admin")
       .single();
     if (insertError) throw insertError;
     accountId = created.id;
+    isAdmin = created.is_admin;
   }
 
   // Linking is best-effort: only if this exact device created that exact
@@ -72,5 +75,5 @@ async function handleAccount(request: Request): Promise<Response> {
       .is("created_by_account_id", null);
   }
 
-  return NextResponse.json({ accountId });
+  return NextResponse.json({ accountId, isAdmin });
 }

@@ -630,6 +630,14 @@
   route is needed for the read side). New migration
   `20260830090000_creator_accounts.sql`. `/` also links to `/trips`
   directly, for someone returning without having just created anything.
+- Admin view on `/trips`: a `creator_accounts.is_admin` flag (new
+  migration `20260830100000_admin_account.sql`, seeded for phone
+  `0721345678` / PIN `1234`) makes that one account, once logged in
+  through the same phone+PIN flow, see every trip and every pending
+  request on the platform (`getAllTrips()` in `src/lib/trip.ts`) instead
+  of only the trips linked to it. No new data exposure -- `trips` was
+  already fully public -- this only changes which rows the client
+  chooses to render for that account.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

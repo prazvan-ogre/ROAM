@@ -1,6 +1,7 @@
 import { getDeviceId } from "./device";
 
 const STORAGE_KEY = "roam_creator_account_id";
+const ADMIN_STORAGE_KEY = "roam_creator_account_is_admin";
 
 // Deliberately the same trust model as device_id (docs/DATABASE.md
 // "Security model"): the server verifies the phone+PIN once
@@ -21,6 +22,21 @@ export function setStoredAccountId(accountId: string): void {
 export function clearStoredAccountId(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(STORAGE_KEY);
+  window.localStorage.removeItem(ADMIN_STORAGE_KEY);
+}
+
+export function getStoredIsAdmin(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(ADMIN_STORAGE_KEY) === "1";
+}
+
+function setStoredIsAdmin(isAdmin: boolean): void {
+  if (typeof window === "undefined") return;
+  if (isAdmin) {
+    window.localStorage.setItem(ADMIN_STORAGE_KEY, "1");
+  } else {
+    window.localStorage.removeItem(ADMIN_STORAGE_KEY);
+  }
 }
 
 export interface AuthenticateInput {
@@ -42,5 +58,6 @@ export async function authenticateCreatorAccount(input: AuthenticateInput): Prom
   }
   const accountId = body.accountId as string;
   setStoredAccountId(accountId);
+  setStoredIsAdmin(Boolean(body.isAdmin));
   return accountId;
 }

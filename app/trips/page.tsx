@@ -4,8 +4,13 @@ import { Suspense, useCallback, useEffect, useState, type FormEvent } from "reac
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, LogOut, Plus } from "lucide-react";
-import { getTripsForAccount, type Trip } from "@/lib/trip";
-import { authenticateCreatorAccount, clearStoredAccountId, getStoredAccountId } from "@/lib/creatorAccount";
+import { getAllTrips, getTripsForAccount, type Trip } from "@/lib/trip";
+import {
+  authenticateCreatorAccount,
+  clearStoredAccountId,
+  getStoredAccountId,
+  getStoredIsAdmin,
+} from "@/lib/creatorAccount";
 
 // This page has no dynamic route segment, so Next would otherwise try to
 // statically prerender it at build time -- which eagerly loads the
@@ -47,13 +52,16 @@ function TripsPageInner() {
 
   const [step, setStep] = useState<Step>("loading");
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [pin, setPin] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authenticating, setAuthenticating] = useState(false);
 
   const loadTrips = useCallback(async (accountId: string) => {
-    const list = await getTripsForAccount(accountId);
+    const admin = getStoredIsAdmin();
+    const list = admin ? await getAllTrips() : await getTripsForAccount(accountId);
+    setIsAdmin(admin);
     setTrips(list);
     setStep("list");
   }, []);
@@ -89,6 +97,7 @@ function TripsPageInner() {
   function handleLogOut() {
     clearStoredAccountId();
     setTrips([]);
+    setIsAdmin(false);
     setPhoneNumber("");
     setPin("");
     setStep("auth");
@@ -175,7 +184,16 @@ function TripsPageInner() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-5 pb-20 pt-14">
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] font-bold tracking-tight text-foreground">Călătoriile mele</h1>
+        <div>
+          <h1 className="text-[28px] font-bold tracking-tight text-foreground">
+            {isAdmin ? "Toate călătoriile" : "Călătoriile mele"}
+          </h1>
+          {isAdmin && (
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              Cont admin -- toate solicitările și călătoriile de pe platformă.
+            </p>
+          )}
+        </div>
         <button
           onClick={handleLogOut}
           className="flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground"

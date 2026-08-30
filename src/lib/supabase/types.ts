@@ -227,6 +227,7 @@ export interface Database {
           id: string;
           phone_number: string;
           pin_hash: string;
+          is_admin: boolean;
           created_at: string;
         },
         "phone_number" | "pin_hash"

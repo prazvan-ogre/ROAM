@@ -166,6 +166,16 @@ Row Level Security is the actual access boundary:
    posture as `participants`/`device_id`: fine while nothing sensitive
    rides on it, real auth (e.g. Supabase Auth's phone/OTP flow) is the
    upgrade path if that changes.
+8. **`creator_accounts.is_admin` gives one account an unfiltered view of
+   `/trips`** — same login (phone + PIN) and the same client-trusted flag
+   model as point 7, just one boolean further: `app/api/account/route.ts`
+   returns `isAdmin` alongside the account id, `src/lib/creatorAccount.ts`
+   stores it in `localStorage`, and `app/trips/page.tsx` calls
+   `getAllTrips()` instead of filtering by `created_by_account_id` when
+   it's set — so that one account sees every trip (and every pending
+   request) on the platform, not just its own. Still no new access to
+   anything not already public: `trips` was already fully readable by
+   anon, this only changes which rows the *client* chooses to render.
 
 ## Migrations
 
@@ -183,6 +193,7 @@ Row Level Security is the actual access boundary:
 - `supabase/migrations/20260827200000_fix_trip_tally_reveal_leak.sql` — second bug fix for `trip_battle_win_tally()`, found while verifying the daily score against production: it counted every battle with any `battle_scores` rows at all, with no check on whether that evening's own 15-minute reveal window (`getBattleWindowStatus()` in `src/lib/battle.ts`) had closed — so the cumulative "Scor total" tally already counted tonight's in-progress (possibly one-answer-old) outcome as a win, even though "Scor zilnic" on the same page correctly stays hidden for those 15 minutes. Fixed by excluding a has-individual-scoring battle from the tally until `now() >= first individual answer + 15 minutes`, exactly matching the app's own reveal rule; legacy (pre-individual-scoring) battles never had a reveal window and stay counted unconditionally.
 - `supabase/migrations/20260828100000_public_trip_creation.sql` — `trips.created_by_device_id` and `trips.content_status` (`pending`/`generating`/`ready`/`failed`, default `ready` so existing trips are unaffected), plus indexes on `created_at` and `(created_by_device_id, created_at)`. Backs the public trip-creation flow (`app/page.tsx` → `app/api/trips/create`, see "Security model" point 6 above) — no new RLS policies, since that route writes through the service-role key like every other content write.
 - `supabase/migrations/20260830090000_creator_accounts.sql` — the `creator_accounts` table (phone number + PIN hash, RLS enabled with zero policies — reachable only via the service-role key) and `trips.created_by_account_id`, so a trip's creator can see their history from any device (`app/trips/page.tsx` → `app/api/trips/create` and `app/api/account`, see "Security model" point 7 above).
+- `supabase/migrations/20260830100000_admin_account.sql` — `creator_accounts.is_admin` (default `false`) and a seeded admin row (phone `0721345678`, PIN `1234`) with it set `true`, so that account sees every trip/request on `/trips` instead of only its own (see "Security model" point 8 above).
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`
