@@ -16,6 +16,108 @@ export async function POST(request: Request) {
   }
 }
 
+// Reads back an already-verified account's phone number for display in
+// Setări > Utilizatori (app/trip/[slug]/settings/page.tsx) -- the
+// account id is client-trusted the same way it already is everywhere
+// else once logged in (docs/DATABASE.md "Security model"), so no PIN
+// re-entry is required just to view/edit it. Never returns pin_hash --
+// it's a one-way scrypt hash (src/lib/security/pin.ts) that can't be
+// turned back into the original PIN to show it, which is why editing a
+// PIN below is "set a new one", never "reveal the current one".
+export async function GET(request: Request) {
+  try {
+    const accountId = new URL(request.url).searchParams.get("accountId");
+    if (!accountId) return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("creator_accounts")
+      .select("phone_number, display_name, is_admin")
+      .eq("id", accountId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return NextResponse.json({ error: "Contul nu a fost găsit." }, { status: 404 });
+
+    return NextResponse.json({
+      phoneNumber: data.phone_number,
+      displayName: data.display_name,
+      isAdmin: data.is_admin,
+    });
+  } catch (err) {
+    console.error("Account lookup failed", err);
+    return NextResponse.json({ error: "Nu am putut încărca contul. Încearcă din nou." }, { status: 500 });
+  }
+}
+
+// Updates phone number and/or PIN for an already-verified account --
+// same client-trusted accountId model as GET above, no current-PIN
+// confirmation required (consistent with the rest of this app's
+// accepted-risk posture, not a place to introduce a stricter one-off
+// rule). Either field is optional so the caller can send just one.
+export async function PATCH(request: Request) {
+  try {
+    return await handleUpdateAccount(request);
+  } catch (err) {
+    console.error("Account update failed", err);
+    return NextResponse.json({ error: "Nu am putut salva modificările. Încearcă din nou." }, { status: 500 });
+  }
+}
+
+async function handleUpdateAccount(request: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+  }
+
+  const { accountId, phoneNumber, pin } = (body ?? {}) as Record<string, unknown>;
+  if (typeof accountId !== "string" || !accountId.trim()) {
+    return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+  }
+
+  const update: { phone_number?: string; pin_hash?: string } = {};
+
+  if (phoneNumber !== undefined) {
+    if (typeof phoneNumber !== "string" || !PHONE_PATTERN.test(phoneNumber.trim())) {
+      return NextResponse.json({ error: "Introdu un număr de telefon valid." }, { status: 400 });
+    }
+    update.phone_number = phoneNumber.trim();
+  }
+  if (pin !== undefined) {
+    if (typeof pin !== "string" || !PIN_PATTERN.test(pin)) {
+      return NextResponse.json({ error: "PIN-ul trebuie să aibă 4-6 cifre." }, { status: 400 });
+    }
+    update.pin_hash = hashPin(pin);
+  }
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: "Nimic de salvat." }, { status: 400 });
+  }
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("creator_accounts")
+    .update(update)
+    .eq("id", accountId)
+    .select("phone_number, display_name, is_admin")
+    .maybeSingle();
+
+  if (error) {
+    // Unique violation on phone_number.
+    if (error.code === "23505") {
+      return NextResponse.json({ error: "Acest număr de telefon este deja folosit de alt cont." }, { status: 409 });
+    }
+    throw error;
+  }
+  if (!data) return NextResponse.json({ error: "Contul nu a fost găsit." }, { status: 404 });
+
+  return NextResponse.json({
+    phoneNumber: data.phone_number,
+    displayName: data.display_name,
+    isAdmin: data.is_admin,
+  });
+}
+
 async function handleAccount(request: Request): Promise<Response> {
   let body: unknown;
   try {

@@ -721,6 +721,18 @@
   find this trip again later. Closes on outside click or Escape. Renders
   nothing until this device has actually joined the trip (no profile to
   show yet).
+- Setări > Utilizatori: editing the adult profile linked to this
+  device's "Călătoriile mele" account now also shows that account's
+  phone number and PIN, both editable. Phone number is pre-filled with
+  the real value (new `GET /api/account`); PIN is a "set a new one"
+  password field (eye-icon toggle to reveal what you're typing) that
+  starts blank and, left blank, keeps the current PIN unchanged -- it
+  can never be pre-filled with the actual current PIN, which is stored
+  as a one-way hash and was never recoverable in the first place. Saving
+  updates the account via a new `PATCH /api/account`, same
+  client-trusted-accountId model as the rest of "Călătoriile mele" (no
+  re-entering the current PIN required); a phone number already used by
+  another account surfaces a clear error instead of a generic one.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

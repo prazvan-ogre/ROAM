@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Plus, MapPin, Calendar, Trophy, Check } from "lucide-react";
+import { Plus, MapPin, Calendar, Trophy, Check, Eye, EyeOff } from "lucide-react";
 import { getAllTrips, getTripBySlug, getTripsForAccount, type Trip } from "@/lib/trip";
 import {
   listProfilesForDevice,
@@ -14,7 +14,7 @@ import {
 } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
-import { getStoredAccountId, getStoredIsAdmin } from "@/lib/creatorAccount";
+import { getAccountDetails, getStoredAccountId, getStoredIsAdmin, updateAccountDetails } from "@/lib/creatorAccount";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { PendingTripModal } from "@/components/PendingTripModal";
@@ -509,14 +509,39 @@ function EditProfileForm({
   const [age, setAge] = useState(profile.age?.toString() ?? "");
   const [error, setError] = useState<string | null>(null);
 
+  // Only the adult this device's "Călătoriile mele" account belongs to
+  // gets phone/PIN fields here -- children never go through account
+  // creation. accountId is read once (not re-checked on every render)
+  // since it doesn't change while this form is open.
+  const [accountId] = useState(() => getStoredAccountId());
+  const showAccountFields = profile.role === "adult" && Boolean(accountId);
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [pin, setPin] = useState("");
+  const [showPin, setShowPin] = useState(false);
+
+  useEffect(() => {
+    if (!showAccountFields || !accountId) return;
+    getAccountDetails(accountId)
+      .then((details) => setPhoneNumber(details.phoneNumber))
+      .catch(() => undefined);
+    // Only ever needs to run once per mount of this form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     setError(null);
     try {
       await onSave(profile.id, name.trim(), role, role === "child" ? Number(age) || null : null);
-    } catch {
-      setError("Nu s-a putut salva. Încearcă din nou.");
+      if (showAccountFields && accountId) {
+        await updateAccountDetails(accountId, {
+          phoneNumber: phoneNumber.trim(),
+          pin: pin.trim() ? pin.trim() : undefined,
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Nu s-a putut salva. Încearcă din nou.");
     }
   }
 
@@ -557,6 +582,42 @@ function EditProfileForm({
           value={age}
           onChange={(e) => setAge(e.target.value)}
         />
+      )}
+
+      {showAccountFields && (
+        <>
+          <div className="mt-1 border-t border-secondary pt-3">
+            <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
+              Contul &quot;Călătoriile mele&quot;
+            </p>
+          </div>
+          <input
+            className="rounded-xl border border-border bg-background px-4 py-3 text-[15px] text-foreground outline-none transition-colors focus:border-primary"
+            placeholder="Număr de telefon"
+            type="tel"
+            value={phoneNumber}
+            onChange={(e) => setPhoneNumber(e.target.value)}
+          />
+          <div className="relative">
+            <input
+              className="w-full rounded-xl border border-border bg-background px-4 py-3 pr-11 text-[15px] text-foreground outline-none transition-colors focus:border-primary"
+              placeholder="PIN nou (lasă gol ca să-l păstrezi)"
+              type={showPin ? "text" : "password"}
+              inputMode="numeric"
+              pattern="[0-9]{4,6}"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPin((v) => !v)}
+              aria-label={showPin ? "Ascunde PIN-ul" : "Arată PIN-ul"}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            >
+              {showPin ? <EyeOff size={17} /> : <Eye size={17} />}
+            </button>
+          </div>
+        </>
       )}
 
       {error && <p className="text-[13px] text-destructive">{error}</p>}

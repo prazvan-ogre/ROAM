@@ -75,3 +75,41 @@ export async function authenticateCreatorAccount(input: AuthenticateInput): Prom
   setStoredIsAdmin(Boolean(body.isAdmin));
   return { accountId, isAdmin: Boolean(body.isAdmin), displayName: body.displayName ?? null };
 }
+
+export interface AccountDetails {
+  phoneNumber: string;
+  displayName: string | null;
+  isAdmin: boolean;
+}
+
+// Setări > Utilizatori (app/trip/[slug]/settings/page.tsx) reads this
+// back to show the account's current phone number when editing the
+// adult profile linked to it. Never returns the PIN -- it's stored as a
+// one-way hash (src/lib/security/pin.ts), so it can only ever be *set*,
+// never displayed back.
+export async function getAccountDetails(accountId: string): Promise<AccountDetails> {
+  const response = await fetch(`/api/account?accountId=${encodeURIComponent(accountId)}`);
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error ?? "Nu am putut încărca contul.");
+  }
+  return { phoneNumber: body.phoneNumber, displayName: body.displayName ?? null, isAdmin: Boolean(body.isAdmin) };
+}
+
+export interface UpdateAccountInput {
+  phoneNumber?: string;
+  pin?: string;
+}
+
+export async function updateAccountDetails(accountId: string, input: UpdateAccountInput): Promise<AccountDetails> {
+  const response = await fetch("/api/account", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ accountId, ...input }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error ?? "Nu am putut salva modificările.");
+  }
+  return { phoneNumber: body.phoneNumber, displayName: body.displayName ?? null, isAdmin: Boolean(body.isAdmin) };
+}

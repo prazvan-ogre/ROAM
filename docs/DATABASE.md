@@ -192,6 +192,18 @@ Row Level Security is the actual access boundary:
    failure here doesn't block getting into "Călătoriile mele", it just
    means they'll go through the onboarding wizard normally once the
    trip's content is ready.
+10. **Editing the linked adult's profile in Setări > Utilizatori can also
+    edit that device's account** (phone number and/or PIN) — new `GET`/
+    `PATCH` handlers on `app/api/account/route.ts`, same client-trusted
+    accountId model as everywhere else here (no current-PIN re-entry
+    required). `GET` never returns `pin_hash` — it's a one-way scrypt
+    hash (`src/lib/security/pin.ts`), so the PIN field in that form is
+    always a blank "set a new one" input, never a display of the current
+    value, no matter how it's toggled visible. Only shown when editing
+    the participant whose `role` is `adult` and this device has an
+    account at all (`getStoredAccountId()`); a phone number collision
+    with another account surfaces the same unique-constraint error as
+    account creation does.
 
 ## Migrations
 
