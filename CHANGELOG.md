@@ -649,7 +649,8 @@
   the same list `/trips` shows — reachable without leaving the trip
   you're in. Hidden entirely for the common case (a participant who only
   ever joined by device id and never created a "Călătoriile mele"
-  account).
+  account). The trip whose Setări you're currently viewing is marked
+  with a checkmark and a highlighted border in that list.
 - Tapping a not-yet-ready trip (`content_status` `pending`/`generating`/
   `failed`) from `/trips` now opens that trip's Setări instead of its
   Home page, showing the same "Pregătim {name}..." message as the Home

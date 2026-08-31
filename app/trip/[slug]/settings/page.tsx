@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Plus, MapPin, Calendar, Trophy } from "lucide-react";
+import { Plus, MapPin, Calendar, Trophy, Check } from "lucide-react";
 import { getAllTrips, getTripBySlug, getTripsForAccount, type Trip } from "@/lib/trip";
 import {
   listProfilesForDevice,
@@ -172,7 +172,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {tab === "trips" && <TripsSection trips={accountTrips} isAdmin={isAdmin} />}
+      {tab === "trips" && <TripsSection trips={accountTrips} isAdmin={isAdmin} currentSlug={slug} />}
 
       {tab === "config" && trip && <ConfigSection trip={trip} prizeStatus={prizeStatus} />}
 
@@ -209,7 +209,15 @@ const TRIP_STATUS_LABEL: Record<Trip["content_status"], string> = {
   failed: "Eșuat",
 };
 
-function TripsSection({ trips, isAdmin }: { trips: Trip[]; isAdmin: boolean }) {
+function TripsSection({
+  trips,
+  isAdmin,
+  currentSlug,
+}: {
+  trips: Trip[];
+  isAdmin: boolean;
+  currentSlug: string;
+}) {
   return (
     <div className="flex flex-col gap-3">
       {isAdmin && (
@@ -221,31 +229,43 @@ function TripsSection({ trips, isAdmin }: { trips: Trip[]; isAdmin: boolean }) {
       {trips.length === 0 ? (
         <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
       ) : (
-        trips.map((t) => (
-          <Link
-            key={t.id}
-            href={t.content_status === "ready" ? `/trip/${t.slug}` : `/trip/${t.slug}/settings`}
-            className="flex items-center justify-between rounded-2xl border border-border bg-card px-5 py-4 transition-all active:scale-[0.99]"
-          >
-            <div className="min-w-0">
-              <p className="truncate text-[16px] font-semibold text-foreground">{t.name}</p>
-              <p className="text-[13px] text-muted-foreground">
-                {t.start_date} · {t.duration_days} zile
-              </p>
-            </div>
-            <span
-              className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
-                t.content_status === "ready"
-                  ? "bg-accent text-primary"
-                  : t.content_status === "failed"
-                    ? "bg-destructive/10 text-destructive"
-                    : "bg-secondary text-muted-foreground"
+        trips.map((t) => {
+          const isCurrent = t.slug === currentSlug;
+          return (
+            <Link
+              key={t.id}
+              href={t.content_status === "ready" ? `/trip/${t.slug}` : `/trip/${t.slug}/settings`}
+              className={`flex items-center justify-between rounded-2xl border px-5 py-4 transition-all active:scale-[0.99] ${
+                isCurrent ? "border-primary bg-primary/5" : "border-border bg-card"
               }`}
             >
-              {TRIP_STATUS_LABEL[t.content_status]}
-            </span>
-          </Link>
-        ))
+              <div className="flex min-w-0 items-center gap-2.5">
+                {isCurrent && (
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <Check size={13} strokeWidth={3} />
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-[16px] font-semibold text-foreground">{t.name}</p>
+                  <p className="text-[13px] text-muted-foreground">
+                    {t.start_date} · {t.duration_days} zile
+                  </p>
+                </div>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
+                  t.content_status === "ready"
+                    ? "bg-accent text-primary"
+                    : t.content_status === "failed"
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-secondary text-muted-foreground"
+                }`}
+              >
+                {TRIP_STATUS_LABEL[t.content_status]}
+              </span>
+            </Link>
+          );
+        })
       )}
 
       <Link
