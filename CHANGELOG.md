@@ -733,6 +733,12 @@
   client-trusted-accountId model as the rest of "Călătoriile mele" (no
   re-entering the current PIN required); a phone number already used by
   another account surfaces a clear error instead of a generic one.
+- Catch-up (`app/trip/[slug]/catchup/page.tsx`) no longer asks "Cine
+  recuperează?" first -- it resolves the answering profile the same way
+  the global `ProfileMenu` does (stored active profile for this trip,
+  falling back to this device's first one) and goes straight to the
+  pending questions. To answer as someone else, switch the active
+  profile top-right first (`ProfileMenu`'s "Schimbă profilul").
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
