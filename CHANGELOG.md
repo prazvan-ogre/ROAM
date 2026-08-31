@@ -774,6 +774,19 @@
   and `src/components/BattleFlow.tsx`. Both now live once in a new
   `src/lib/constants.ts` and are imported everywhere they're used, so a
   label only needs to change in one place.
+- Added an automated regression suite for `battle_team_score()` and
+  `trip_battle_win_tally()` (`supabase/tests/battle_scoring.test.sql`,
+  run via the new `npm run test:sql`): both RPCs had real bugs ship
+  before (per-row averaging instead of per-participant, and the
+  cumulative tally leaking an in-progress evening's score before its
+  15-minute reveal window closed -- see the `20260827190000`/
+  `20260827200000` migrations), caught only by manual "verified on a
+  scratch Postgres" notes at the time. The suite reproduces both
+  historical bugs plus the tie-counts-for-both-teams rule as fixture
+  data and assertions inside a rolled-back transaction (no data left
+  behind), and now runs on every PR in CI against a throwaway
+  `postgres:16` service container with all migrations applied first
+  (new `battle-scoring-tests` job in `.github/workflows/ci.yml`).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

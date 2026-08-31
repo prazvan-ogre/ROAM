@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:sql": "psql -v ON_ERROR_STOP=1 -f supabase/tests/battle_scoring.test.sql"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
