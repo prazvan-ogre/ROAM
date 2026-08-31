@@ -14,18 +14,11 @@ import {
 } from "@/lib/history";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
+import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
 
 type Step = "loading" | "error" | "not-joined" | "ready";
 
-const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
 const SLOT_ICON: Record<string, typeof Sun> = { morning: Sun, lunch: Utensils };
-const EXTRA_TYPE_LABEL: Record<string, string> = {
-  know: "ȘTIAI CĂ",
-  think: "GÂNDEȘTE-TE",
-  connect: "CONEXIUNE",
-  ask: "ÎNTREABĂ",
-  explore: "EXPLOREAZĂ",
-};
 const FINAL_TAB = "final";
 
 export default function QuestionsPage() {
@@ -239,7 +232,7 @@ function DiscoverRow({
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {SLOT_LABEL[item.question.slot ?? ""] ?? ""}
+            {(SLOT_LABEL as Record<string, string>)[item.question.slot ?? ""] ?? ""}
           </p>
           <p className="mt-0.5 text-[15px] font-medium leading-snug text-foreground">{item.question.prompt}</p>
         </div>

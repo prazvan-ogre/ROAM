@@ -757,6 +757,23 @@
   actually there for whoever it was about to send in (e.g. a child has
   pending ones but the active profile is the parent, who has none).
   Now checks the same active profile catch-up itself resolves to.
+- Performance: `loadBattleContent` (`src/lib/battle.ts`) fired 1 query for
+  a battle's questions plus 2 more *per question* (answer_options,
+  explore_links) -- an N+1 pattern that scaled linearly with question
+  count and was worst on `getTripHistory` (`src/lib/history.ts`), which
+  calls it once per past battle. Now batches both follow-up queries once
+  across all of a battle's question IDs (`.in("question_id", [...])`, run
+  in parallel via `Promise.all`) and groups the results back per question
+  in memory -- 3 total queries per battle regardless of question count,
+  same output shape.
+- Deduplicated the `SLOT_LABEL`/`EXTRA_TYPE_LABEL` display-label maps
+  that had been copy-pasted (with the same Romanian strings) across
+  `app/trip/[slug]/page.tsx` (as `COUNTDOWN_SLOT_LABEL`, including the
+  Battle label), `app/trip/[slug]/discover/[slot]/page.tsx`,
+  `app/trip/[slug]/catchup/page.tsx`, `app/trip/[slug]/questions/page.tsx`,
+  and `src/components/BattleFlow.tsx`. Both now live once in a new
+  `src/lib/constants.ts` and are imported everywhere they're used, so a
+  label only needs to change in one place.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

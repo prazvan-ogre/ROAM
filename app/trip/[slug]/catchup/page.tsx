@@ -16,17 +16,9 @@ import {
   type Response,
 } from "@/lib/discover";
 import { Btn, FlowHeader, Centered } from "@/components/ui";
+import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
 
 type Step = "loading" | "error" | "not-joined" | "empty" | "question" | "reveal" | "done";
-
-const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
-const EXTRA_TYPE_LABEL: Record<string, string> = {
-  know: "ȘTIAI CĂ",
-  think: "GÂNDEȘTE-TE",
-  connect: "CONEXIUNE",
-  ask: "ÎNTREABĂ",
-  explore: "EXPLOREAZĂ",
-};
 
 // Reachable any time from the Dashboard, unlike the wizard's own catch-up
 // step which only ever runs once, right when a participant is first
@@ -179,7 +171,7 @@ export default function CatchUpPage() {
   const current = questions[index];
   if (!current) return <Centered>Se încarcă...</Centered>;
   const progressLabel = `Ziua ${current.question.day_number} · ${
-    SLOT_LABEL[current.question.slot ?? ""] ?? "Battle"
+    SLOT_LABEL[current.question.slot ?? "battle"]
   } · ${index + 1}/${questions.length}`;
 
   if (step === "question") {

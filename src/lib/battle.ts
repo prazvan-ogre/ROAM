@@ -24,25 +24,30 @@ export async function loadBattleContent(battle: Battle): Promise<BattleContent> 
 
   if (questionsError) throw questionsError;
 
-  const withOptions: BattleQuestion[] = [];
-  for (const question of questions ?? []) {
-    const [{ data: options, error: optionsError }, { data: exploreLinks, error: exploreError }] =
-      await Promise.all([
-        supabase
-          .from("answer_options")
-          .select("*")
-          .eq("question_id", question.id)
-          .order("order_index", { ascending: true }),
-        supabase
-          .from("explore_links")
-          .select("*")
-          .eq("question_id", question.id)
-          .order("order_index", { ascending: true }),
-      ]);
-    if (optionsError) throw optionsError;
-    if (exploreError) throw exploreError;
-    withOptions.push({ question, options: options ?? [], exploreLinks: exploreLinks ?? [] });
-  }
+  const questionIds = (questions ?? []).map((q) => q.id);
+  const [{ data: options, error: optionsError }, { data: exploreLinks, error: exploreError }] =
+    questionIds.length === 0
+      ? [{ data: [], error: null } as const, { data: [], error: null } as const]
+      : await Promise.all([
+          supabase
+            .from("answer_options")
+            .select("*")
+            .in("question_id", questionIds)
+            .order("order_index", { ascending: true }),
+          supabase
+            .from("explore_links")
+            .select("*")
+            .in("question_id", questionIds)
+            .order("order_index", { ascending: true }),
+        ]);
+  if (optionsError) throw optionsError;
+  if (exploreError) throw exploreError;
+
+  const withOptions: BattleQuestion[] = (questions ?? []).map((question) => ({
+    question,
+    options: (options ?? []).filter((o) => o.question_id === question.id),
+    exploreLinks: (exploreLinks ?? []).filter((l) => l.question_id === question.id),
+  }));
 
   return { battle, questions: withOptions };
 }

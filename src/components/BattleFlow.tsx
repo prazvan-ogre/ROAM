@@ -12,16 +12,9 @@ import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import type { BattleTeam } from "@/lib/supabase/types";
 import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Btn, FlowHeader, OptionButton } from "@/components/ui";
+import { EXTRA_TYPE_LABEL } from "@/lib/constants";
 
 type Step = "intro" | "select-profile" | "closed" | "question" | "reveal" | "done";
-
-const EXTRA_TYPE_LABEL: Record<string, string> = {
-  know: "ȘTIAI CĂ",
-  think: "GÂNDEȘTE-TE",
-  connect: "CONEXIUNE",
-  ask: "ÎNTREABĂ",
-  explore: "EXPLOREAZĂ",
-};
 
 // Product owner spec: every participant answers individually now
 // (select their own profile, then work through this evening's Battle

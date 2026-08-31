@@ -20,18 +20,11 @@ import { trackEvent } from "@/lib/analytics";
 import type { QuestionSlot } from "@/lib/supabase/types";
 import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Btn, FlowHeader, OptionButton, Centered } from "@/components/ui";
+import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
 
 type Step = "loading" | "question" | "reveal" | "unavailable" | "closed" | "not-joined" | "error";
 
-const SLOT_LABEL: Record<QuestionSlot, string> = { morning: "Dimineață", lunch: "Prânz" };
 const SLOT_ICON: Record<QuestionSlot, typeof Sun> = { morning: Sun, lunch: Utensils };
-const EXTRA_TYPE_LABEL: Record<string, string> = {
-  know: "ȘTIAI CĂ",
-  think: "GÂNDEȘTE-TE",
-  connect: "CONEXIUNE",
-  ask: "ÎNTREABĂ",
-  explore: "EXPLOREAZĂ",
-};
 
 export default function DiscoverPage() {
   const { slug, slot } = useParams<{ slug: string; slot: string }>();

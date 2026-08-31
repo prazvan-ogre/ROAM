@@ -13,6 +13,7 @@ import { supabase } from "@/lib/supabase/client";
 import { getDailyBattle, getFinalBattle } from "@/lib/battle";
 import { getCatchUpQuestions } from "@/lib/discover";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
+import { SLOT_LABEL } from "@/lib/constants";
 
 interface SlotStatus {
   questionId: string | null;
@@ -373,12 +374,6 @@ function ProgressDots({ current, total }: { current: number; total: number }) {
   );
 }
 
-const COUNTDOWN_SLOT_LABEL: Record<string, string> = {
-  morning: "Dimineață",
-  lunch: "Prânz",
-  battle: "Battle",
-};
-
 function NextChallengeCountdown({ compact }: { compact?: boolean }) {
   const [now, setNow] = useState(() => new Date());
 
@@ -399,7 +394,7 @@ function NextChallengeCountdown({ compact }: { compact?: boolean }) {
       <div className="flex flex-col items-end gap-0.5">
         <div className="flex items-center gap-1">
           <Clock size={11} className="text-muted-foreground" />
-          <span className="text-[11px] text-muted-foreground">{COUNTDOWN_SLOT_LABEL[next.slot]}</span>
+          <span className="text-[11px] text-muted-foreground">{SLOT_LABEL[next.slot]}</span>
         </div>
         <span className="font-mono text-[17px] font-semibold leading-none tracking-[0.03em] text-foreground">
           {pad(hours)}:{pad(minutes)}:{pad(seconds)}
@@ -411,7 +406,7 @@ function NextChallengeCountdown({ compact }: { compact?: boolean }) {
   return (
     <div className="text-center">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-        Următorul challenge: {COUNTDOWN_SLOT_LABEL[next.slot]}
+        Următorul challenge: {SLOT_LABEL[next.slot]}
       </p>
       <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
         {pad(hours)}:{pad(minutes)}:{pad(seconds)}
