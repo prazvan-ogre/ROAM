@@ -704,6 +704,20 @@
   instead of silently creating a second, blank account (that branch's UI
   has no name field to fall back on) — the plain `/trips` login (not
   right after creating a trip) is unaffected either way.
+- Global profile menu (new `src/components/ProfileMenu.tsx`, mounted
+  once in a new `app/trip/[slug]/layout.tsx` instead of per page):
+  floats top-right on every trip-scoped screen (Home, Discover, Battle,
+  Catchup, Final, Leaderboard, Întrebări, Setări), showing the active
+  participant's initials avatar (+ name on desktop, avatar only on
+  mobile). Replaces the old ActiveProfileSwitcher that only lived on
+  Home's own header. Tapping it opens a compact dropdown: "Schimbă
+  profilul" (only shown when this device has a child profile on this
+  trip too) reopens the same adult/child switcher Home used to have
+  inline; "Creează cont" jumps to `/trips?link=<slug>` -- the existing
+  "Călătoriile mele" phone+PIN flow -- so a participant (not just a
+  trip's creator) can link an account to find this trip again later.
+  Closes on outside click or Escape. Renders nothing until this device
+  has actually joined the trip (no profile to show yet).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
