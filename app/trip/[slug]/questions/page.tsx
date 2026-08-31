@@ -15,6 +15,7 @@ import {
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
+import { supabase } from "@/lib/supabase/client";
 
 type Step = "loading" | "error" | "not-joined" | "ready";
 
@@ -61,16 +62,25 @@ export default function QuestionsPage() {
 
     // Same staleness bug as the Scor page (leaderboard/page.tsx): a Battle
     // played, or a question answered, after this page's first fetch never
-    // showed up until a manual reload. Re-fetch periodically, and
-    // immediately when the tab regains focus.
-    const interval = setInterval(load, 30_000);
+    // showed up until a manual reload. Re-fetch on every new
+    // `responses`/`battle_scores` row (Realtime, see
+    // 20260831090000_realtime_publication.sql) instead of a fixed poll,
+    // plus immediately when the tab regains focus and on a slow fallback
+    // interval in case the socket drops without Postgres Changes noticing.
+    const channel = supabase
+      .channel(`questions:${slug}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "responses" }, load)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "battle_scores" }, load)
+      .subscribe();
+    const fallback = setInterval(load, 120_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") load();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      supabase.removeChannel(channel);
+      clearInterval(fallback);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [slug]);

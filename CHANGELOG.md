@@ -787,6 +787,17 @@
   behind), and now runs on every PR in CI against a throwaway
   `postgres:16` service container with all migrations applied first
   (new `battle-scoring-tests` job in `.github/workflows/ci.yml`).
+- Scor (`app/trip/[slug]/leaderboard/page.tsx`) and Întrebări
+  (`app/trip/[slug]/questions/page.tsx`) no longer poll every 30 seconds
+  to catch a new answer or a battle result becoming revealed -- both now
+  subscribe to Supabase Realtime (`postgres_changes` on `responses` and
+  `battle_scores` inserts) and refetch the instant a relevant row
+  appears, same as the existing tab-refocus refetch. A 2-minute interval
+  stays as a fallback in case the websocket drops without either page
+  noticing. New migration `20260831090000_realtime_publication.sql`
+  adds both tables to the `supabase_realtime` publication that Realtime
+  reads from -- without it, Postgres never emits the change events for
+  the subscriptions to receive, silently making them a no-op.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

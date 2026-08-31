@@ -9,6 +9,7 @@ import { getDailyBattle, getBattleWindowStatus, getBattleResult, getTripBattleWi
 import { getParticipantLeaderboard, type LeaderboardEntry } from "@/lib/discover";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
+import { supabase } from "@/lib/supabase/client";
 import type { BattleTeam } from "@/lib/supabase/types";
 
 type Step = "loading" | "error" | "not-joined" | "ready";
@@ -74,20 +75,29 @@ export default function LeaderboardPage() {
 
     // The evening's score can flip from hidden to revealed (the 15-minute
     // window in getBattleWindowStatus) while someone is just sitting on
-    // this screen -- without a refresh, "Scor zilnic" would stay frozen at
-    // 0-0 from whenever the page happened to load, even long after the
-    // real result became available. Re-fetch periodically, and immediately
-    // when the tab regains focus (e.g. coming back from another app).
-    const interval = setInterval(load, 30_000);
+    // this screen, and any answer anywhere moves the rankings -- without a
+    // refresh, this page would stay frozen at whatever it looked like when
+    // it happened to load. Re-fetch on every new `responses`/`battle_scores`
+    // row (Realtime, see 20260831090000_realtime_publication.sql) instead
+    // of a fixed poll, plus immediately when the tab regains focus and on
+    // a slow fallback interval in case the socket drops without Postgres
+    // Changes noticing.
+    const channel = supabase
+      .channel(`leaderboard:${slug}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "responses" }, load)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "battle_scores" }, load)
+      .subscribe();
+    const fallback = setInterval(load, 120_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") load();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      clearInterval(interval);
+      supabase.removeChannel(channel);
+      clearInterval(fallback);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [load]);
+  }, [load, slug]);
 
   if (step === "loading") return <Centered>Se încarcă...</Centered>;
   if (step === "error") {
