@@ -3,13 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, UserRoundPlus, UsersRound } from "lucide-react";
-import { getTripBySlug } from "@/lib/trip";
-import {
-  listProfilesForDevice,
-  getStoredActiveProfileId,
-  setStoredActiveProfileId,
-  type Participant,
-} from "@/lib/participant";
+import { getStoredActiveProfileId, setStoredActiveProfileId } from "@/lib/participant";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
 type View = "menu" | "switch";
 
@@ -26,27 +21,18 @@ export function ProfileMenu({ slug }: { slug: string }) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const [tripId, setTripId] = useState<string | null>(null);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
+  const { data: trip } = useTrip(slug);
+  const tripId = trip?.id ?? null;
+  const { data: profiles = [] } = useProfiles(tripId ?? undefined);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("menu");
 
-  const load = useCallback(async () => {
-    const trip = await getTripBySlug(slug);
-    if (!trip) return;
-    setTripId(trip.id);
-    const list = await listProfilesForDevice(trip.id);
-    setProfiles(list);
-    if (list.length > 0) {
-      const stored = getStoredActiveProfileId(trip.id);
-      setActiveId((list.find((p) => p.id === stored) ?? list[0]).id);
-    }
-  }, [slug]);
-
   useEffect(() => {
-    load().catch(() => undefined);
-  }, [load]);
+    if (!tripId || profiles.length === 0) return;
+    const stored = getStoredActiveProfileId(tripId);
+    setActiveId((profiles.find((p) => p.id === stored) ?? profiles[0]).id);
+  }, [tripId, profiles]);
 
   const closeMenu = useCallback(() => {
     setOpen(false);

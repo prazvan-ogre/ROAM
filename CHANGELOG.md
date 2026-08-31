@@ -798,6 +798,19 @@
   adds both tables to the `supabase_realtime` publication that Realtime
   reads from -- without it, Postgres never emits the change events for
   the subscriptions to receive, silently making them a no-op.
+- Added `swr` and a shared `useTrip`/`useProfiles` (`src/lib/hooks.ts`)
+  caching layer for the trip row and this device's profile list, keyed
+  on `["trip", slug]`/`["profiles", tripId]` so every consumer shares
+  one cache entry instead of firing its own request. `ProfileMenu`
+  (mounted once per trip in `app/trip/[slug]/layout.tsx`, alongside
+  every single trip page) is migrated to it first: it was independently
+  re-fetching the exact same trip+profiles data every page already
+  fetches for itself, a guaranteed duplicate request on every page load
+  with no possible cache hit before this. The 8 individual trip pages
+  still do their own inline fetch for now -- migrating them to the same
+  hooks (so navigating between them reads from cache instead of
+  re-fetching) is a natural follow-up, deliberately left for a separate
+  pass rather than rewriting every page's fetch/step-machine at once.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
