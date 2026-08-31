@@ -749,6 +749,14 @@
   after finishing a pass, since it's designed for everyone on the device
   to answer in turn -- only the upfront ask before the *first* person's
   turn is gone.
+- Fixed: the "Ai întrebări de recuperat" banner on Home
+  (`app/trip/[slug]/page.tsx`) checked *any* profile on the device for
+  pending catch-up questions, but tapping it now always sends in the
+  active profile only (matching catch-up's own new auto-resolved
+  behavior above) -- so it could promise catch-up questions that weren't
+  actually there for whoever it was about to send in (e.g. a child has
+  pending ones but the active profile is the parent, who has none).
+  Now checks the same active profile catch-up itself resolves to.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

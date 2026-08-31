@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Moon, Check, Clock, Trophy, History } from "lucide-react";
 import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, type Participant } from "@/lib/participant";
+import { listProfilesForDevice, getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { Centered } from "@/components/ui";
@@ -127,13 +127,20 @@ export default function TripHomePage() {
   // onboarding wizard right after a participant is created -- a returning
   // participant who joined earlier and missed some has no other way back
   // to them once the day rolls over. This surfaces that gap as a banner
-  // linking to /catchup, checked per profile since each has its own
-  // pending list.
+  // linking to /catchup -- checked for the active profile only (the same
+  // one /catchup itself now auto-resolves to, no more "Cine recuperează?"
+  // picker there), not "any profile on this device", so the banner never
+  // promises catch-up questions that aren't actually there for whoever
+  // it's about to send in.
   const loadCatchUpStatus = useCallback(async (tripId: string, day: number, list: Participant[]) => {
-    const perProfile = await Promise.all(
-      list.map((p) => getCatchUpQuestions(tripId, day, p.id)),
-    );
-    setHasCatchUp(perProfile.some((pending) => pending.length > 0));
+    if (list.length === 0) {
+      setHasCatchUp(false);
+      return;
+    }
+    const stored = getStoredActiveProfileId(tripId);
+    const activeProfile = list.find((p) => p.id === stored) ?? list[0];
+    const pending = await getCatchUpQuestions(tripId, day, activeProfile.id);
+    setHasCatchUp(pending.length > 0);
   }, []);
 
   useEffect(() => {
