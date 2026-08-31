@@ -19,7 +19,7 @@ import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { PendingTripModal } from "@/components/PendingTripModal";
 
-type Step = "loading" | "error" | "not-joined" | "ready" | "content-pending";
+type Step = "loading" | "error" | "not-joined" | "ready";
 type Tab = "trips" | "config" | "users" | "info";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -75,10 +75,22 @@ export default function SettingsPage() {
 
         // Content (Discover/Battle) is drafted as a separate manual step
         // after a publicly-created trip's row exists (see app/trip/[slug]/
-        // page.tsx) -- nothing else on this page (profiles, prize, tabs)
-        // is meaningful yet, so short-circuit before the join check below.
+        // page.tsx). Nothing in Configurare/Utilizatori is meaningful
+        // yet, so those tabs show a placeholder instead -- but Toate
+        // călătoriile still works, and is the default tab here, so
+        // whoever just created this trip lands somewhere useful instead
+        // of a dead end with no participants/content yet. Also skips the
+        // "did this device join yet" check below: joining doesn't mean
+        // anything for a trip with no Discover/Battle content to play.
         if (t.content_status !== "ready") {
-          setStep("content-pending");
+          // Default to Toate călătoriile for whoever can actually see it
+          // (just created/logged into this trip's account) -- otherwise
+          // (e.g. a shared link opened before having an account) land on
+          // Configurare instead, so the pending notice below shows under
+          // a tab that's actually visible in the tab strip.
+          setTab(getStoredAccountId() ? "trips" : "config");
+          await loadProfiles(t.id).catch(() => undefined);
+          setStep("ready");
           return;
         }
 
@@ -143,18 +155,6 @@ export default function SettingsPage() {
       </Centered>
     );
   }
-  if (step === "content-pending" && trip) {
-    return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-2 px-5 pb-32 pt-14">
-        <p className="text-center text-[17px] font-semibold text-foreground">Pregătim {trip.name}...</p>
-        <p className="mx-auto mt-2 max-w-xs text-center text-[14px] text-muted-foreground">
-          Întrebările și provocările pentru această călătorie sunt în lucru. Revino mai târziu.
-        </p>
-        <TripNav slug={slug} />
-      </main>
-    );
-  }
-
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-2 px-5 pb-32 pt-14">
       <h1 className="mb-4 text-[28px] font-semibold tracking-tight text-foreground">Setări</h1>
@@ -175,9 +175,13 @@ export default function SettingsPage() {
 
       {tab === "trips" && <TripsSection trips={accountTrips} isAdmin={isAdmin} currentSlug={slug} />}
 
-      {tab === "config" && trip && <ConfigSection trip={trip} prizeStatus={prizeStatus} />}
+      {tab === "config" && trip && (trip.content_status === "ready" ? (
+        <ConfigSection trip={trip} prizeStatus={prizeStatus} />
+      ) : (
+        <TripPendingNotice tripName={trip.name} />
+      ))}
 
-      {tab === "users" && (
+      {tab === "users" && trip && (trip.content_status === "ready" ? (
         <UsersSection
           profiles={profiles}
           editingId={editingId}
@@ -194,7 +198,9 @@ export default function SettingsPage() {
           onChildAgeChange={setChildAge}
           onAddChild={handleAddChild}
         />
-      )}
+      ) : (
+        <TripPendingNotice tripName={trip.name} />
+      ))}
 
       {tab === "info" && <InfoSection />}
 
@@ -209,6 +215,21 @@ const TRIP_STATUS_LABEL: Record<Trip["content_status"], string> = {
   generating: "În pregătire",
   failed: "Eșuat",
 };
+
+// Configurare/Utilizatori have nothing meaningful to show before a
+// trip's Discover/Battle content exists (see the load effect above) --
+// shown inline instead of blocking the whole page, so Toate călătoriile
+// stays reachable.
+function TripPendingNotice({ tripName }: { tripName: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card px-5 py-8 text-center">
+      <p className="text-[15px] font-semibold text-foreground">Pregătim {tripName}...</p>
+      <p className="mx-auto mt-2 max-w-xs text-[14px] text-muted-foreground">
+        Întrebările și provocările pentru această călătorie sunt în lucru. Revino mai târziu.
+      </p>
+    </div>
+  );
+}
 
 function TripsSection({
   trips,

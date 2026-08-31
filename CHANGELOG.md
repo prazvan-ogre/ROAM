@@ -657,6 +657,16 @@
   PendingTripModal.tsx`) over the current screen instead, and "OK" just
   closes it -- there's nothing to navigate to yet, so staying put is
   simpler than a dedicated pending screen.
+- After creating a trip, `/trips?link=<slug>`'s account step (Ai deja
+  cont?/phone+PIN, or "Sari peste") now lands inside that trip's Setări
+  (defaulting to the "Toate călătoriile" tab) instead of on the
+  standalone `/trips` list page. Setări itself no longer blocks entirely
+  on a not-yet-ready trip: Configurare/Utilizatori show the "Pregătim
+  {name}..." notice inline instead of their normal content, while Toate
+  călătoriile (and the tab bar/bottom nav around it) keeps working, so
+  the person who just created a trip lands somewhere useful rather than
+  a dead end with no content yet. The plain "Călătoriile mele" login (no
+  `link` param) is unaffected, still shows the list on `/trips`.
 - Tapping a not-yet-ready trip (`content_status` `pending`/`generating`/
   `failed`) from `/trips` now opens that trip's Setări instead of its
   Home page, showing the same "Pregătim {name}..." message as the Home

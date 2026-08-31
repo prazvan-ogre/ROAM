@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, LogOut, Plus } from "lucide-react";
 import { getAllTrips, getTripBySlug, getTripsForAccount, type Trip } from "@/lib/trip";
@@ -50,6 +50,7 @@ export default function TripsPage() {
 }
 
 function TripsPageInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const linkSlug = searchParams.get("link");
 
@@ -109,6 +110,15 @@ function TripsPageInner() {
         } catch (joinErr) {
           console.error("Auto-join after account creation failed", joinErr);
         }
+      }
+
+      // Right after creating a trip, land inside it (Setări > Toate
+      // călătoriile) instead of on this standalone page -- product owner
+      // request. The plain "Călătoriile mele" login (no linkSlug) still
+      // lands here, showing the list on this page as before.
+      if (linkSlug) {
+        router.push(`/trip/${linkSlug}/settings`);
+        return;
       }
 
       await loadTrips(result.accountId);
@@ -171,7 +181,7 @@ function TripsPageInner() {
               Nu, e prima dată
             </button>
             <Link
-              href={`/trip/${linkSlug}`}
+              href={`/trip/${linkSlug}/settings`}
               className="text-center text-[13px] font-medium text-muted-foreground underline"
             >
               Sari peste
@@ -249,7 +259,7 @@ function TripsPageInner() {
 
             {linkSlug && (
               <Link
-                href={`/trip/${linkSlug}`}
+                href={`/trip/${linkSlug}/settings`}
                 className="text-center text-[13px] font-medium text-muted-foreground underline"
               >
                 Sari peste
