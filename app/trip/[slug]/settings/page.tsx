@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Plus, MapPin, Calendar, Trophy } from "lucide-react";
-import { getTripBySlug, type Trip } from "@/lib/trip";
+import { getAllTrips, getTripBySlug, getTripsForAccount, type Trip } from "@/lib/trip";
 import {
   listProfilesForDevice,
   addChildProfile,
@@ -14,13 +14,15 @@ import {
 } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
+import { getStoredAccountId, getStoredIsAdmin } from "@/lib/creatorAccount";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 
 type Step = "loading" | "error" | "not-joined" | "ready" | "content-pending";
-type Tab = "config" | "users" | "info";
+type Tab = "trips" | "config" | "users" | "info";
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "trips", label: "Toate călătoriile" },
   { id: "config", label: "Configurare" },
   { id: "users", label: "Utilizatori" },
   { id: "info", label: "Info" },
@@ -38,6 +40,22 @@ export default function SettingsPage() {
   const [childAge, setChildAge] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
+  const [accountTrips, setAccountTrips] = useState<Trip[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // "Toate călătoriile" tab is only shown to whoever is logged into
+  // "Călătoriile mele" on this device (app/trips/page.tsx) -- most
+  // participants just join a trip by device id and never create that
+  // account, so this stays hidden for them.
+  const hasAccount = getStoredAccountId() !== null;
+  useEffect(() => {
+    const accountId = getStoredAccountId();
+    if (!accountId) return;
+    const admin = getStoredIsAdmin();
+    setIsAdmin(admin);
+    const list = admin ? getAllTrips() : getTripsForAccount(accountId);
+    list.then(setAccountTrips).catch(() => setAccountTrips([]));
+  }, []);
 
   const loadProfiles = useCallback(async (tripId: string) => {
     const list = await listProfilesForDevice(tripId);
@@ -141,7 +159,7 @@ export default function SettingsPage() {
       <h1 className="mb-4 text-[28px] font-semibold tracking-tight text-foreground">Setări</h1>
 
       <div className="mb-6 flex rounded-xl bg-secondary p-1">
-        {TABS.map((t) => (
+        {TABS.filter((t) => t.id !== "trips" || hasAccount).map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -153,6 +171,8 @@ export default function SettingsPage() {
           </button>
         ))}
       </div>
+
+      {tab === "trips" && <TripsSection trips={accountTrips} isAdmin={isAdmin} />}
 
       {tab === "config" && trip && <ConfigSection trip={trip} prizeStatus={prizeStatus} />}
 
@@ -179,6 +199,63 @@ export default function SettingsPage() {
 
       <TripNav slug={slug} />
     </main>
+  );
+}
+
+const TRIP_STATUS_LABEL: Record<Trip["content_status"], string> = {
+  ready: "Gata",
+  pending: "În pregătire",
+  generating: "În pregătire",
+  failed: "Eșuat",
+};
+
+function TripsSection({ trips, isAdmin }: { trips: Trip[]; isAdmin: boolean }) {
+  return (
+    <div className="flex flex-col gap-3">
+      {isAdmin && (
+        <p className="text-[13px] text-muted-foreground">
+          Cont admin -- toate solicitările și călătoriile de pe platformă.
+        </p>
+      )}
+
+      {trips.length === 0 ? (
+        <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
+      ) : (
+        trips.map((t) => (
+          <Link
+            key={t.id}
+            href={t.content_status === "ready" ? `/trip/${t.slug}` : `/trip/${t.slug}/settings`}
+            className="flex items-center justify-between rounded-2xl border border-border bg-card px-5 py-4 transition-all active:scale-[0.99]"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-[16px] font-semibold text-foreground">{t.name}</p>
+              <p className="text-[13px] text-muted-foreground">
+                {t.start_date} · {t.duration_days} zile
+              </p>
+            </div>
+            <span
+              className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
+                t.content_status === "ready"
+                  ? "bg-accent text-primary"
+                  : t.content_status === "failed"
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-secondary text-muted-foreground"
+              }`}
+            >
+              {TRIP_STATUS_LABEL[t.content_status]}
+            </span>
+          </Link>
+        ))
+      )}
+
+      <Link
+        href="/"
+        className="mt-2 flex items-center justify-center gap-2 rounded-2xl border border-border bg-card py-[14px] text-[15px] font-semibold text-foreground transition-all active:scale-[0.98]"
+      >
+        <Plus size={16} />
+        Creează o călătorie nouă
+      </Link>
+    </div>
   );
 }
 

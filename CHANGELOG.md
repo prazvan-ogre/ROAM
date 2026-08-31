@@ -642,13 +642,13 @@
   `20260830110000_replace_admin_account.sql` demotes `0721345678` back
   to a normal account and promotes `0721234567` (PIN `1234`) as the sole
   admin instead.
-- New "Călătorii" tab on the bottom nav (`src/components/TripNav.tsx`),
-  alongside Acasă/Scor/Întrebări/Setări: opens `/trips` directly from any
-  trip page, showing every trip available to that device's account
-  (their own trips, or every trip on the platform for the admin account)
-  plus "Creează o călătorie nouă" — no need to dig through Setări or go
-  back to `/`. Hidden entirely for the common case (a participant who
-  only ever joined by device id and never created a "Călătoriile mele"
+- New "Toate călătoriile" sub-tab on Setări (`app/trip/[slug]/settings/
+  page.tsx`), positioned first, before Configurare: shows every trip
+  available to that device's account (their own trips, or every trip on
+  the platform for the admin account) plus "Creează o călătorie nouă",
+  the same list `/trips` shows — reachable without leaving the trip
+  you're in. Hidden entirely for the common case (a participant who only
+  ever joined by device id and never created a "Călătoriile mele"
   account).
 - Tapping a not-yet-ready trip (`content_status` `pending`/`generating`/
   `failed`) from `/trips` now opens that trip's Setări instead of its
