@@ -87,7 +87,10 @@ export function ProfileMenu({ slug }: { slug: string }) {
 
   function handleCreateAccount() {
     closeMenu();
-    router.push(`/trips?link=${slug}`);
+    // name= skips the "Ai deja cont?" chooser on /trips straight to the
+    // name+phone+PIN form, pre-filled with this profile's name -- we
+    // already know who's asking, no need to ask twice.
+    router.push(`/trips?link=${slug}&name=${encodeURIComponent(active.display_name)}`);
   }
 
   return (

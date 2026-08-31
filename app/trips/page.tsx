@@ -45,11 +45,16 @@ function TripsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const linkSlug = searchParams.get("link");
+  // Set by ProfileMenu's "Creează cont" (src/components/ProfileMenu.tsx)
+  // -- we already know who's asking, so skip the "Ai deja cont?" chooser
+  // straight to the name+phone+PIN form, name pre-filled (still
+  // editable) instead of asked twice.
+  const prefilledName = searchParams.get("name");
 
   const [step, setStep] = useState<Step>("loading");
   const [isAdmin, setIsAdmin] = useState(false);
-  const [accountChoice, setAccountChoice] = useState<AccountChoice>("unknown");
-  const [displayName, setDisplayName] = useState("");
+  const [accountChoice, setAccountChoice] = useState<AccountChoice>(prefilledName ? "new" : "unknown");
+  const [displayName, setDisplayName] = useState(prefilledName ?? "");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [pin, setPin] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);

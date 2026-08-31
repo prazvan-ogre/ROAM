@@ -713,11 +713,14 @@
   Home's own header. Tapping it opens a compact dropdown: "Schimbă
   profilul" (only shown when this device has a child profile on this
   trip too) reopens the same adult/child switcher Home used to have
-  inline; "Creează cont" jumps to `/trips?link=<slug>` -- the existing
-  "Călătoriile mele" phone+PIN flow -- so a participant (not just a
-  trip's creator) can link an account to find this trip again later.
-  Closes on outside click or Escape. Renders nothing until this device
-  has actually joined the trip (no profile to show yet).
+  inline; "Creează cont" jumps straight to the name+phone+PIN form on
+  `/trips?link=<slug>` -- the existing "Călătoriile mele" flow, skipping
+  its "Ai deja cont?" chooser and pre-filling the name field with this
+  profile's name (still editable) since we already know who's asking --
+  so a participant (not just a trip's creator) can link an account to
+  find this trip again later. Closes on outside click or Escape. Renders
+  nothing until this device has actually joined the trip (no profile to
+  show yet).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
