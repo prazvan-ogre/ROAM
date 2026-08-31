@@ -739,6 +739,16 @@
   falling back to this device's first one) and goes straight to the
   pending questions. To answer as someone else, switch the active
   profile top-right first (`ProfileMenu`'s "Schimbă profilul").
+- Extended the same change to Discover (Dimineață/Prânz,
+  `app/trip/[slug]/discover/[slot]/page.tsx`) and Battle
+  (`src/components/BattleFlow.tsx`, both the daily and Final Battle):
+  neither asks "Cine răspunde?" anymore before the first question --
+  both resolve the active profile the same way (stored active profile,
+  falling back to this device's first one) and go straight in. Battle
+  still keeps its picker for the deliberate "Alt profil răspunde" button
+  after finishing a pass, since it's designed for everyone on the device
+  to answer in turn -- only the upfront ask before the *first* person's
+  turn is gone.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see
