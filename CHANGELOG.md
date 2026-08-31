@@ -667,6 +667,20 @@
   the person who just created a trip lands somewhere useful rather than
   a dead end with no content yet. The plain "Călătoriile mele" login (no
   `link` param) is unaffected, still shows the list on `/trips`.
+- Extended the above: the plain "Călătoriile mele" login also redirects
+  into a trip's Setări now, instead of showing the list on `/trips` --
+  the first `ready` trip in the account's list, or the most recent one
+  if none are ready yet. `/trips`'s own list only renders for the one
+  case with nowhere else to send you: an account with zero trips.
+  Setări also no longer hard-blocks with "Trebuie să te alături
+  călătoriei mai întâi" when this device hasn't joined a ready trip it
+  got redirected into (e.g. an admin/creator account that never
+  personally joined that particular trip) -- Configurare/Utilizatori
+  show a "not joined yet, alătură-te" notice instead, while Toate
+  călătoriile (the default tab in that case) keeps working. The
+  original hard block still applies to the one case with no better
+  option: arriving at a ready, unjoined trip's Setări with no account
+  at all (e.g. a bare shared link).
 - Tapping a not-yet-ready trip (`content_status` `pending`/`generating`/
   `failed`) from `/trips` now opens that trip's Setări instead of its
   Home page, showing the same "Pregătim {name}..." message as the Home

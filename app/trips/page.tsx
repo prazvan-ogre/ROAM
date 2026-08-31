@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useState, type FormEvent } from "reac
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, LogOut, Plus } from "lucide-react";
-import { getAllTrips, getTripBySlug, getTripsForAccount, type Trip } from "@/lib/trip";
+import { getAllTrips, getTripBySlug, getTripsForAccount } from "@/lib/trip";
 import { getOrCreateAdultParticipant } from "@/lib/participant";
 import {
   authenticateCreatorAccount,
@@ -12,7 +12,6 @@ import {
   getStoredAccountId,
   getStoredIsAdmin,
 } from "@/lib/creatorAccount";
-import { PendingTripModal } from "@/components/PendingTripModal";
 
 // This page has no dynamic route segment, so Next would otherwise try to
 // statically prerender it at build time -- which eagerly loads the
@@ -25,13 +24,6 @@ export const dynamic = "force-dynamic";
 
 type Step = "loading" | "auth" | "list";
 type AccountChoice = "unknown" | "existing" | "new";
-
-const STATUS_LABEL: Record<Trip["content_status"], string> = {
-  ready: "Gata",
-  pending: "În pregătire",
-  generating: "În pregătire",
-  failed: "Eșuat",
-};
 
 // useSearchParams() requires a Suspense boundary in the app router --
 // without it, this page can't be prerendered even with force-dynamic.
@@ -55,9 +47,7 @@ function TripsPageInner() {
   const linkSlug = searchParams.get("link");
 
   const [step, setStep] = useState<Step>("loading");
-  const [trips, setTrips] = useState<Trip[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [pendingTrip, setPendingTrip] = useState<Trip | null>(null);
   const [accountChoice, setAccountChoice] = useState<AccountChoice>("unknown");
   const [displayName, setDisplayName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -65,13 +55,28 @@ function TripsPageInner() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authenticating, setAuthenticating] = useState(false);
 
-  const loadTrips = useCallback(async (accountId: string) => {
-    const admin = getStoredIsAdmin();
-    const list = admin ? await getAllTrips() : await getTripsForAccount(accountId);
-    setIsAdmin(admin);
-    setTrips(list);
-    setStep("list");
-  }, []);
+  // Logging into "Călătoriile mele" (with or without having just created
+  // a trip) lands inside a trip's Setări > Toate călătoriile instead of
+  // showing the list on this standalone page -- product owner request.
+  // The list ordered by created_at desc (src/lib/trip.ts), so [0] is the
+  // most recent; prefer one that's actually ready to look at. The list
+  // itself only gets shown here (below) for the one case with nowhere
+  // else to send you: an account with zero trips yet.
+  const loadTrips = useCallback(
+    async (accountId: string) => {
+      const admin = getStoredIsAdmin();
+      const list = admin ? await getAllTrips() : await getTripsForAccount(accountId);
+      setIsAdmin(admin);
+
+      if (list.length === 0) {
+        setStep("list");
+        return;
+      }
+      const target = list.find((t) => t.content_status === "ready") ?? list[0];
+      router.push(`/trip/${target.slug}/settings`);
+    },
+    [router],
+  );
 
   useEffect(() => {
     const accountId = getStoredAccountId();
@@ -131,7 +136,6 @@ function TripsPageInner() {
 
   function handleLogOut() {
     clearStoredAccountId();
-    setTrips([]);
     setIsAdmin(false);
     setAccountChoice("unknown");
     setDisplayName("");
@@ -293,47 +297,9 @@ function TripsPageInner() {
         </button>
       </div>
 
-      {trips.length === 0 ? (
-        <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {trips.map((trip) => {
-            const cardClass =
-              "flex w-full items-center justify-between rounded-2xl border border-border bg-card px-5 py-4 text-left transition-all active:scale-[0.99]";
-            const cardContent = (
-              <>
-                <div className="min-w-0">
-                  <p className="truncate text-[16px] font-semibold text-foreground">{trip.name}</p>
-                  <p className="text-[13px] text-muted-foreground">
-                    {trip.start_date} · {trip.duration_days} zile
-                  </p>
-                </div>
-                <span
-                  className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
-                    trip.content_status === "ready"
-                      ? "bg-accent text-primary"
-                      : trip.content_status === "failed"
-                        ? "bg-destructive/10 text-destructive"
-                        : "bg-secondary text-muted-foreground"
-                  }`}
-                >
-                  {STATUS_LABEL[trip.content_status]}
-                </span>
-              </>
-            );
-
-            return trip.content_status === "ready" ? (
-              <Link key={trip.id} href={`/trip/${trip.slug}`} className={cardClass}>
-                {cardContent}
-              </Link>
-            ) : (
-              <button key={trip.id} onClick={() => setPendingTrip(trip)} className={cardClass}>
-                {cardContent}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* loadTrips() above redirects into a trip's Setări whenever the
+          account has at least one -- this list only ever renders empty. */}
+      <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
 
       <Link
         href="/"
@@ -342,8 +308,6 @@ function TripsPageInner() {
         <Plus size={16} />
         Creează o călătorie nouă
       </Link>
-
-      {pendingTrip && <PendingTripModal tripName={pendingTrip.name} onClose={() => setPendingTrip(null)} />}
     </main>
   );
 }

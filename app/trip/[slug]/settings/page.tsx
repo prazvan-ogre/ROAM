@@ -73,30 +73,40 @@ export default function SettingsPage() {
         if (cancelled || !t) return;
         setTrip(t);
 
+        const list = await loadProfiles(t.id).catch(() => [] as Participant[]);
+        if (cancelled) return;
+
         // Content (Discover/Battle) is drafted as a separate manual step
         // after a publicly-created trip's row exists (see app/trip/[slug]/
-        // page.tsx). Nothing in Configurare/Utilizatori is meaningful
-        // yet, so those tabs show a placeholder instead -- but Toate
-        // călătoriile still works, and is the default tab here, so
-        // whoever just created this trip lands somewhere useful instead
-        // of a dead end with no participants/content yet. Also skips the
-        // "did this device join yet" check below: joining doesn't mean
-        // anything for a trip with no Discover/Battle content to play.
-        if (t.content_status !== "ready") {
-          // Default to Toate călătoriile for whoever can actually see it
-          // (just created/logged into this trip's account) -- otherwise
-          // (e.g. a shared link opened before having an account) land on
-          // Configurare instead, so the pending notice below shows under
-          // a tab that's actually visible in the tab strip.
-          setTab(getStoredAccountId() ? "trips" : "config");
-          await loadProfiles(t.id).catch(() => undefined);
-          setStep("ready");
+        // page.tsx) -- prize status is meaningless before that.
+        if (t.content_status === "ready") {
+          await getPrizeStatus(t.id).then(setPrizeStatus).catch(() => undefined);
+        }
+
+        const joined = list.length > 0;
+        const hasAcct = getStoredAccountId() !== null;
+
+        // No account and never joined this trip on this device -- the
+        // one case with nowhere else useful to send someone (arriving
+        // here from a direct/shared link, e.g.), so keep the original
+        // simple block below instead of a tab strip with nothing behind
+        // any of its tabs.
+        if (t.content_status === "ready" && !joined && !hasAcct) {
+          setStep("not-joined");
           return;
         }
 
-        const [list] = await Promise.all([loadProfiles(t.id), getPrizeStatus(t.id).then(setPrizeStatus)]);
-        if (cancelled) return;
-        setStep(list.length === 0 ? "not-joined" : "ready");
+        // Otherwise always show the tab strip (Configurare/Utilizatori
+        // show a placeholder instead of their normal content when the
+        // trip isn't ready or this device hasn't joined it -- see the
+        // render below) -- defaulting to Toate călătoriile whenever
+        // that's true and reachable, since it's the one tab that's
+        // always useful in that situation. Re-evaluated on every trip
+        // switch (the "trips" tab's own dropdown-like list), not just on
+        // first mount, since this component instance persists across a
+        // router.push between two /trip/*/settings routes.
+        setTab(hasAcct && (t.content_status !== "ready" || !joined) ? "trips" : "users");
+        setStep("ready");
       } catch {
         if (!cancelled) setStep("error");
       }
@@ -175,32 +185,40 @@ export default function SettingsPage() {
 
       {tab === "trips" && <TripsSection trips={accountTrips} isAdmin={isAdmin} currentSlug={slug} />}
 
-      {tab === "config" && trip && (trip.content_status === "ready" ? (
-        <ConfigSection trip={trip} prizeStatus={prizeStatus} />
-      ) : (
-        <TripPendingNotice tripName={trip.name} />
-      ))}
+      {tab === "config" && trip && (
+        trip.content_status !== "ready" ? (
+          <TripPendingNotice tripName={trip.name} />
+        ) : profiles.length === 0 ? (
+          <NotJoinedNotice slug={slug} />
+        ) : (
+          <ConfigSection trip={trip} prizeStatus={prizeStatus} />
+        )
+      )}
 
-      {tab === "users" && trip && (trip.content_status === "ready" ? (
-        <UsersSection
-          profiles={profiles}
-          editingId={editingId}
-          onStartEdit={setEditingId}
-          onCancelEdit={() => setEditingId(null)}
-          onSaveEdit={handleSaveEdit}
-          onDelete={handleDelete}
-          showAddChild={showAddChild}
-          onShowAddChild={() => setShowAddChild(true)}
-          onCancelAddChild={() => setShowAddChild(false)}
-          childName={childName}
-          onChildNameChange={setChildName}
-          childAge={childAge}
-          onChildAgeChange={setChildAge}
-          onAddChild={handleAddChild}
-        />
-      ) : (
-        <TripPendingNotice tripName={trip.name} />
-      ))}
+      {tab === "users" && trip && (
+        trip.content_status !== "ready" ? (
+          <TripPendingNotice tripName={trip.name} />
+        ) : profiles.length === 0 ? (
+          <NotJoinedNotice slug={slug} />
+        ) : (
+          <UsersSection
+            profiles={profiles}
+            editingId={editingId}
+            onStartEdit={setEditingId}
+            onCancelEdit={() => setEditingId(null)}
+            onSaveEdit={handleSaveEdit}
+            onDelete={handleDelete}
+            showAddChild={showAddChild}
+            onShowAddChild={() => setShowAddChild(true)}
+            onCancelAddChild={() => setShowAddChild(false)}
+            childName={childName}
+            onChildNameChange={setChildName}
+            childAge={childAge}
+            onChildAgeChange={setChildAge}
+            onAddChild={handleAddChild}
+          />
+        )
+      )}
 
       {tab === "info" && <InfoSection />}
 
@@ -227,6 +245,21 @@ function TripPendingNotice({ tripName }: { tripName: string }) {
       <p className="mx-auto mt-2 max-w-xs text-[14px] text-muted-foreground">
         Întrebările și provocările pentru această călătorie sunt în lucru. Revino mai târziu.
       </p>
+    </div>
+  );
+}
+
+// Shown instead of Configurare/Utilizatori when this device hasn't
+// joined a ready trip -- e.g. an admin/creator-account holder auto-
+// redirected here from /trips (app/trips/page.tsx) without ever having
+// personally joined that particular trip as a participant.
+function NotJoinedNotice({ slug }: { slug: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card px-5 py-8 text-center">
+      <p className="text-[15px] font-semibold text-foreground">Nu ești încă participant la această călătorie.</p>
+      <Link href={`/trip/${slug}`} className="mt-3 inline-block text-[14px] font-medium text-primary underline">
+        Alătură-te acum
+      </Link>
     </div>
   );
 }
