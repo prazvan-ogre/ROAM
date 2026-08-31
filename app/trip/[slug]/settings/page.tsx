@@ -1,25 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Plus, MapPin, Calendar, Trophy, Check, Eye, EyeOff } from "lucide-react";
-import { getAllTrips, getTripBySlug, getTripsForAccount, type Trip } from "@/lib/trip";
-import {
-  listProfilesForDevice,
-  addChildProfile,
-  updateParticipant,
-  deleteParticipant,
-  type Participant,
-} from "@/lib/participant";
+import { getAllTrips, getTripsForAccount, type Trip } from "@/lib/trip";
+import { addChildProfile, updateParticipant, deleteParticipant, type Participant } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
 import { getAccountDetails, getStoredAccountId, getStoredIsAdmin, updateAccountDetails } from "@/lib/creatorAccount";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { PendingTripModal } from "@/components/PendingTripModal";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Step = "loading" | "error" | "not-joined" | "ready";
 type Tab = "trips" | "config" | "users" | "info";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -31,11 +25,10 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function SettingsPage() {
   const { slug } = useParams<{ slug: string }>();
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError, mutate: mutateProfiles } = useProfiles(trip?.id);
 
-  const [step, setStep] = useState<Step>("loading");
   const [tab, setTab] = useState<Tab>("users");
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
   const [showAddChild, setShowAddChild] = useState(false);
   const [childName, setChildName] = useState("");
   const [childAge, setChildAge] = useState("");
@@ -58,94 +51,60 @@ export default function SettingsPage() {
     list.then(setAccountTrips).catch(() => setAccountTrips([]));
   }, []);
 
-  const loadProfiles = useCallback(async (tripId: string) => {
-    const list = await listProfilesForDevice(tripId);
-    setProfiles(list);
-    return list;
-  }, []);
-
+  // Content (Discover/Battle) is drafted as a separate manual step after
+  // a publicly-created trip's row exists (see app/trip/[slug]/page.tsx)
+  // -- prize status is meaningless before that. Keyed on trip id/status
+  // alone (not profiles), so adding/editing a child on this same page
+  // doesn't needlessly refetch it.
   useEffect(() => {
-    let cancelled = false;
+    if (!trip || trip.content_status !== "ready") return;
+    getPrizeStatus(trip.id).then(setPrizeStatus).catch(() => undefined);
+  }, [trip]);
 
-    async function load() {
-      try {
-        const t = await getTripBySlug(slug);
-        if (cancelled || !t) return;
-        setTrip(t);
-
-        const list = await loadProfiles(t.id).catch(() => [] as Participant[]);
-        if (cancelled) return;
-
-        // Content (Discover/Battle) is drafted as a separate manual step
-        // after a publicly-created trip's row exists (see app/trip/[slug]/
-        // page.tsx) -- prize status is meaningless before that.
-        if (t.content_status === "ready") {
-          await getPrizeStatus(t.id).then(setPrizeStatus).catch(() => undefined);
-        }
-
-        const joined = list.length > 0;
-        const hasAcct = getStoredAccountId() !== null;
-
-        // No account and never joined this trip on this device -- the
-        // one case with nowhere else useful to send someone (arriving
-        // here from a direct/shared link, e.g.), so keep the original
-        // simple block below instead of a tab strip with nothing behind
-        // any of its tabs.
-        if (t.content_status === "ready" && !joined && !hasAcct) {
-          setStep("not-joined");
-          return;
-        }
-
-        // Otherwise always show the tab strip (Configurare/Utilizatori
-        // show a placeholder instead of their normal content when the
-        // trip isn't ready or this device hasn't joined it -- see the
-        // render below) -- defaulting to Toate călătoriile whenever
-        // that's true and reachable, since it's the one tab that's
-        // always useful in that situation. Re-evaluated on every trip
-        // switch (the "trips" tab's own dropdown-like list), not just on
-        // first mount, since this component instance persists across a
-        // router.push between two /trip/*/settings routes.
-        setTab(hasAcct && (t.content_status !== "ready" || !joined) ? "trips" : "users");
-        setStep("ready");
-      } catch {
-        if (!cancelled) setStep("error");
-      }
-    }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [slug, loadProfiles]);
+  // Defaults the tab strip once per trip -- to Toate călătoriile when
+  // this device has an account but hasn't joined this particular trip
+  // (or it isn't ready yet), otherwise Utilizatori. Re-evaluated on every
+  // trip switch (the "trips" tab's own dropdown-like list) since this
+  // component instance persists across a router.push between two
+  // /trip/*/settings routes, but guarded by a ref so it doesn't also
+  // re-fire and clobber the user's own tab choice every time `profiles`
+  // revalidates in the background (e.g. right after adding a child here).
+  const defaultedForTripId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!trip || !profiles) return;
+    if (defaultedForTripId.current === trip.id) return;
+    defaultedForTripId.current = trip.id;
+    const joined = profiles.length > 0;
+    setTab(hasAccount && (trip.content_status !== "ready" || !joined) ? "trips" : "users");
+  }, [trip, profiles, hasAccount]);
 
   async function handleAddChild(e: FormEvent) {
     e.preventDefault();
-    if (!trip || !childName.trim()) return;
+    if (!trip || !childName.trim() || !profiles) return;
     const adult = profiles.find((p) => p.role === "adult");
     if (!adult) return;
     await addChildProfile(trip.id, childName.trim(), childAge ? Number(childAge) : null, adult.id);
     setChildName("");
     setChildAge("");
     setShowAddChild(false);
-    await loadProfiles(trip.id);
+    await mutateProfiles();
   }
 
   async function handleSaveEdit(id: string, displayName: string, role: ParticipantRole, age: number | null) {
     if (!trip) return;
     await updateParticipant(id, displayName, role, age);
     setEditingId(null);
-    await loadProfiles(trip.id);
+    await mutateProfiles();
   }
 
   async function handleDelete(id: string) {
     if (!trip) return;
     if (!window.confirm("Sigur ștergi acest profil?")) return;
     await deleteParticipant(id);
-    await loadProfiles(trip.id);
+    await mutateProfiles();
   }
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError) {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -155,7 +114,17 @@ export default function SettingsPage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  // No account and never joined this trip on this device -- the one
+  // case with nowhere else useful to send someone (arriving here from a
+  // direct/shared link, e.g.), so this stays a full block instead of a
+  // tab strip with nothing behind any of its tabs.
+  if (trip.content_status === "ready" && profiles.length === 0 && !hasAccount) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>

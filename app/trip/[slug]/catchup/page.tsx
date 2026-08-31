@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, X, History, ExternalLink } from "lucide-react";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, getStoredActiveProfileId, type Participant } from "@/lib/participant";
+import { currentTripDay, type Trip } from "@/lib/trip";
+import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import {
   getCatchUpQuestions,
   submitResponse,
@@ -17,8 +17,9 @@ import {
 } from "@/lib/discover";
 import { Btn, FlowHeader, Centered } from "@/components/ui";
 import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Step = "loading" | "error" | "not-joined" | "empty" | "question" | "reveal" | "done";
+type Step = "loading" | "error" | "empty" | "question" | "reveal" | "done";
 
 // Reachable any time from the Dashboard, unlike the wizard's own catch-up
 // step which only ever runs once, right when a participant is first
@@ -40,8 +41,10 @@ export default function CatchUpPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
 
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError } = useProfiles(trip?.id);
+
   const [step, setStep] = useState<Step>("loading");
-  const [trip, setTrip] = useState<Trip | null>(null);
   const [activeProfile, setActiveProfile] = useState<Participant | null>(null);
   const [questions, setQuestions] = useState<CatchUpQuestion[]>([]);
   const [index, setIndex] = useState(0);
@@ -50,28 +53,19 @@ export default function CatchUpPage() {
   const [extra, setExtra] = useState<Extra | null>(null);
 
   useEffect(() => {
+    if (!trip || !profiles || profiles.length === 0) return;
+
     let cancelled = false;
 
     async function load() {
       try {
-        const t = await getTripBySlug(slug);
-        if (cancelled || !t) return;
-        setTrip(t);
-
-        const list = await listProfilesForDevice(t.id);
-        if (cancelled) return;
-        if (list.length === 0) {
-          setStep("not-joined");
-          return;
-        }
-
         // Product owner request: use the profile picked top-right (the
         // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
         // asking again here -- same resolution it uses (stored active
         // profile, falling back to the first one).
-        const stored = getStoredActiveProfileId(t.id);
-        const resolved = list.find((p) => p.id === stored) ?? list[0];
-        await selectProfile(resolved, t);
+        const stored = getStoredActiveProfileId(trip!.id);
+        const resolved = profiles!.find((p) => p.id === stored) ?? profiles![0];
+        await selectProfile(resolved, trip!);
       } catch {
         if (!cancelled) setStep("error");
       }
@@ -93,7 +87,7 @@ export default function CatchUpPage() {
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+  }, [trip, profiles]);
 
   async function handleSubmit() {
     if (!activeProfile || !selected) return;
@@ -124,8 +118,7 @@ export default function CatchUpPage() {
     router.push(`/trip/${slug}`);
   }
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError || step === "error") {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -135,7 +128,13 @@ export default function CatchUpPage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  if (profiles.length === 0) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>
@@ -145,6 +144,8 @@ export default function CatchUpPage() {
       </Centered>
     );
   }
+
+  if (step === "loading") return <Centered>Se încarcă...</Centered>;
 
   if (step === "empty") {
     return (

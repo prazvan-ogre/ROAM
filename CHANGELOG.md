@@ -806,11 +806,21 @@
   every single trip page) is migrated to it first: it was independently
   re-fetching the exact same trip+profiles data every page already
   fetches for itself, a guaranteed duplicate request on every page load
-  with no possible cache hit before this. The 8 individual trip pages
-  still do their own inline fetch for now -- migrating them to the same
-  hooks (so navigating between them reads from cache instead of
-  re-fetching) is a natural follow-up, deliberately left for a separate
-  pass rather than rewriting every page's fetch/step-machine at once.
+  with no possible cache hit before this.
+- Migrated all 8 individual trip pages (Home, Discover, Battle, Final
+  Battle, Catch-up, Întrebări, Scor, Setări) to the same `useTrip`/
+  `useProfiles` hooks, completing the follow-up flagged above: navigating
+  between them (TripNav, or Home <-> a flow screen) now reads the trip
+  and this device's profiles from cache instead of re-fetching both on
+  every single page mount, on top of the initial per-page duplicate
+  fetch against `ProfileMenu` already fixed. Setări and Home also switch
+  their post-mutation refetch (after adding/editing/deleting a profile,
+  or finishing the join wizard) from a private `loadProfiles()`/
+  `setProfiles()` pair to the shared cache's own `mutate()`, so a profile
+  change made on one of those pages now shows up in `ProfileMenu` too
+  without waiting for its next full remount -- previously `ProfileMenu`
+  only ever fetched once per trip and had no way to learn about a
+  profile add/edit/delete happening elsewhere on the same visit.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

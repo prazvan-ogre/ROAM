@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Check, X, ExternalLink } from "lucide-react";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, getStoredActiveProfileId, type Participant } from "@/lib/participant";
+import { currentTripDay } from "@/lib/trip";
+import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import {
   getDiscoverQuestion,
   getMyResponse,
@@ -21,8 +21,9 @@ import type { QuestionSlot } from "@/lib/supabase/types";
 import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Btn, FlowHeader, OptionButton, Centered } from "@/components/ui";
 import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Step = "loading" | "question" | "reveal" | "unavailable" | "closed" | "not-joined" | "error";
+type Step = "loading" | "question" | "reveal" | "unavailable" | "closed" | "error";
 
 const SLOT_ICON: Record<QuestionSlot, typeof Sun> = { morning: Sun, lunch: Utensils };
 
@@ -30,9 +31,10 @@ export default function DiscoverPage() {
   const { slug, slot } = useParams<{ slug: string; slot: string }>();
   const router = useRouter();
   const discoverSlot = slot as QuestionSlot;
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError } = useProfiles(trip?.id);
 
   const [step, setStep] = useState<Step>("loading");
-  const [trip, setTrip] = useState<Trip | null>(null);
   const [activeProfile, setActiveProfile] = useState<Participant | null>(null);
   const [content, setContent] = useState<DiscoverQuestion | null>(null);
   const [selectedOption, setSelectedOption] = useState<AnswerOption | null>(null);
@@ -43,36 +45,27 @@ export default function DiscoverPage() {
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
   useEffect(() => {
+    if (!trip || !profiles || profiles.length === 0) return;
+
     let cancelled = false;
 
     async function load() {
       try {
-        const t = await getTripBySlug(slug);
-        if (cancelled || !t) return;
-        setTrip(t);
-
-        const list = await listProfilesForDevice(t.id);
-        if (cancelled) return;
-        if (list.length === 0) {
-          setStep("not-joined");
-          return;
-        }
-
-        const c = await getDiscoverQuestion(t.id, currentTripDay(t), discoverSlot);
+        const c = await getDiscoverQuestion(trip!.id, currentTripDay(trip!), discoverSlot);
         if (cancelled) return;
         if (!c) {
           setStep("unavailable");
           return;
         }
         setContent(c);
-        await trackEvent(t.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
+        await trackEvent(trip!.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
 
         // Product owner request: use the profile picked top-right (the
         // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
         // asking "Cine răspunde?" here -- same resolution it uses (stored
         // active profile, falling back to this device's first one).
-        const stored = getStoredActiveProfileId(t.id);
-        const resolved = list.find((p) => p.id === stored) ?? list[0];
+        const stored = getStoredActiveProfileId(trip!.id);
+        const resolved = profiles!.find((p) => p.id === stored) ?? profiles![0];
         await selectProfile(resolved, c);
       } catch {
         if (!cancelled) setStep("error");
@@ -107,7 +100,7 @@ export default function DiscoverPage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, discoverSlot]);
+  }, [trip, profiles, discoverSlot]);
 
   async function handleSubmitAnswer() {
     if (!trip || !content || !activeProfile || !selectedOption) return;
@@ -144,8 +137,7 @@ export default function DiscoverPage() {
     router.push(`/trip/${slug}`);
   }
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError || step === "error") {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -155,7 +147,13 @@ export default function DiscoverPage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  if (profiles.length === 0) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>
@@ -165,6 +163,8 @@ export default function DiscoverPage() {
       </Centered>
     );
   }
+
+  if (step === "loading") return <Centered>Se încarcă...</Centered>;
   if (step === "unavailable") {
     return (
       <Centered>

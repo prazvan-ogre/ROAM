@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Moon, Check, Clock, Trophy, History } from "lucide-react";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, getStoredActiveProfileId, type Participant } from "@/lib/participant";
+import { currentTripDay } from "@/lib/trip";
+import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { Centered } from "@/components/ui";
@@ -14,6 +14,7 @@ import { getDailyBattle, getFinalBattle } from "@/lib/battle";
 import { getCatchUpQuestions } from "@/lib/discover";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
 import { SLOT_LABEL } from "@/lib/constants";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
 interface SlotStatus {
   questionId: string | null;
@@ -30,22 +31,16 @@ const EMPTY_BATTLE_STATUS: BattleStatus = { available: false, completed: false }
 
 export default function TripHomePage() {
   const { slug } = useParams<{ slug: string }>();
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError, mutate: mutateProfiles } = useProfiles(trip?.id);
 
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [statusesLoading, setStatusesLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
   const [morningStatus, setMorningStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [finalStatus, setFinalStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [hasCatchUp, setHasCatchUp] = useState(false);
-
-  const loadProfiles = useCallback(async (tripId: string) => {
-    const list = await listProfilesForDevice(tripId);
-    setProfiles(list);
-    return list;
-  }, []);
 
   const loadSlotStatus = useCallback(
     async (tripId: string, day: number, profileIds: string[]) => {
@@ -145,31 +140,29 @@ export default function TripHomePage() {
   }, []);
 
   useEffect(() => {
+    if (!trip || !profiles) return;
+    if (profiles.length === 0) {
+      setStatusesLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     async function load() {
-      setLoading(true);
+      setStatusesLoading(true);
       setLoadError(false);
       try {
-        const t = await getTripBySlug(slug);
-        if (cancelled) return;
-        setTrip(t);
-        if (!t) return;
-        const list = await loadProfiles(t.id);
-        if (cancelled) return;
-        if (list.length > 0) {
-          const day = currentTripDay(t);
-          const profileIds = list.map((p) => p.id);
-          await Promise.all([
-            loadSlotStatus(t.id, day, profileIds),
-            loadBattleStatus(t.id, day, day >= t.duration_days, profileIds),
-            loadCatchUpStatus(t.id, day, list),
-          ]);
-        }
+        const day = currentTripDay(trip!);
+        const profileIds = profiles!.map((p) => p.id);
+        await Promise.all([
+          loadSlotStatus(trip!.id, day, profileIds),
+          loadBattleStatus(trip!.id, day, day >= trip!.duration_days, profileIds),
+          loadCatchUpStatus(trip!.id, day, profiles!),
+        ]);
       } catch {
         if (!cancelled) setLoadError(true);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setStatusesLoading(false);
       }
     }
 
@@ -177,11 +170,12 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus, loadCatchUpStatus]);
+  }, [trip, profiles, loadSlotStatus, loadBattleStatus, loadCatchUpStatus]);
 
   async function handleWizardComplete() {
     if (!trip) return;
-    const list = await loadProfiles(trip.id);
+    const list = await mutateProfiles();
+    if (!list || list.length === 0) return;
     const day = currentTripDay(trip);
     const profileIds = list.map((p) => p.id);
     await Promise.all([
@@ -191,7 +185,18 @@ export default function TripHomePage() {
     ]);
   }
 
-  if (loading) {
+  if (tripError || profilesError) {
+    return (
+      <Centered>
+        <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
+        <button onClick={() => window.location.reload()} className="mt-4 underline">
+          Încearcă din nou
+        </button>
+      </Centered>
+    );
+  }
+
+  if (trip === undefined) {
     return <Centered>Se încarcă...</Centered>;
   }
 
@@ -234,6 +239,10 @@ export default function TripHomePage() {
         </p>
       </Centered>
     );
+  }
+
+  if (!profiles || statusesLoading) {
+    return <Centered>Se încarcă...</Centered>;
   }
 
   if (profiles.length === 0) {
