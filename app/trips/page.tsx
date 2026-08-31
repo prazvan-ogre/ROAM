@@ -12,6 +12,7 @@ import {
   getStoredAccountId,
   getStoredIsAdmin,
 } from "@/lib/creatorAccount";
+import { PendingTripModal } from "@/components/PendingTripModal";
 
 // This page has no dynamic route segment, so Next would otherwise try to
 // statically prerender it at build time -- which eagerly loads the
@@ -55,6 +56,7 @@ function TripsPageInner() {
   const [step, setStep] = useState<Step>("loading");
   const [trips, setTrips] = useState<Trip[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [pendingTrip, setPendingTrip] = useState<Trip | null>(null);
   const [accountChoice, setAccountChoice] = useState<AccountChoice>("unknown");
   const [displayName, setDisplayName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -285,31 +287,41 @@ function TripsPageInner() {
         <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
       ) : (
         <div className="flex flex-col gap-3">
-          {trips.map((trip) => (
-            <Link
-              key={trip.id}
-              href={trip.content_status === "ready" ? `/trip/${trip.slug}` : `/trip/${trip.slug}/settings`}
-              className="flex items-center justify-between rounded-2xl border border-border bg-card px-5 py-4 transition-all active:scale-[0.99]"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-[16px] font-semibold text-foreground">{trip.name}</p>
-                <p className="text-[13px] text-muted-foreground">
-                  {trip.start_date} · {trip.duration_days} zile
-                </p>
-              </div>
-              <span
-                className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
-                  trip.content_status === "ready"
-                    ? "bg-accent text-primary"
-                    : trip.content_status === "failed"
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-secondary text-muted-foreground"
-                }`}
-              >
-                {STATUS_LABEL[trip.content_status]}
-              </span>
-            </Link>
-          ))}
+          {trips.map((trip) => {
+            const cardClass =
+              "flex w-full items-center justify-between rounded-2xl border border-border bg-card px-5 py-4 text-left transition-all active:scale-[0.99]";
+            const cardContent = (
+              <>
+                <div className="min-w-0">
+                  <p className="truncate text-[16px] font-semibold text-foreground">{trip.name}</p>
+                  <p className="text-[13px] text-muted-foreground">
+                    {trip.start_date} · {trip.duration_days} zile
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
+                    trip.content_status === "ready"
+                      ? "bg-accent text-primary"
+                      : trip.content_status === "failed"
+                        ? "bg-destructive/10 text-destructive"
+                        : "bg-secondary text-muted-foreground"
+                  }`}
+                >
+                  {STATUS_LABEL[trip.content_status]}
+                </span>
+              </>
+            );
+
+            return trip.content_status === "ready" ? (
+              <Link key={trip.id} href={`/trip/${trip.slug}`} className={cardClass}>
+                {cardContent}
+              </Link>
+            ) : (
+              <button key={trip.id} onClick={() => setPendingTrip(trip)} className={cardClass}>
+                {cardContent}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -320,6 +332,8 @@ function TripsPageInner() {
         <Plus size={16} />
         Creează o călătorie nouă
       </Link>
+
+      {pendingTrip && <PendingTripModal tripName={pendingTrip.name} onClose={() => setPendingTrip(null)} />}
     </main>
   );
 }

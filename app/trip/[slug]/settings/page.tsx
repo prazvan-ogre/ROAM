@@ -17,6 +17,7 @@ import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
 import { getStoredAccountId, getStoredIsAdmin } from "@/lib/creatorAccount";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
+import { PendingTripModal } from "@/components/PendingTripModal";
 
 type Step = "loading" | "error" | "not-joined" | "ready" | "content-pending";
 type Tab = "trips" | "config" | "users" | "info";
@@ -218,6 +219,8 @@ function TripsSection({
   isAdmin: boolean;
   currentSlug: string;
 }) {
+  const [pendingTrip, setPendingTrip] = useState<Trip | null>(null);
+
   return (
     <div className="flex flex-col gap-3">
       {isAdmin && (
@@ -231,14 +234,11 @@ function TripsSection({
       ) : (
         trips.map((t) => {
           const isCurrent = t.slug === currentSlug;
-          return (
-            <Link
-              key={t.id}
-              href={t.content_status === "ready" ? `/trip/${t.slug}` : `/trip/${t.slug}/settings`}
-              className={`flex items-center justify-between rounded-2xl border px-5 py-4 transition-all active:scale-[0.99] ${
-                isCurrent ? "border-primary bg-primary/5" : "border-border bg-card"
-              }`}
-            >
+          const cardClass = `flex w-full items-center justify-between rounded-2xl border px-5 py-4 text-left transition-all active:scale-[0.99] ${
+            isCurrent ? "border-primary bg-primary/5" : "border-border bg-card"
+          }`;
+          const cardContent = (
+            <>
               <div className="flex min-w-0 items-center gap-2.5">
                 {isCurrent && (
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
@@ -263,7 +263,17 @@ function TripsSection({
               >
                 {TRIP_STATUS_LABEL[t.content_status]}
               </span>
+            </>
+          );
+
+          return t.content_status === "ready" ? (
+            <Link key={t.id} href={`/trip/${t.slug}`} className={cardClass}>
+              {cardContent}
             </Link>
+          ) : (
+            <button key={t.id} onClick={() => setPendingTrip(t)} className={cardClass}>
+              {cardContent}
+            </button>
           );
         })
       )}
@@ -275,6 +285,8 @@ function TripsSection({
         <Plus size={16} />
         Creează o călătorie nouă
       </Link>
+
+      {pendingTrip && <PendingTripModal tripName={pendingTrip.name} onClose={() => setPendingTrip(null)} />}
     </div>
   );
 }

@@ -651,6 +651,12 @@
   ever joined by device id and never created a "Călătoriile mele"
   account). The trip whose Setări you're currently viewing is marked
   with a checkmark and a highlighted border in that list.
+- Tapping a not-yet-ready trip in a trips list (`/trips`, or the "Toate
+  călătoriile" tab above) no longer navigates anywhere: it shows the
+  "Pregătim {name}..." message in a modal (new `src/components/
+  PendingTripModal.tsx`) over the current screen instead, and "OK" just
+  closes it -- there's nothing to navigate to yet, so staying put is
+  simpler than a dedicated pending screen.
 - Tapping a not-yet-ready trip (`content_status` `pending`/`generating`/
   `failed`) from `/trips` now opens that trip's Setări instead of its
   Home page, showing the same "Pregătim {name}..." message as the Home
