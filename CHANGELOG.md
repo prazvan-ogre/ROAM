@@ -821,6 +821,27 @@
   without waiting for its next full remount -- previously `ProfileMenu`
   only ever fetched once per trip and had no way to learn about a
   profile add/edit/delete happening elsewhere on the same visit.
+- Migration `20260901090000_enum_types.sql`: converts every "enum-like"
+  `text` + `check (col in (...))` column (question `kind`/`slot`/
+  `question_type`, participant `role`, extra `extra_type`/`audience`,
+  extra_assignment `status`, battle_scores `team`, feedback
+  `anticipated_next`/`would_use_again`, trip `content_status`) into a
+  real Postgres enum type. Purely a storage/type-system change -- every
+  existing value already satisfied its check constraint, so nothing is
+  altered or lost. This is what makes architecture audit item 4
+  (generated Supabase types) actually safe: `supabase gen types` reads
+  the column's real Postgres type, so a plain `text` column with a check
+  constraint has no way to come out as anything but `string`, silently
+  widening every `Record<QuestionSlot, ...>`-shaped usage across the app
+  the moment `src/lib/supabase/types.ts` is regenerated. A real enum
+  generates as the exact literal union instead, matching this file's
+  hand-written types exactly. Verified end-to-end on a scratch Postgres:
+  all prior migrations plus this one from empty, `seed.sql` (needed one
+  fix alongside this -- its `extras.extra_type` values come from a
+  `values (...) as e(...)` derived table, which fixes their type as
+  `text` rather than an unknown literal, so those 21 references now read
+  `e.extra_type::extra_type_enum` explicitly), and the full
+  `battle_scoring.test.sql` suite, all unchanged.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

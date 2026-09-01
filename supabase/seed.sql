@@ -84,7 +84,7 @@ morning_opts as (
 ),
 morning_extras as (
   insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-  select t.id, morning_q.id, 1, e.title, e.description, e.order_index, e.extra_type, 'all'
+  select t.id, morning_q.id, 1, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
   from trip t, morning_q
   join (values
     (1, 'Istorie & Geografie', 'Se spune că Poseidon s-a înfuriat pe titanii care locuiau aici și a lovit marea cu tridentul său. Prima peninsulă este Kassandra. 💡 Când traversați Canalul Nea Potidea la intrarea pe braț, priviți stâncile abrupte săpate de om pentru a lega Golful Thermaic de Golful Toroneos!', 'know'),
@@ -112,7 +112,7 @@ lunch_opts as (
   ) as o(order_index, label, is_correct) on true
 )
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select t.id, lunch_q.id, 1, e.title, e.description, e.order_index, e.extra_type, 'all'
+select t.id, lunch_q.id, 1, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
 from trip t, lunch_q
 join (values
   (1, 'Degustare & Textură', 'Tzatziki este făcut din iaurt grecesc gras (straggisto), castraveți rași scurși de apă, usturoi, ulei de măsline și uneori mărar. 💡 Întindeți-l pe lipie caldă și observați dacă simțiți mirosul intens de usturoi!', 'know'),
@@ -155,7 +155,7 @@ with trip as (select id from trips where slug = 'kassandra-2026'),
 d1_battle as (select id from battles where trip_id = (select id from trip) and day_number = 1 and is_final = false),
 d1_qs as (select id, order_index from questions where battle_id = (select id from d1_battle))
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select (select id from trip), q.id, 1, e.title, e.description, 1, e.extra_type, 'all'
+select (select id from trip), q.id, 1, e.title, e.description, 1, e.extra_type::extra_type_enum, 'all'
 from d1_qs q
 join (values
   (1, 'Trivia Val', 'Poseidon mai era supranumit și „Cel care scutură pământul” (Enosichthon), fiind zeul cutremurelor pe lângă cel al mării. 💡 Întrebați copiii ce alte puteri credeau vechii greci că are Poseidon, în afară de mare!', 'ask'),
@@ -187,7 +187,7 @@ morning_opts as (
 ),
 morning_extras as (
   insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-  select t.id, morning_q.id, 2, e.title, e.description, e.order_index, e.extra_type, 'all'
+  select t.id, morning_q.id, 2, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
   from trip t, morning_q
   join (values
     (1, 'Arhitectură & Detalii', 'Casele din Afitos sunt ridicate din porolit (piatră de calcar locală). 💡 Priviți deasupra ușilor sau pe colțul caselor vechi: veți găsi sculptate anul construcției și simboluri speciale de protecție!', 'know'),
@@ -215,7 +215,7 @@ lunch_opts as (
   ) as o(order_index, label, is_correct) on true
 )
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select t.id, lunch_q.id, 2, e.title, e.description, e.order_index, e.extra_type, 'all'
+select t.id, lunch_q.id, 2, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
 from trip t, lunch_q
 join (values
   (1, 'Pescărească', 'Caracatița este uscată la soare (liasto) pentru a elimina apa din carne, devenind crocantă la exterior și fragedă la interior pe grătar. 💡 Căutați frânghiile întinse lângă tavernele din port sau de pe plajă!', 'know'),
@@ -255,7 +255,7 @@ with trip as (select id from trips where slug = 'kassandra-2026'),
 d2_battle as (select id from battles where trip_id = (select id from trip) and day_number = 2 and is_final = false),
 d2_qs as (select id, order_index from questions where battle_id = (select id from d2_battle))
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select (select id from trip), q.id, 2, e.title, e.description, 1, e.extra_type, 'all'
+select (select id from trip), q.id, 2, e.title, e.description, 1, e.extra_type::extra_type_enum, 'all'
 from d2_qs q
 join (values
   (1, 'Arhive de Piatră', 'Multe case vechi din Halkidiki poartă gravate nu doar anul, ci și inițialele familiei care a construit-o, ca o semnătură transmisă generațiilor următoare. 💡 Data viitoare când treceți printr-un sat de piatră, căutați și inițiale, nu doar cifre!', 'explore'),
@@ -287,7 +287,7 @@ morning_opts as (
 ),
 morning_extras as (
   insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-  select t.id, morning_q.id, 3, e.title, e.description, e.order_index, e.extra_type, 'all'
+  select t.id, morning_q.id, 3, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
   from trip t, morning_q
   join (values
     (1, 'Fenomen Natural', 'Nisipul fin înaintează sute de metri în mare. 💡 Mergeți până în vârful limbei de nisip: veți observa că într-o parte apa poate avea valuri spumoase, iar pe cealaltă parte este lină ca o oglindă!', 'know'),
@@ -315,7 +315,7 @@ lunch_opts as (
   ) as o(order_index, label, is_correct) on true
 )
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select t.id, lunch_q.id, 3, e.title, e.description, e.order_index, e.extra_type, 'all'
+select t.id, lunch_q.id, 3, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
 from trip t, lunch_q
 join (values
   (1, 'Botanică & Miros', 'Oregano-ul grecesc (Rigani) crește pe tufișurile uscate de pe dealuri. 💡 Când vă plimbați spre plajă, frecați o frunzuliță uscată în palme și simțiți aroma intensă!', 'know'),
@@ -355,7 +355,7 @@ with trip as (select id from trips where slug = 'kassandra-2026'),
 d3_battle as (select id from battles where trip_id = (select id from trip) and day_number = 3 and is_final = false),
 d3_qs as (select id, order_index from questions where battle_id = (select id from d3_battle))
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select (select id from trip), q.id, 3, e.title, e.description, 1, e.extra_type, 'all'
+select (select id from trip), q.id, 3, e.title, e.description, 1, e.extra_type::extra_type_enum, 'all'
 from d3_qs q
 join (values
   (1, 'Lumina din Possidi', 'Farul a fost construit de o companie franceză și, în ciuda vârstei sale, mai funcționează parțial și astăzi cu tehnologie modernă alimentată solar. 💡 Dacă mai treceți pe acolo, vedeți dacă puteți zări lumina lui aprinsă seara!', 'know'),
@@ -387,7 +387,7 @@ morning_opts as (
 ),
 morning_extras as (
   insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-  select t.id, morning_q.id, 4, e.title, e.description, e.order_index, e.extra_type, 'all'
+  select t.id, morning_q.id, 4, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
   from trip t, morning_q
   join (values
     (1, 'Pădure & Apicultură', 'Pinii mediteraneeni (Pefkos) acoperă dealurile. Albinele colectează rășina de pin și produc o miere închisă la culoare. 💡 Căutați la magazinele de suveniruri borcane cu miere de pin de Kassandra!', 'know'),
@@ -415,7 +415,7 @@ lunch_opts as (
   ) as o(order_index, label, is_correct) on true
 )
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select t.id, lunch_q.id, 4, e.title, e.description, e.order_index, e.extra_type, 'all'
+select t.id, lunch_q.id, 4, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
 from trip t, lunch_q
 join (values
   (1, 'Pește Mic Crocant', 'Peștii Gavros (hamsii) sau Sardeles (sardine) se prăjesc rapid în făină și se mănâncă întregi. 💡 Stoarceți lămâie peste ei și observați cât de crocanți sunt!', 'know'),
@@ -455,7 +455,7 @@ with trip as (select id from trips where slug = 'kassandra-2026'),
 d4_battle as (select id from battles where trip_id = (select id from trip) and day_number = 4 and is_final = false),
 d4_qs as (select id, order_index from questions where battle_id = (select id from d4_battle))
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select (select id from trip), q.id, 4, e.title, e.description, 1, e.extra_type, 'all'
+select (select id from trip), q.id, 4, e.title, e.description, 1, e.extra_type::extra_type_enum, 'all'
 from d4_qs q
 join (values
   (1, 'Aur Dulce', 'Mierea de pin este mai puțin dulce și mai închisă la culoare decât mierea florală obișnuită, fiind foarte apreciată pentru gustul ei aromat și bogat în minerale. 💡 Dacă gustați miere de pin, comparați culoarea ei cu o miere obișnuită de flori!', 'know'),
@@ -487,7 +487,7 @@ morning_opts as (
 ),
 morning_extras as (
   insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-  select t.id, morning_q.id, 5, e.title, e.description, e.order_index, e.extra_type, 'all'
+  select t.id, morning_q.id, 5, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
   from trip t, morning_q
   join (values
     (1, 'Vulcanică & Geologie', 'Apa termală izvorăște din adâncuri la 39°C și este bogată în sulf. 💡 Când vă apropiați de centrul SPA din Loutra, simțiți mirosul specific de sulf (care seamănă puțin cu cel al ouălor fierte)!', 'know'),
@@ -515,7 +515,7 @@ lunch_opts as (
   ) as o(order_index, label, is_correct) on true
 )
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select t.id, lunch_q.id, 5, e.title, e.description, e.order_index, e.extra_type, 'all'
+select t.id, lunch_q.id, 5, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
 from trip t, lunch_q
 join (values
   (1, 'Rețetă & Condimente', 'Moussaka conține felii de vinete și cartofi prăjiți, carne tocată condimentată cu nucșoară sau scorțișoară și un sos alb din lapte și făină. 💡 Observați straturile din farfurie când tăiați cu furculița!', 'know'),
@@ -555,7 +555,7 @@ with trip as (select id from trips where slug = 'kassandra-2026'),
 d5_battle as (select id from battles where trip_id = (select id from trip) and day_number = 5 and is_final = false),
 d5_qs as (select id, order_index from questions where battle_id = (select id from d5_battle))
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select (select id from trip), q.id, 5, e.title, e.description, 1, e.extra_type, 'all'
+select (select id from trip), q.id, 5, e.title, e.description, 1, e.extra_type::extra_type_enum, 'all'
 from d5_qs q
 join (values
   (1, 'Chimie Naturală', 'Sulful din apele termale ajută la circulație și este folosit tradițional pentru afecțiuni ale pielii și articulațiilor, motiv pentru care localnicii vin aici de generații. 💡 Întrebați-i pe cei mai mari din familie dacă simt vreo diferență în piele după o baie termală!', 'ask'),
@@ -587,7 +587,7 @@ morning_opts as (
 ),
 morning_extras as (
   insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-  select t.id, morning_q.id, 6, e.title, e.description, e.order_index, e.extra_type, 'all'
+  select t.id, morning_q.id, 6, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
   from trip t, morning_q
   join (values
     (1, 'Apus & Culori', 'De pe coasta de vest (Siviri), soarele apune direct peste marea deschisă. 💡 Priviți cerul spre seară și numărați câte nuanțe de portocaliu, roz și violet puteți vedea!', 'explore'),
@@ -615,7 +615,7 @@ lunch_opts as (
   ) as o(order_index, label, is_correct) on true
 )
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select t.id, lunch_q.id, 6, e.title, e.description, e.order_index, e.extra_type, 'all'
+select t.id, lunch_q.id, 6, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
 from trip t, lunch_q
 join (values
   (1, 'Frigărui / Souvlaki', 'Souvlaki reprezintă bucățele de carne marinate în ulei, lămâie și oregano, fripte pe cărbuni. 💡 Scoateți carnea de pe bățul din lemn și numărați câte bucățele sunt!', 'know'),
@@ -655,7 +655,7 @@ with trip as (select id from trips where slug = 'kassandra-2026'),
 d6_battle as (select id from battles where trip_id = (select id from trip) and day_number = 6 and is_final = false),
 d6_qs as (select id, order_index from questions where battle_id = (select id from d6_battle))
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select (select id from trip), q.id, 6, e.title, e.description, 1, e.extra_type, 'all'
+select (select id from trip), q.id, 6, e.title, e.description, 1, e.extra_type::extra_type_enum, 'all'
 from d6_qs q
 join (values
   (1, 'Gustare de Dimineață', 'Koulouri se coace cu o crustă lucioasă obținută prin scufundarea aluatului în must de struguri (petimezi) înainte de a fi tăvălit prin susan. 💡 Gustați un Koulouri proaspăt și vedeți dacă simțiți gustul ușor dulceag al crustei!', 'know'),
@@ -687,7 +687,7 @@ morning_opts as (
 ),
 morning_extras as (
   insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-  select t.id, morning_q.id, 7, e.title, e.description, e.order_index, e.extra_type, 'all'
+  select t.id, morning_q.id, 7, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
   from trip t, morning_q
   join (values
     (1, 'Rezervație & Flamingo', 'Mlaștinile din Sani (Sani Wetlands) sunt protejate. Păsările Flamingo își capătă culoarea roz mâncând creveți mici din apele puțin adânci. 💡 Căutați cu privirea pe lacuri păsările înalte cu picioare lungi!', 'know'),
@@ -715,7 +715,7 @@ lunch_opts as (
   ) as o(order_index, label, is_correct) on true
 )
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select t.id, lunch_q.id, 7, e.title, e.description, e.order_index, e.extra_type, 'all'
+select t.id, lunch_q.id, 7, e.title, e.description, e.order_index, e.extra_type::extra_type_enum, 'all'
 from trip t, lunch_q
 join (values
   (1, 'Gogoși cu Miere', 'Loukoumades sunt bile din aluat prăjit, crocante la exterior și moi în interior, servite calde cu miere de pin și scorțișoară sau ciocolată. 💡 Numărați câte bile de gogoși sunt într-o porție!', 'know'),
@@ -775,7 +775,7 @@ with trip as (select id from trips where slug = 'kassandra-2026'),
 final_battle as (select id from battles where trip_id = (select id from trip) and is_final = true),
 final_qs as (select id, order_index from questions where battle_id = (select id from final_battle))
 insert into extras (trip_id, question_id, day_number, title, description, order_index, extra_type, audience)
-select (select id from trip), q.id, 7, e.title, e.description, 1, e.extra_type, 'all'
+select (select id from trip), q.id, 7, e.title, e.description, 1, e.extra_type::extra_type_enum, 'all'
 from final_qs q
 join (values
   (1, 'Recapitulare — Ziua 1', 'Ați aflat că peninsulele Halkidiki sunt, în legendă, urmele tridentului lui Poseidon. 💡 Cine din familie își amintește pe ce braț al Halkidikiului ați stat toată săptămâna?', 'ask'),
