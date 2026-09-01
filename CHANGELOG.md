@@ -842,6 +842,25 @@
   `text` rather than an unknown literal, so those 21 references now read
   `e.extra_type::extra_type_enum` explicitly), and the full
   `battle_scoring.test.sql` suite, all unchanged.
+- Fixed: Setări > Utilizatori showed the device's logged-in "Călătoriile
+  mele" account phone/PIN fields under *any* adult profile being
+  edited, with no check that the account actually belonged to that
+  profile -- just "this device has some account, and this happens to be
+  an adult". A device with more than one adult participant (e.g. an
+  admin account plus an unrelated participant profile used for testing)
+  showed the wrong account's phone number under the wrong profile.
+  Migration `20260901100000_participant_account_link.sql` adds a
+  nullable `participants.account_id`, set by `getOrCreateAdultParticipant`
+  when an authenticated account auto-joins a trip as its first adult
+  (`app/trips/page.tsx`, right after login/account creation) -- the only
+  place a participant and an account are ever linked. `EditProfileForm`
+  now only shows the account fields when `profile.account_id` matches
+  the device's logged-in account, not for every adult profile on the
+  device. Existing participants predating this column stay unlinked
+  (correctly -- there's no way to know retroactively which one, if any,
+  an old account belongs to), so they simply won't show account fields
+  until the account holder re-triggers the auto-join (e.g. logging in
+  again with `?link=<slug>`).
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

@@ -478,12 +478,17 @@ function EditProfileForm({
   const [age, setAge] = useState(profile.age?.toString() ?? "");
   const [error, setError] = useState<string | null>(null);
 
-  // Only the adult this device's "Călătoriile mele" account belongs to
-  // gets phone/PIN fields here -- children never go through account
-  // creation. accountId is read once (not re-checked on every render)
-  // since it doesn't change while this form is open.
+  // Only the specific adult profile this device's "Călătoriile mele"
+  // account actually created (profile.account_id, set by
+  // getOrCreateAdultParticipant's caller in app/trips/page.tsx) gets
+  // phone/PIN fields here -- not just any adult profile on a device
+  // that happens to have some account logged in (a device can have more
+  // than one adult profile, e.g. an admin account plus an unrelated
+  // participant profile used for testing). accountId is read once (not
+  // re-checked on every render) since it doesn't change while this form
+  // is open.
   const [accountId] = useState(() => getStoredAccountId());
-  const showAccountFields = profile.role === "adult" && Boolean(accountId);
+  const showAccountFields = Boolean(accountId) && profile.account_id === accountId;
   const [phoneNumber, setPhoneNumber] = useState("");
   const [pin, setPin] = useState("");
   const [showPin, setShowPin] = useState(false);

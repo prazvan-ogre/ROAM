@@ -116,7 +116,7 @@ function TripsPageInner() {
       if (linkSlug && result.displayName) {
         try {
           const trip = await getTripBySlug(linkSlug);
-          if (trip) await getOrCreateAdultParticipant(trip.id, result.displayName);
+          if (trip) await getOrCreateAdultParticipant(trip.id, result.displayName, result.accountId);
         } catch (joinErr) {
           console.error("Auto-join after account creation failed", joinErr);
         }

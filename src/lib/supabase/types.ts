@@ -140,6 +140,7 @@ export interface Database {
           role: ParticipantRole;
           age: number | null;
           managed_by_participant_id: string | null;
+          account_id: string | null;
           created_at: string;
           last_seen_at: string;
         },
