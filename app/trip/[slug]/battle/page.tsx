@@ -26,7 +26,16 @@ export default function DailyBattlePage() {
 
     async function load() {
       try {
-        const battle = await getDailyBattle(trip!.id, currentTripDay(trip!));
+        // Final Battle replaces that evening's regular Battle on the
+        // trip's last day (product owner spec) -- never even fetched
+        // then, regardless of whether content happens to exist for that
+        // day; "unavailable" below points to /final instead.
+        const day = currentTripDay(trip!);
+        if (day >= trip!.duration_days) {
+          setContentStep("unavailable");
+          return;
+        }
+        const battle = await getDailyBattle(trip!.id, day);
         if (cancelled) return;
         if (!battle || battle.questions.length === 0) {
           setContentStep("unavailable");
@@ -73,11 +82,12 @@ export default function DailyBattlePage() {
   }
 
   if (contentStep === "unavailable") {
+    const isLastDay = currentTripDay(trip) >= trip.duration_days;
     return (
       <Centered>
-        <p>Battle-ul de azi nu e încă disponibil.</p>
-        <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
-          Înapoi acasă
+        <p>{isLastDay ? "În ultima zi joci Battle-ul Final." : "Battle-ul de azi nu e încă disponibil."}</p>
+        <Link href={isLastDay ? `/trip/${slug}/final` : `/trip/${slug}`} className="mt-4 inline-block underline">
+          {isLastDay ? "Hai la finală" : "Înapoi acasă"}
         </Link>
       </Centered>
     );

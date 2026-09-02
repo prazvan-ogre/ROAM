@@ -861,6 +861,21 @@
   an old account belongs to), so they simply won't show account fields
   until the account holder re-triggers the auto-join (e.g. logging in
   again with `?link=<slug>`).
+- Fixed: Final Battle is supposed to replace that evening's regular
+  Battle on the trip's last day (product owner spec -- already true of
+  the seed content, which never creates a regular battle for the last
+  day), but nothing in the code actually enforced it, only content
+  authoring convention. Home (`app/trip/[slug]/page.tsx`) never fetched
+  the regular Battle on the last day (it happened to always come back
+  empty, but now doesn't even ask) and hides that row entirely instead
+  of showing a redundant, permanently-unavailable "Battle" line next to
+  the Final Battle card. `/battle` (`app/trip/[slug]/battle/page.tsx`)
+  now redirects straight to `/final` on the last day instead of trying
+  to load a regular battle. Scor's "Scor zilnic"
+  (`app/trip/[slug]/leaderboard/page.tsx`) fetches the Final Battle
+  instead of the regular one on the last day -- previously it stayed
+  stuck on 0-0 all evening since it only ever asked for a regular battle
+  that structurally can't exist that day.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

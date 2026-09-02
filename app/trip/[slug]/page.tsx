@@ -86,8 +86,12 @@ export default function TripHomePage() {
 
   const loadBattleStatus = useCallback(
     async (tripId: string, day: number, isLastDay: boolean, profileIds: string[]) => {
+      // Final Battle replaces that evening's regular Battle on the
+      // trip's last day (product owner spec), not a second, additional
+      // thing to play -- so the daily battle is never even fetched then,
+      // regardless of whether content happens to exist for that day.
       const [daily, final] = await Promise.all([
-        getDailyBattle(tripId, day),
+        isLastDay ? Promise.resolve(null) : getDailyBattle(tripId, day),
         isLastDay ? getFinalBattle(tripId) : Promise.resolve(null),
       ]);
 
@@ -332,8 +336,13 @@ export default function TripHomePage() {
             status={lunchStatus}
             href={`/trip/${slug}/discover/lunch`}
             scheduledSlot="lunch"
+            isLast={day >= trip.duration_days}
           />
-          <BattleChallengeRow status={battleStatus} slug={slug} isLast />
+          {/* Final Battle replaces that evening's regular Battle on the
+              last day (product owner spec) -- its own card right below
+              already covers "tonight's battle" then, so this row would
+              just be a redundant, always-unavailable duplicate. */}
+          {day < trip.duration_days && <BattleChallengeRow status={battleStatus} slug={slug} isLast />}
         </div>
       </section>
 
@@ -430,12 +439,14 @@ function ChallengeRow({
   status,
   href,
   scheduledSlot,
+  isLast,
 }: {
   icon: ReactNode;
   title: string;
   status: SlotStatus;
   href: string;
   scheduledSlot: "morning" | "lunch";
+  isLast?: boolean;
 }) {
   const availability = getSlotAvailability(scheduledSlot);
 
@@ -457,7 +468,7 @@ function ChallengeRow({
   }
 
   return (
-    <div className="flex items-center gap-3 border-b border-secondary py-4">
+    <div className={`flex items-center gap-3 py-4 ${!isLast ? "border-b border-secondary" : ""}`}>
       <div
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
           status.completed || !status.questionId ? "bg-secondary" : "bg-accent"

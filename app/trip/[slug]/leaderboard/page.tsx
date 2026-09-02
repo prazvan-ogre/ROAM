@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { currentTripDay } from "@/lib/trip";
-import { getDailyBattle, getBattleWindowStatus, getBattleResult, getTripBattleWinTally } from "@/lib/battle";
+import { getDailyBattle, getFinalBattle, getBattleWindowStatus, getBattleResult, getTripBattleWinTally } from "@/lib/battle";
 import { getParticipantLeaderboard, type LeaderboardEntry } from "@/lib/discover";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
@@ -37,10 +37,14 @@ export default function LeaderboardPage() {
       const d = currentTripDay(trip);
       setDay(d);
 
+      // Final Battle replaces that evening's regular Battle on the
+      // trip's last day (product owner spec), so "Scor zilnic" reflects
+      // its result then instead of a regular battle that's never played.
+      const daily = d >= trip.duration_days ? await getFinalBattle(trip.id) : await getDailyBattle(trip.id, d);
+
       // The evening's result stays hidden for 15 minutes after the
       // first individual answer (product owner spec), so nobody can peek
       // at a partial score here while others are still answering.
-      const daily = await getDailyBattle(trip.id, d);
       const dailyVisible = daily ? (await getBattleWindowStatus(daily.battle.id)).visible : false;
 
       const [dailyResult, tripWinTally, total, today] = await Promise.all([
