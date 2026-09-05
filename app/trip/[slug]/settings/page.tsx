@@ -483,14 +483,17 @@ function EditProfileForm({
   const [error, setError] = useState<string | null>(null);
 
   // Only the specific adult profile this device's "Călătoriile mele"
-  // account actually created (profile.account_id, set by
-  // getOrCreateAdultParticipant's caller in app/trips/page.tsx) gets
-  // phone/PIN fields here -- not just any adult profile on a device
-  // that happens to have some account logged in (a device can have more
-  // than one adult profile, e.g. an admin account plus an unrelated
-  // participant profile used for testing). accountId is read once (not
-  // re-checked on every render) since it doesn't change while this form
-  // is open.
+  // account actually created (profile.account_id, set server-side after
+  // login -- see app/api/account/route.ts and
+  // src/lib/security/participantLink.ts, batch 2) gets phone/PIN fields
+  // here -- not just any adult profile on a device that happens to have
+  // some account logged in (a device can have more than one adult
+  // profile, e.g. an admin account plus an unrelated participant profile
+  // used for testing). accountId is read once (not re-checked on every
+  // render) since it doesn't change while this form is open; this is a
+  // display-only comparison (which fields to show), not a security
+  // boundary -- account_id itself is column-locked at the database
+  // layer (20260907091000_batch2_participant_lockdown.sql).
   const [accountId] = useState(() => getStoredAccountId());
   const showAccountFields = Boolean(accountId) && profile.account_id === accountId;
   const [phoneNumber, setPhoneNumber] = useState("");

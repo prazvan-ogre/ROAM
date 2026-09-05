@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { verifySessionToken, readSessionCookie } from "@/lib/security/session";
+import { resolveAccountSession, setAccountSessionCookies } from "@/lib/security/session";
 
 export const runtime = "nodejs";
 
@@ -9,13 +9,14 @@ export const runtime = "nodejs";
 // ? getAllTrips() : getTripsForAccount(accountId)`) -- both the accountId
 // filter and the admin flag itself came straight out of localStorage, so
 // anyone could set roam_creator_account_is_admin=1 in devtools and see
-// every trip on the platform. This route re-derives both from the
-// session cookie (src/lib/security/session.ts) and a server-side lookup
-// of creator_accounts.is_admin instead.
+// every trip on the platform. This route re-derives both from a real,
+// provider-verified Supabase Auth session (batch 2,
+// src/lib/security/session.ts) and a server-side lookup of
+// creator_accounts.is_admin instead.
 export async function GET(request: Request) {
   try {
-    const accountId = verifySessionToken(readSessionCookie(request))?.accountId;
-    if (!accountId) {
+    const session = await resolveAccountSession(request);
+    if (!session) {
       return NextResponse.json({ error: "Sesiune expirată sau lipsă. Autentifică-te din nou." }, { status: 401 });
     }
 
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
     const { data: account, error: accountError } = await admin
       .from("creator_accounts")
       .select("is_admin")
-      .eq("id", accountId)
+      .eq("id", session.accountId)
       .maybeSingle();
     if (accountError) throw accountError;
     if (!account) return NextResponse.json({ error: "Contul nu a fost găsit." }, { status: 404 });
@@ -32,10 +33,12 @@ export async function GET(request: Request) {
     const query = admin.from("trips").select(columns).order("created_at", { ascending: false });
     const { data: trips, error: tripsError } = account.is_admin
       ? await query
-      : await query.eq("created_by_account_id", accountId);
+      : await query.eq("created_by_account_id", session.accountId);
     if (tripsError) throw tripsError;
 
-    return NextResponse.json({ isAdmin: account.is_admin, trips: trips ?? [] });
+    const response = NextResponse.json({ isAdmin: account.is_admin, trips: trips ?? [] });
+    if (session.refreshed) setAccountSessionCookies(response, session.refreshed);
+    return response;
   } catch (err) {
     console.error("Account trip listing failed", err);
     return NextResponse.json({ error: "Nu am putut încărca călătoriile. Încearcă din nou." }, { status: 500 });
