@@ -8,7 +8,7 @@ import { currentTripDay } from "@/lib/trip";
 import {
   getDiscoverQuestion,
   getMyResponse,
-  submitResponse,
+  submitAnswer,
   getOrAssignExtra,
   type DiscoverQuestion,
   type AnswerOption,
@@ -48,6 +48,7 @@ export default function DiscoverPage() {
   const [myResponse, setMyResponse] = useState<Response | null>(null);
   const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
   const [openedAt] = useState(() => Date.now());
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
@@ -106,27 +107,46 @@ export default function DiscoverPage() {
     };
   }, [trip, profiles, discoverSlot, activeProfile]);
 
+  // R3 (20260906140000_record_answer_authoritative.sql): submitAnswer is
+  // idempotent on (participantId, questionId) -- a retry after a lost
+  // confirmation (network drop after the server already committed) is
+  // just calling this again with the same selectedOption, which is
+  // exactly what the "Încearcă din nou" button below does, since
+  // selectedOption is never cleared on failure. It safely returns the
+  // already-saved response instead of erroring or double-submitting.
+  //
+  // Extra assignment and analytics are fire-and-forget once the answer
+  // itself is accepted: a failure in either must never hide or
+  // invalidate an answer the server already recorded, so they're never
+  // awaited as part of the submission's own success/failure path.
   async function handleSubmitAnswer() {
     if (!trip || !content || !activeProfile || !selectedOption) return;
     setSubmitting(true);
+    setSubmitError(false);
     try {
-      const [response, assignedExtra] = await Promise.all([
-        submitResponse(activeProfile.id, content.question.id, selectedOption),
-        getOrAssignExtra(activeProfile.id, activeProfile.role, content.question.id),
-      ]);
-      setMyResponse(response);
-      setExtra(assignedExtra);
-      await trackEvent(trip.id, "answer_submitted", activeProfile.id, {
+      const result = await submitAnswer(activeProfile.id, content.question.id, selectedOption.id);
+      setMyResponse(result.response);
+      setStep("reveal");
+
+      getOrAssignExtra(activeProfile.id, activeProfile.role, content.question.id)
+        .then((assignedExtra) => {
+          setExtra(assignedExtra);
+          if (assignedExtra) {
+            void trackEvent(trip.id, "extra_viewed", activeProfile.id, { extra_id: assignedExtra.id });
+          }
+        })
+        .catch((err) => console.error("getOrAssignExtra failed", err));
+
+      void trackEvent(trip.id, "answer_submitted", activeProfile.id, {
         question_id: content.question.id,
         response_time_ms: Date.now() - openedAt,
       });
-      if (response.is_correct) {
-        await trackEvent(trip.id, "answer_correct", activeProfile.id, { question_id: content.question.id });
+      if (result.response.is_correct) {
+        void trackEvent(trip.id, "answer_correct", activeProfile.id, { question_id: content.question.id });
       }
-      if (assignedExtra) {
-        await trackEvent(trip.id, "extra_viewed", activeProfile.id, { extra_id: assignedExtra.id });
-      }
-      setStep("reveal");
+    } catch (err) {
+      console.error("submitAnswer failed", err);
+      setSubmitError(true);
     } finally {
       setSubmitting(false);
     }
@@ -217,8 +237,13 @@ export default function DiscoverPage() {
             ))}
           </div>
           <div className="mt-auto pt-4">
+            {submitError && (
+              <p className="mb-3 text-center text-[13px] text-destructive">
+                Nu am putut trimite răspunsul. Verifică-ți conexiunea și încearcă din nou.
+              </p>
+            )}
             <Btn onClick={handleSubmitAnswer} disabled={!selectedOption || submitting}>
-              {submitting ? "..." : "RĂSPUNDE"}
+              {submitting ? "..." : submitError ? "ÎNCEARCĂ DIN NOU" : "RĂSPUNDE"}
             </Btn>
           </div>
         </div>

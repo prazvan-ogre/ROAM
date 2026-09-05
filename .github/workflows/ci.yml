@@ -125,12 +125,16 @@ jobs:
       # above in, not a deliberate omission. test:sql:content-isolation
       # (trip_id-scoped content RLS, same review, landed alongside batch 2)
       # had the same gap -- closed here rather than left for yet another
-      # batch to notice.
+      # batch to notice. test:sql:record-answer (R3, the single
+      # authoritative record_answer() RPC) is wired in from its own
+      # first landing, not as a later fix -- same SET ROLE/set_config
+      # pattern as every other file in this step.
       - name: Run RLS regression tests
         run: |
           npm run test:sql:r1
           npm run test:sql:r1-first-insert
           npm run test:sql:content-isolation
+          npm run test:sql:record-answer
           npm run test:sql:batch2-activity
           npm run test:sql:batch2-lockdown
           npm run test:sql:batch2-battle-authz

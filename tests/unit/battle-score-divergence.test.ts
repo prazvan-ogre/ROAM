@@ -1,17 +1,31 @@
-// Verifies the fix for hypothesis B/R3 from the 2026-09-05 review:
-// recordBattleAnswer (src/lib/battle.ts) used to write the personal
+// Verifies the fix for hypothesis B/R3 from the 2026-09-05 review, now
+// carried by submitAnswer (src/lib/discover.ts) instead of the
+// battle-specific recordBattleAnswer this file used to test directly.
+// recordBattleAnswer/record_battle_answer used to write the personal
 // response and the team battle_scores row as two separate, sequential
-// inserts with no shared transaction -- a failure on the second write
-// left the first one committed with no compensating rollback. It now
-// makes a single RPC call to record_battle_answer()
-// (20260906120000_atomic_record_battle_answer.sql), which does both
-// inserts inside one Postgres function: if anything inside it raises,
-// the whole thing rolls back, responses included.
+// operations with no shared transaction -- a failure on the second write
+// left the first one committed with no compensating rollback.
 //
-// Runs the real recordBattleAnswer code against a fake client (see
-// helpers/fakeSupabaseClient.ts) that fails the RPC call outright, the
-// way a dropped connection would -- and checks that *neither* table
-// gets a row, unlike the divergence this file used to demonstrate.
+// R3 (20260906140000_record_answer_authoritative.sql) went further:
+// there is no longer a battle-specific submission path at all --
+// Discover, Battle, Final and Catchup all call the same submitAnswer(),
+// which makes exactly one RPC call (record_answer) that does every write
+// (responses, and battle_scores when eligible) inside one Postgres
+// function. From the client's own perspective there is now only ever one
+// call to succeed or fail as a whole -- the two-separate-calls
+// divergence this file used to reproduce is structurally impossible
+// here, not just fixed by a retry.
+//
+// What's left worth testing at this level (an in-memory fake, no real
+// Postgres) is narrower and different in kind: does submitAnswer
+// propagate an RPC failure as a rejected promise without fabricating a
+// result or leaving any client-side state behind, and does it correctly
+// unwrap a successful call's composite return shape (status/response/
+// contributedToTeam/correctOptionId)? The actual atomicity proof --
+// forcing a failure between the responses and battle_scores writes and
+// confirming no orphaned row survives -- now lives against a real
+// Postgres in supabase/tests/record_answer.test.sql, since that's the
+// only place the transaction itself actually exists.
 import { describe, it, expect, vi } from "vitest";
 import { createFakeSupabaseClient, type FakeDb } from "./helpers/fakeSupabaseClient";
 
@@ -24,57 +38,29 @@ vi.mock("@/lib/supabase/client", () => ({
   },
 }));
 
-const question = {
-  id: "q1",
-  trip_id: "t1",
-  battle_id: "b1",
-  kind: "battle",
-  day_number: 1,
-  slot: null,
-  order_index: 1,
-  prompt: "?",
-  question_type: "single_choice",
-  media_url: null,
-  points: 10,
-  common_core: null,
-  one_thing: null,
-  correct_reveal_message: null,
-  alternative_reveal_message: null,
-  sources: [],
-  verified: true,
-  published: true,
-  is_active: true,
-  created_at: "2026-01-01T00:00:00Z",
-} as never;
-
-const correctOption = { id: "opt1", question_id: "q1", order_index: 1, label: "A", is_correct: true, created_at: "" } as never;
-
-describe("R3: personal/team score atomicity (fixed)", () => {
-  it("commits neither write when the RPC call fails", async () => {
-    db = { responses: [], battle_scores: [] };
+describe("R3: submitAnswer propagates record_answer's outcome faithfully", () => {
+  it("rejects and leaves no local trace when the RPC call fails", async () => {
+    db = { responses: [] };
     failRpc = true;
-    const { recordBattleAnswer } = await import("@/lib/battle");
+    const { submitAnswer } = await import("@/lib/discover");
 
-    await expect(
-      recordBattleAnswer("p1", "adults", "b1", question, correctOption, false),
-    ).rejects.toThrow("simulated network failure");
+    await expect(submitAnswer("p1", "q1", "opt1")).rejects.toThrow("simulated network failure");
 
-    // Fixed: no partial write survives a failed call -- both tables stay
-    // empty, matching the real function's atomicity.
     expect(db.responses).toHaveLength(0);
-    expect(db.battle_scores).toHaveLength(0);
   });
 
-  it("records both writes together when the RPC succeeds", async () => {
-    db = { responses: [], battle_scores: [] };
+  it("returns the accepted result, unwrapped, when the RPC succeeds", async () => {
+    db = { responses: [] };
     failRpc = false;
-    const { recordBattleAnswer } = await import("@/lib/battle");
+    const { submitAnswer } = await import("@/lib/discover");
 
-    await recordBattleAnswer("p1", "adults", "b1", question, correctOption, false);
+    const result = await submitAnswer("p1", "q1", "opt1");
 
+    expect(result.status).toBe("accepted");
+    expect(result.response.participant_id).toBe("p1");
+    expect(result.response.question_id).toBe("q1");
+    expect(result.contributedToTeam).toBe(true);
+    expect(result.correctOptionId).toBe("opt1");
     expect(db.responses).toHaveLength(1);
-    expect(db.responses[0].participant_id).toBe("p1");
-    expect(db.battle_scores).toHaveLength(1);
-    expect(db.battle_scores[0].participant_id).toBe("p1");
   });
 });

@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { Moon, Check, X, ExternalLink } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 import type { BattleContent, BattleWindowStatus } from "@/lib/battle";
-import { recordBattleAnswer, getBattleWindowStatus, getBattleResult } from "@/lib/battle";
-import { getOrAssignExtra, type AnswerOption, type Extra, type Response } from "@/lib/discover";
+import { getBattleWindowStatus, getBattleResult } from "@/lib/battle";
+import { submitAnswer, getOrAssignExtra, type AnswerOption, type Extra, type Response } from "@/lib/discover";
 import { trackEvent } from "@/lib/analytics";
 import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import type { BattleTeam } from "@/lib/supabase/types";
@@ -46,6 +46,8 @@ export function BattleFlow({
   const [myResponse, setMyResponse] = useState<Response | null>(null);
   const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
+  const [correctOptionId, setCorrectOptionId] = useState<string | null>(null);
   const [passCorrect, setPassCorrect] = useState(0);
   const [passAnswered, setPassAnswered] = useState(0);
   const [windowStatus, setWindowStatus] = useState<BattleWindowStatus | null>(null);
@@ -108,34 +110,41 @@ export function BattleFlow({
     setSelectedOption(null);
     setMyResponse(null);
     setExtra(null);
+    setCorrectOptionId(null);
+    setSubmitError(false);
     setStep("question");
   }
 
+  // R3 (20260906140000_record_answer_authoritative.sql): submitAnswer
+  // derives correctness/score/team/team-window-eligibility server-side --
+  // there is no team/isFinal/score to pass anymore. Idempotent on
+  // (participantId, questionId), so the "ÎNCEARCĂ DIN NOU" retry below
+  // (selectedOption is never cleared on failure) safely recovers an
+  // already-accepted answer instead of erroring or double-submitting.
+  // Extra assignment and analytics are fire-and-forget: they must never
+  // hide or invalidate an answer the server already recorded.
   async function handleSubmit() {
     if (!activeProfile || !current || !selectedOption) return;
     setSubmitting(true);
+    setSubmitError(false);
     try {
-      const team: BattleTeam = activeProfile.role === "adult" ? "adults" : "kids";
-      const [response, assignedExtra] = await Promise.all([
-        recordBattleAnswer(
-          activeProfile.id,
-          team,
-          content.battle.id,
-          current.question,
-          selectedOption,
-          isFinal,
-        ),
-        getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id),
-      ]);
-      setMyResponse(response);
-      setExtra(assignedExtra);
+      const result = await submitAnswer(activeProfile.id, current.question.id, selectedOption.id);
+      setMyResponse(result.response);
+      setCorrectOptionId(result.correctOptionId);
       setPassAnswered((n) => n + 1);
-      if (response.is_correct) setPassCorrect((n) => n + 1);
-      await trackEvent(tripId, "battle_answered", activeProfile.id, {
+      if (result.response.is_correct) setPassCorrect((n) => n + 1);
+      setStep("reveal");
+
+      getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id)
+        .then(setExtra)
+        .catch((err) => console.error("getOrAssignExtra failed", err));
+      void trackEvent(tripId, "battle_answered", activeProfile.id, {
         battle_id: content.battle.id,
         question_id: current.question.id,
       });
-      setStep("reveal");
+    } catch (err) {
+      console.error("submitAnswer failed", err);
+      setSubmitError(true);
     } finally {
       setSubmitting(false);
     }
@@ -160,6 +169,8 @@ export function BattleFlow({
       setSelectedOption(null);
       setMyResponse(null);
       setExtra(null);
+      setCorrectOptionId(null);
+      setSubmitError(false);
       setStep("question");
     }
   }
@@ -309,8 +320,13 @@ export function BattleFlow({
             ))}
           </div>
           <div className="mt-auto pt-4">
+            {submitError && (
+              <p className="mb-3 text-center text-[13px] text-destructive">
+                Nu am putut trimite răspunsul. Verifică-ți conexiunea și încearcă din nou.
+              </p>
+            )}
             <Btn onClick={handleSubmit} disabled={!selectedOption || submitting}>
-              {submitting ? "..." : "RĂSPUNDE"}
+              {submitting ? "..." : submitError ? "ÎNCEARCĂ DIN NOU" : "RĂSPUNDE"}
             </Btn>
           </div>
         </div>
@@ -320,6 +336,7 @@ export function BattleFlow({
 
   if (step === "reveal") {
     const isCorrect = !!myResponse?.is_correct;
+    const correctOption = current.options.find((o) => o.id === correctOptionId);
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
         <FlowHeader label="Battle" icon={<Moon size={15} />} onClose={goHome} />
@@ -330,7 +347,7 @@ export function BattleFlow({
           <h3 className="text-[18px] font-semibold leading-snug tracking-tight text-foreground">{current.question.prompt}</h3>
           <div className="rounded-xl bg-accent px-4 py-3">
             <p className="text-[13px] font-semibold text-primary">
-              Răspuns: {current.options.find((o) => o.is_correct)?.label}
+              Răspuns: {correctOption?.label}
             </p>
           </div>
 

@@ -47,8 +47,8 @@ Everything else maps 1:1 to the spec's entity list.
 |---|---|
 | `participants` | One row per profile (adult *or* child) on a trip. Child rows set `age` and usually `managed_by_participant_id`, sharing the managing adult's `device_id` — but a child can also be the sole, unmanaged participant on their own device (onboarding wizard). |
 | `extra_assignments` | Which Extra a participant was assigned, and its viewed/completed status. |
-| `responses` | A participant's answer to a Discover or Battle question. |
-| `battle_scores` | One row per participant's answer to a Battle question (`participant_id`, `team`, `score`), written alongside a `responses` row for that same answer. A team's score for a battle is the average of its members' points (`battle_team_score()`), feeding the "PĂRINȚI 2 — COPII 1" tally. Publicly readable — see point 4 below. |
+| `responses` | A participant's answer to a Discover or Battle question. Written only through `record_answer()` (point 12 below) — never a direct `insert`, regardless of what the anon/authenticated key would otherwise be able to reach. |
+| `battle_scores` | One row per participant's answer to a Battle question (`participant_id`, `team`, `score`, `response_id` — the `responses` row that earned it, nullable for pre-R3 rows), written atomically alongside that `responses` row by `record_answer()`. A team's score for a battle is the average of its members' points (`battle_team_score()`), feeding the "PĂRINȚI 2 — COPII 1" tally. Publicly readable — see point 4 below. |
 | `feedback` | The 6-question end-of-trip survey from spec section 20 (`learned_new`, `generated_conversations`, `searched_more`, `anticipated_next`, `would_use_again`, `comment`). |
 | `analytics_events` | Product analytics events (see `src/lib/analytics.ts` for the event list). |
 
@@ -295,6 +295,72 @@ what a newly-created row gets.
     **Not covered**: `battles` (title/day_number/is_final) stays
     `using (true)` — lower sensitivity (no question/answer content), out
     of this batch's reported scope, left for a follow-up if wanted.
+12. **`record_answer()` (`20260906140000_record_answer_authoritative.sql`,
+    R3) is the only way to write `responses`/`battle_scores` at all** —
+    both tables lost their anon/authenticated `insert` policy entirely in
+    the same migration, so a direct `insert` (bypassing the RPC) is
+    rejected by RLS regardless of the caller's own identity. Before this,
+    `submitResponse()`/`record_battle_answer()` took `is_correct`/
+    `score`/`team` as plain parameters and wrote them verbatim — RLS only
+    ever checked that the caller owned the `participant_id`, never that
+    the question/option belonged to the same trip, that the option
+    belonged to the question, that the question was published, or that
+    the claimed correctness/score/team matched reality. `record_answer`
+    takes only `participant_id`/`question_id`/`selected_option_id` and
+    derives everything else (correctness from `answer_options.is_correct`,
+    score from `questions.points`, team from the participant's own
+    `role`, and whether a Battle-kind answer contributes to the team's
+    15-minute result window) from the rows themselves — there is no
+    parameter for any of those to carry a forged value in. Idempotent on
+    `responses`' existing `unique (question_id, participant_id)` (no
+    separate token): a retry after a lost confirmation, or two genuinely
+    concurrent submissions, both resolve through the same
+    `unique_violation` handler, returning the original response
+    (`status: 'already_recorded'`) without re-evaluating team eligibility
+    at retry time; a retry with a *different* option returns
+    `status: 'conflict'` and leaves the original untouched.
+    `battle_scores.response_id` (nullable, unique) ties a team
+    contribution 1:1 to the response that earned it — nullable because a
+    pre-R3 `battle_scores` row only ever stored `battle_id`, not
+    `question_id`, so for a battle with more than one question there is
+    no way to backfill which `responses` row it came from without
+    guessing; those rows keep `response_id = null` permanently, which a
+    plain (non-partial) unique constraint already tolerates.
+    **Also closed in this migration: the answer-key exposure**
+    (`answer_options.is_correct` was `select *` public before a
+    participant had even answered) — column-level `revoke`, not a view
+    and not just trimming the client's own `.select()` list, so a raw
+    REST call asking for that column directly is rejected by Postgres
+    itself. The only way to learn which option was correct is
+    `record_answer`'s own return value (immediately after answering) or
+    the new `get_answered_correct_options()` (a batch reveal for the
+    post-trip recap page), both of which only ever reveal it for a
+    question the caller already has a response on record for.
+    **Team-window edge case, product-owner-confirmed**: a Battle answer
+    can still only ever *join* an already-open 15-minute window exactly
+    as before (unchanged duration/rule) — but *opening* a fresh window
+    (nobody has answered this battle individually yet) additionally
+    requires this to be happening on the battle's own scheduled trip day
+    (or, for the Final Battle, on/after the trip's last day), computed
+    from `trips.start_date` (a `date` column — calendar-date arithmetic
+    in UTC, not a time-of-day/timezone computation, since
+    `src/lib/schedule.ts`'s hour-level windows are deliberately
+    device-local with no stored timezone and can't be replicated
+    server-side with the same precision). A battle nobody played live,
+    recovered days later through Catchup (or any other late answer, live
+    Battle path included — there is no separate "Catchup mode" anymore,
+    just `record_answer` deriving the same eligibility from the same
+    data regardless of which page called it), still scores personally
+    but can never become the team's first — or any — contribution for
+    that battle.
+    **Final Battle points, re-confirmed 2026-09-05**: `questions.points`
+    stays `10` for Final Battle questions (product-owner decision) — the
+    client's own `BATTLE_POINTS.final = 5` constant (never applied to the
+    seeded data, which was always `10`) is removed rather than
+    reconciled toward it; `record_answer` reads `questions.points` as the
+    only source of truth for both the individual leaderboard and the
+    team score going forward, closing that divergence without touching
+    any already-seeded `points` value.
 
 ### Admin bootstrap and credential rotation
 
@@ -421,6 +487,7 @@ batch describes, and neither is silently reclaimed or deleted:
 - `supabase/migrations/20260830120000_creator_account_display_name.sql` — `creator_accounts.display_name` (nullable), so a trip's creator can be auto-joined to it as a participant right when they set up or log into their account (see "Security model" point 9 above).
 - `supabase/migrations/20260906090000_auth_ownership.sql` through `20260906120000_atomic_record_battle_answer.sql` — R1 (2026-09-05 review) batch 1: `participants.auth_user_id`, real ownership RLS on `participants`/`responses`/`battle_scores`, the `trips_public` view, `account_login_attempts`, and `record_battle_answer()`. See the CHANGELOG's own R1 entries for the full account.
 - `supabase/migrations/20260906130000_content_trip_isolation.sql` — `questions`/`answer_options`/`extras`/`explore_links` `select` policies now also require `is_trip_member(trip_id)`, closing the cross-trip content-readability gap raised in the 2026-09-05 architecture/security review's batch 2 (see "Security model" point 11 above for the full tradeoff, including the accepted gap for trips with only legacy/pre-R1 participants).
+- `supabase/migrations/20260906140000_record_answer_authoritative.sql` — `record_answer()` replaces `submitResponse()`'s direct insert and `record_battle_answer()` as the single, authoritative write path for Discover/Battle/Final/Catchup answers; `responses`/`battle_scores` lose their anon/authenticated `insert` policy entirely; `battle_scores.response_id` (nullable) links a team contribution to the response that earned it; `answer_options.is_correct` is column-level `revoke`d from anon/authenticated. See "Security model" point 12 above for the full contract (idempotency, the team-window day guard, and why `battle_scores.response_id` can't be backfilled).
 - `supabase/migrations/20260907090000_batch2_trip_activity_rls.sql` — R1 continued (batch 2): tightens `extra_assignments`/`prize_votes`/`feedback`/`analytics_events` RLS from `using (true)` to trip-membership/self-ownership, the four tables R1's first pass explicitly deferred. New `can_access_trip()` helper.
 - `supabase/migrations/20260907091000_batch2_participant_lockdown.sql` — column-level `REVOKE`/`GRANT` on `participants` so `trip_id`/`device_id`/`auth_user_id`/`managed_by_participant_id`/`account_id` are immutable for anon/authenticated after insert; `account_id` must be null and `managed_by_participant_id` must point at the caller's own row at INSERT time.
 - `supabase/migrations/20260907092000_batch2_battle_aggregate_authz.sql` — adds a trip-membership authorization check to `battle_team_score()`/`trip_battle_win_tally()` (previously callable with any battle/trip id by anyone); the scoring formula itself is unchanged.

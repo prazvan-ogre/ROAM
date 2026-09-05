@@ -39,7 +39,7 @@
 // getStoredActiveProfileId/setStoredActiveProfileId actually drive),
 // switches the active profile through ProfileMenu's own real "Schimbă
 // profilul" UI the way a user would, then answers the question and
-// inspects which participantId submitResponse was actually called with
+// inspects which participantId submitAnswer was actually called with
 // -- not just which name is shown. Only the Supabase-touching lib
 // functions (@/lib/discover, @/lib/analytics, @/lib/schedule) and the
 // network-backed halves of @/lib/hooks/@/lib/trip (useTrip/useProfiles/
@@ -143,19 +143,24 @@ const questionFixture = {
 const option = { id: "opt1", question_id: "q1", order_index: 1, label: "Raspunsul A", is_correct: true };
 
 const getMyResponse = vi.fn().mockResolvedValue(null);
-const submitResponse = vi.fn().mockResolvedValue({
-  id: "resp1",
-  participant_id: "unset",
-  question_id: "q1",
-  selected_option_id: "opt1",
-  is_correct: true,
+const submitAnswer = vi.fn().mockResolvedValue({
+  status: "accepted",
+  response: {
+    id: "resp1",
+    participant_id: "unset",
+    question_id: "q1",
+    selected_option_id: "opt1",
+    is_correct: true,
+  },
+  contributedToTeam: false,
+  correctOptionId: "opt1",
 });
 const getOrAssignExtra = vi.fn().mockResolvedValue(null);
 
 vi.mock("@/lib/discover", () => ({
   getDiscoverQuestion: vi.fn().mockResolvedValue({ question: questionFixture, options: [option], exploreLinks: [] }),
   getMyResponse: (...args: unknown[]) => getMyResponse(...args),
-  submitResponse: (...args: unknown[]) => submitResponse(...args),
+  submitAnswer: (...args: unknown[]) => submitAnswer(...args),
   getOrAssignExtra: (...args: unknown[]) => getOrAssignExtra(...args),
 }));
 
@@ -171,7 +176,7 @@ async function click(el: HTMLElement) {
 
 beforeEach(() => {
   window.localStorage.clear();
-  submitResponse.mockClear();
+  submitAnswer.mockClear();
   getMyResponse.mockClear();
   // useActiveProfileId is real in this file (see the @/lib/hooks partial
   // mock above), so it's backed by SWR's real, module-level global
@@ -238,11 +243,11 @@ describe("active profile switch vs. submission identity", () => {
     await click(screen.getByRole("button", { name: "Raspunsul A" }));
     await click(screen.getByRole("button", { name: "RĂSPUNDE" }));
 
-    await waitFor(() => expect(submitResponse).toHaveBeenCalled());
+    await waitFor(() => expect(submitAnswer).toHaveBeenCalled());
 
     // The question the user is looking at right now is submitted as
     // whoever ProfileMenu currently shows as active -- the Child, since
     // that's who they just switched to before answering.
-    expect(submitResponse).toHaveBeenCalledWith(child.id, "q1", option);
+    expect(submitAnswer).toHaveBeenCalledWith(child.id, "q1", option.id);
   });
 });

@@ -11,6 +11,7 @@ import {
   type DiscoverHistoryItem,
   type BattleHistoryItem,
 } from "@/lib/history";
+import { getAnsweredCorrectOptions } from "@/lib/discover";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
@@ -29,6 +30,7 @@ export default function QuestionsPage() {
 
   const [step, setStep] = useState<Step>("loading");
   const [history, setHistory] = useState<TripHistory | null>(null);
+  const [correctOptions, setCorrectOptions] = useState<Map<string, string>>(new Map());
   const [selectedTab, setSelectedTab] = useState<number | typeof FINAL_TAB | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
@@ -42,6 +44,21 @@ export default function QuestionsPage() {
         const h = await getTripHistory(trip!.id, currentTripDay(trip!), profiles!.map((p) => p.id));
         if (cancelled) return;
         setHistory(h);
+
+        // R3 (20260906140000_record_answer_authoritative.sql): which
+        // option was correct is no longer part of the fetched
+        // answer_options rows themselves (is_correct is masked at the DB
+        // level) -- fetched separately, once, for every question this
+        // device has an answer on record for (the RPC itself re-checks
+        // that, so a question nobody here has answered yet just comes
+        // back absent, same spoiler-avoidance as before).
+        const questionIds = [
+          ...h.discover.map((d) => d.question.id),
+          ...h.battles.flatMap((b) => b.questions.map((q) => q.question.id)),
+        ];
+        const options = await getAnsweredCorrectOptions(questionIds);
+        if (cancelled) return;
+        setCorrectOptions(options);
         setStep("ready");
       } catch {
         if (!cancelled) setStep("error");
@@ -195,6 +212,7 @@ export default function QuestionsPage() {
             expanded={expandedIds.has(item.question.id)}
             onToggle={() => toggle(item.question.id)}
             profileName={profileName}
+            correctOptionId={correctOptions.get(item.question.id)}
           />
         ))}
         {battlesForTab.map((item) => (
@@ -203,6 +221,7 @@ export default function QuestionsPage() {
             item={item}
             expanded={expandedIds.has(item.battle.id)}
             onToggle={() => toggle(item.battle.id)}
+            correctOptions={correctOptions}
           />
         ))}
         {discoverForTab.length === 0 && battlesForTab.length === 0 && (
@@ -220,13 +239,15 @@ function DiscoverRow({
   expanded,
   onToggle,
   profileName,
+  correctOptionId,
 }: {
   item: DiscoverHistoryItem;
   expanded: boolean;
   onToggle: () => void;
   profileName: (id: string) => string;
+  correctOptionId: string | undefined;
 }) {
-  const correctOption = item.options.find((o) => o.is_correct);
+  const correctOption = item.options.find((o) => o.id === correctOptionId);
   const answers = Object.entries(item.responsesByParticipant);
   const Icon = SLOT_ICON[item.question.slot ?? ""] ?? Sun;
   const extra = answers.map(([pid]) => item.extrasByParticipant[pid]).find((e) => e != null);
@@ -323,10 +344,12 @@ function BattleRow({
   item,
   expanded,
   onToggle,
+  correctOptions,
 }: {
   item: BattleHistoryItem;
   expanded: boolean;
   onToggle: () => void;
+  correctOptions: Map<string, string>;
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card">
@@ -351,7 +374,7 @@ function BattleRow({
           </p>
           <div className="flex flex-col gap-2">
             {item.questions.map(({ question, options }) => {
-              const correctOption = options.find((o) => o.is_correct);
+              const correctOption = options.find((o) => o.id === correctOptions.get(question.id));
               return (
                 <div key={question.id} className="rounded-xl bg-background px-3.5 py-3">
                   <p className="mb-1 text-[14px] text-foreground">{question.prompt}</p>

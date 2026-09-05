@@ -3,10 +3,27 @@ import { getSlotAvailability } from "./schedule";
 import type { Database, ParticipantRole, QuestionSlot } from "./supabase/types";
 
 export type Question = Database["public"]["Tables"]["questions"]["Row"];
-export type AnswerOption = Database["public"]["Tables"]["answer_options"]["Row"];
+// R3 (20260906140000_record_answer_authoritative.sql): is_correct is no
+// longer selectable by anon/authenticated at the database level (column-
+// level REVOKE) -- the client never legitimately has it on a fetched
+// option row anymore, so the type reflects that instead of quietly lying
+// about a field that would be missing at runtime. The only way to learn
+// which option was correct is record_answer()'s own return value
+// (submitAnswer below) or getAnsweredCorrectOptions(), both gated on the
+// caller already having a response on record for that question.
+export type AnswerOption = Omit<Database["public"]["Tables"]["answer_options"]["Row"], "is_correct">;
 export type ExploreLink = Database["public"]["Tables"]["explore_links"]["Row"];
 export type Extra = Database["public"]["Tables"]["extras"]["Row"];
 export type Response = Database["public"]["Tables"]["responses"]["Row"];
+
+export type AnswerSubmissionStatus = "accepted" | "already_recorded" | "conflict";
+
+export interface AnswerSubmissionResult {
+  status: AnswerSubmissionStatus;
+  response: Response;
+  contributedToTeam: boolean;
+  correctOptionId: string | null;
+}
 
 export interface DiscoverQuestion {
   question: Question;
@@ -38,7 +55,7 @@ export async function getDiscoverQuestion(
     await Promise.all([
       supabase
         .from("answer_options")
-        .select("*")
+        .select("id, question_id, order_index, label, created_at")
         .eq("question_id", question.id)
         .order("order_index", { ascending: true }),
       supabase
@@ -69,24 +86,54 @@ export async function getMyResponse(
   return data;
 }
 
-export async function submitResponse(
+// R3 (20260906140000_record_answer_authoritative.sql): the single
+// authoritative write path for every answer -- Discover, Battle, Final
+// and Catchup alike (src/components/BattleFlow.tsx calls this directly
+// too, there is no separate "battle" submission function anymore).
+// Correctness, score, team and team-window eligibility are all derived
+// server-side from the question/option/battle rows themselves -- nothing
+// about them is trusted from the caller here.
+//
+// Idempotent: calling this again for a (participantId, questionId) pair
+// that already has a saved response never creates a duplicate or
+// re-evaluates team eligibility -- see the migration header for the full
+// retry contract (`status`: 'accepted' | 'already_recorded' | 'conflict').
+// Safe to call on revisit (e.g. re-opening an already-answered question)
+// with that response's own selected_option_id to recover
+// correctOptionId/contributedToTeam without any side effect.
+export async function submitAnswer(
   participantId: string,
   questionId: string,
-  selectedOption: AnswerOption,
-): Promise<Response> {
-  const { data, error } = await supabase
-    .from("responses")
-    .insert({
-      participant_id: participantId,
-      question_id: questionId,
-      selected_option_id: selectedOption.id,
-      is_correct: selectedOption.is_correct,
-    })
-    .select()
-    .single();
-
+  selectedOptionId: string,
+): Promise<AnswerSubmissionResult> {
+  const { data, error } = await supabase.rpc("record_answer", {
+    p_participant_id: participantId,
+    p_question_id: questionId,
+    p_selected_option_id: selectedOptionId,
+  });
   if (error) throw error;
-  return data;
+  return {
+    status: data.status,
+    response: data.response,
+    contributedToTeam: data.contributed_to_team,
+    correctOptionId: data.correct_option_id,
+  };
+}
+
+// Batch reveal for the post-trip recap ("Întrebări" page): which option
+// was correct for every question in `questionIds` this device has
+// already legitimately answered (get_answered_correct_options RPC,
+// SECURITY DEFINER, only reveals a question if the caller already has a
+// response on record for it). Questions not yet answered are simply
+// absent from the returned map, same spoiler-avoidance guarantee the
+// live flows already have.
+export async function getAnsweredCorrectOptions(questionIds: string[]): Promise<Map<string, string>> {
+  if (questionIds.length === 0) return new Map();
+  const { data, error } = await supabase.rpc("get_answered_correct_options", {
+    p_question_ids: questionIds,
+  });
+  if (error) throw error;
+  return new Map((data ?? []).map((row) => [row.question_id, row.correct_option_id]));
 }
 
 // Assigns (or returns the already-assigned) Extra for this participant +

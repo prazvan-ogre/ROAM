@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import type { AnswerOption, ExploreLink, Question, Response } from "./discover";
+import type { AnswerOption, ExploreLink, Question } from "./discover";
 import type { Database, BattleTeam } from "./supabase/types";
 
 export type Battle = Database["public"]["Tables"]["battles"]["Row"];
@@ -31,7 +31,7 @@ export async function loadBattleContent(battle: Battle): Promise<BattleContent> 
       : await Promise.all([
           supabase
             .from("answer_options")
-            .select("*")
+            .select("id, question_id, order_index, label, created_at")
             .in("question_id", questionIds)
             .order("order_index", { ascending: true }),
           supabase
@@ -85,19 +85,13 @@ export async function getFinalBattle(tripId: string): Promise<BattleContent | nu
   return loadBattleContent(battle);
 }
 
-// Product owner spec: every participant answers Battle questions
-// individually now, not one submission per team via a shared
-// "controller" device. Correct answers are worth 10 points (Final
-// Battle: 5 points), same values as before.
-const BATTLE_POINTS = { normal: 10, final: 5 } as const;
-
 // A team's evening result stays open for 15 minutes after the first
 // individual answer, so everyone gets a chance to answer before anyone
 // sees the running score (product owner spec). Late answers past that
-// window still count personally (recordBattleAnswer's own responses
-// insert below) but are excluded from battle_scores, so they can't move
-// the team result -- same guarantee as a catch-up answer to a past
-// battle (getCatchUpQuestions).
+// window still count personally (submitAnswer/record_answer's own
+// responses insert, src/lib/discover.ts) but are excluded from
+// battle_scores, so they can't move the team result -- same guarantee as
+// a catch-up answer to a past battle (getCatchUpQuestions).
 const RESULT_WINDOW_MS = 15 * 60 * 1000;
 
 export interface BattleWindowStatus {
@@ -136,42 +130,19 @@ export async function getBattleWindowStatus(battleId: string): Promise<BattleWin
   };
 }
 
-// One participant's answer to one Battle question, live (not a catch-up
-// answer to a past battle -- see getCatchUpQuestions, which never
-// touches battle_scores at all). Always records a personal
-// `responses` row (feeds the individual leaderboard and prevents
-// answering the same question twice). Also adds a battle_scores row
-// with this participant's team + score, unless the 15-minute result
-// window has already closed -- a late answer still counts personally,
-// just never moves the team result.
-//
-// Both writes (plus the window check) happen inside a single RPC call
-// to record_battle_answer() (20260906120000_atomic_record_battle_answer.sql)
-// so they commit or fail together -- doing them as two separate client
-// calls used to leave the personal response committed with no team
-// credit if the second write failed (hypothesis B, 2026-09-05 review;
-// tests/unit/battle-score-divergence.test.ts).
-export async function recordBattleAnswer(
-  participantId: string,
-  team: BattleTeam,
-  battleId: string,
-  question: Question,
-  selectedOption: AnswerOption,
-  isFinal: boolean,
-): Promise<Response> {
-  const score = selectedOption.is_correct ? (isFinal ? BATTLE_POINTS.final : BATTLE_POINTS.normal) : 0;
-  const { data, error } = await supabase.rpc("record_battle_answer", {
-    p_participant_id: participantId,
-    p_question_id: question.id,
-    p_selected_option_id: selectedOption.id,
-    p_is_correct: selectedOption.is_correct,
-    p_battle_id: battleId,
-    p_team: team,
-    p_score: score,
-  });
-  if (error) throw error;
-  return data;
-}
+// Battle answers no longer have a dedicated submission function: R3
+// (20260906140000_record_answer_authoritative.sql) unified Discover,
+// Battle, Final and Catchup behind the single submitAnswer() in
+// src/lib/discover.ts -- BattleFlow.tsx calls that directly. There is no
+// "isFinal"/team/score parameter to pass anymore: the server derives all
+// of it from the question/battle rows themselves (points from
+// questions.points, team from the participant's own role, team-window
+// eligibility from real timing, not a client-supplied flag), and decides
+// on its own whether a battle-kind question's answer is still allowed to
+// open or join the team's 15-minute result window -- including the
+// product-owner-confirmed rule that a battle nobody played live, later
+// recovered through Catchup (or any other late answer), always still
+// scores personally but can never move the team result.
 
 // A team's resolved score for one battle: the arithmetic mean of its
 // members' points (sum / distinct participants who answered), so an

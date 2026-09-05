@@ -75,7 +75,10 @@ export async function getTripHistory(
       { data: extraRows, error: extrasError },
       { data: linkRows, error: linksError },
     ] = await Promise.all([
-      supabase.from("answer_options").select("*").in("question_id", questionIds),
+      supabase
+        .from("answer_options")
+        .select("id, question_id, order_index, label, created_at")
+        .in("question_id", questionIds),
       supabase.from("extras").select("*").in("question_id", questionIds),
       supabase.from("explore_links").select("*").in("question_id", questionIds),
     ]);
