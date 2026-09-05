@@ -1,17 +1,18 @@
-// Verifies R5's hypothesis from the 2026-09-05 review: an already
-// logged-in creator ("Călătoriile mele" account id already in
-// localStorage) who is redirected to /trips?link=<newSlug> right after
-// creating a second trip never gets that trip linked to their account --
-// the mount effect in app/trips/page.tsx only ever calls loadTrips() when
-// an account id is already stored, and linking (getOrCreateAdultParticipant
-// with the account id, plus the account API's own trip-linking update)
-// only happens inside handleAuthSubmit, which the "already logged in" path
-// never reaches.
+// Verifies the fix for hypothesis E from the 2026-09-05 review: an
+// already logged-in creator ("Călătoriile mele" account id already in
+// localStorage, valid session cookie) who is redirected to
+// /trips?link=<newSlug> right after creating a second trip now gets that
+// trip linked to their account, the same way a fresh phone+PIN login's
+// handleAuthSubmit already did -- app/trips/page.tsx's mount effect now
+// calls linkTripToCurrentAccount() (src/lib/creatorAccount.ts, backed by
+// the new app/api/account/link-trip/route.ts, session-cookie-gated) and
+// the same getOrCreateAdultParticipant auto-join, instead of skipping
+// straight to loadTrips() with linkSlug never consulted.
 //
 // Renders the real page component with next/navigation and the trip/
 // account/participant helpers mocked -- no real Supabase, no real router.
-import { describe, it, expect, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, waitFor, cleanup } from "@testing-library/react";
 
 const push = vi.fn();
 const searchParamsGet = vi.fn((key: string) => (key === "link" ? "kassandra-2027" : null));
@@ -29,45 +30,67 @@ vi.mock("@/lib/trip", () => ({
   getTripBySlug: (...args: unknown[]) => getTripBySlug(...args),
 }));
 
-// R1 replaced the direct getTripsForAccount()/getAllTrips() + client-side
-// getStoredIsAdmin() reads with one server-verified call
-// (app/api/account/trips/route.ts, src/lib/creatorAccount.ts's
-// getTripsForCurrentAccount()) -- the R5 bug this test demonstrates is
-// unrelated to that plumbing change (it's about linkSlug never being
-// consulted on this render path) and is deliberately left unfixed this
-// batch (R1 explicitly excludes R2-R5), so this mock only needs to speak
-// the new interface, not fix the underlying behavior.
 const getTripsForCurrentAccount = vi.fn();
+const linkTripToCurrentAccount = vi.fn();
 vi.mock("@/lib/creatorAccount", () => ({
   authenticateCreatorAccount: vi.fn(),
   clearStoredAccountId: vi.fn(),
   getStoredAccountId: () => "existing-account-id",
   getTripsForCurrentAccount: (...args: unknown[]) => getTripsForCurrentAccount(...args),
+  linkTripToCurrentAccount: (...args: unknown[]) => linkTripToCurrentAccount(...args),
 }));
 
-describe("R5: returning creator's new trip linking", () => {
-  it("never attempts to link the new trip and shows only the account's previously-linked trips", async () => {
-    // The account's existing trip list -- deliberately does NOT include
-    // "kassandra-2027" (the one just created and referenced by ?link=),
-    // matching the real route's .eq("created_by_account_id", ...) filter:
-    // an unlinked trip can never appear here.
-    getTripsForCurrentAccount.mockResolvedValue({
-      isAdmin: false,
-      trips: [{ id: "old-trip", slug: "kassandra-2025", content_status: "ready" }],
-    });
+beforeEach(() => {
+  push.mockClear();
+  searchParamsGet.mockClear();
+  getOrCreateAdultParticipant.mockClear();
+  getTripBySlug.mockClear();
+  getTripsForCurrentAccount.mockClear();
+  linkTripToCurrentAccount.mockClear();
+});
+
+// This vitest.config.ts doesn't set test.globals, so @testing-library/react's
+// own automatic afterEach(cleanup) never registers -- without this, a
+// second render() in the same file (this file now has two) leaves the
+// first test's DOM/effects behind.
+afterEach(() => {
+  cleanup();
+});
+
+describe("hypothesis E (fixed): returning creator's new trip linking", () => {
+  it("links the newly created trip to the account and redirects into it, instead of ignoring linkSlug", async () => {
+    linkTripToCurrentAccount.mockResolvedValue({ displayName: "Andrei" });
+    getTripBySlug.mockResolvedValue({ id: "new-trip-id", slug: "kassandra-2027" });
+    getOrCreateAdultParticipant.mockResolvedValue({ id: "participant-id" });
 
     const { default: TripsPage } = await import("../../app/trips/page");
     render(<TripsPage />);
 
     await waitFor(() => expect(push).toHaveBeenCalled());
 
-    // The bug: nothing about this render path ever looks at linkSlug --
-    // no attempt to join/link the new trip happens.
+    // Fixed: the already-logged-in path now links the trip the same way
+    // a fresh login would, using the session-cookie-gated endpoint (no
+    // phone/PIN re-entry) instead of never consulting linkSlug at all.
+    expect(linkTripToCurrentAccount).toHaveBeenCalledWith("kassandra-2027");
+    expect(getTripBySlug).toHaveBeenCalledWith("kassandra-2027");
+    expect(getOrCreateAdultParticipant).toHaveBeenCalledWith("new-trip-id", "Andrei", "existing-account-id");
+
+    // Lands inside the trip just created/linked, not some previously-
+    // linked one -- getTripsForCurrentAccount (the loadTrips() path) is
+    // never even consulted on this branch.
+    expect(push).toHaveBeenCalledWith("/trip/kassandra-2027/settings");
+    expect(getTripsForCurrentAccount).not.toHaveBeenCalled();
+  });
+
+  it("still redirects into the trip even if linking fails (best-effort, matches handleAuthSubmit's own linking)", async () => {
+    linkTripToCurrentAccount.mockRejectedValue(new Error("simulated network failure"));
+
+    const { default: TripsPage } = await import("../../app/trips/page");
+    render(<TripsPage />);
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/trip/kassandra-2027/settings"));
+
     expect(getTripBySlug).not.toHaveBeenCalled();
     expect(getOrCreateAdultParticipant).not.toHaveBeenCalled();
-
-    // Instead it silently redirects into whichever trip the account was
-    // *already* linked to before -- never the one the user just created.
-    expect(push).toHaveBeenCalledWith("/trip/kassandra-2025/settings");
   });
 });

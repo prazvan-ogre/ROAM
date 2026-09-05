@@ -1030,6 +1030,27 @@
   client (`tests/unit/helpers/fakeSupabaseClient.ts`) were rewritten to
   match: they now simulate the single RPC call instead of two separate
   table inserts, and assert that a failed call commits neither write.
+- Fixed: an already logged-in creator ("Călătoriile mele" session cookie
+  already valid, no phone/PIN re-entry needed) landing on
+  `/trips?link=<newSlug>` right after creating a second trip never got
+  that trip linked to their account -- `app/trips/page.tsx`'s mount
+  effect skipped straight to `loadTrips()` whenever an account id was
+  already stored, never consulting `linkSlug` at all; only
+  `handleAuthSubmit` (a *fresh* phone+PIN login) ran the actual
+  "link this device's trip to my account" write, inside
+  `app/api/account/route.ts`'s POST (hypothesis E, 2026-09-05 review).
+  Fixed with a new, session-cookie-gated endpoint,
+  `app/api/account/link-trip/route.ts` (same pattern as
+  `app/api/account/trips/route.ts` -- no phone/PIN, no client-supplied
+  accountId), and `src/lib/creatorAccount.ts`'s new
+  `linkTripToCurrentAccount()`: the mount effect now calls it (plus the
+  same `getOrCreateAdultParticipant` auto-join `handleAuthSubmit` already
+  did) before redirecting into the trip, best-effort like
+  `handleAuthSubmit`'s own linking -- a failed link still lands the user
+  in the trip's Setări rather than stranding them.
+  `tests/unit/trips-page-link-on-existing-login.test.tsx` (previously a
+  reproduction of the bug) now asserts the corrected behavior, plus a
+  second case for the best-effort failure path.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see

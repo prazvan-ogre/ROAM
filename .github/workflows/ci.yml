@@ -126,24 +126,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Some of these tests currently PASS *because* the bug they cover is
-      # still present -- they assert today's actual (buggy) behavior at a
-      # real code boundary (see each file's own header comment for which
-      # lib/route it exercises):
-      #   - tests/unit/api-account-ownership.test.ts
-      #   - tests/unit/battle-score-divergence.test.ts
-      #   - tests/unit/trips-page-link-on-existing-login.test.tsx
-      # When the batch that fixes one of those defects lands, update that
-      # file's assertions to expect the corrected behavior as part of the
-      # same commit -- don't leave it asserting removed behavior. (This is
-      # exactly what happened to
-      # tests/unit/active-profile-switch-submission-identity.test.tsx's
-      # own second test: it used vitest's it.fails() to assert a
-      # newly-confirmed defect -- switching the active profile after a
-      # question was already open didn't change who it submitted as --
-      # until the fix shipped in the same batch as the file's own
-      # conversion to a plain `it` asserting the corrected behavior. See
-      # that file's header for the fix itself.)
+      # A test file can legitimately PASS *because* the bug it covers is
+      # still present -- asserting today's actual (buggy) behavior at a
+      # real code boundary, rather than the corrected one, until the fix
+      # lands. As of this commit none of the files here are in that state
+      # (every one of the 2026-09-05 review's hypotheses, plus the
+      # profile-switch defect found while completing this batch, has been
+      # fixed and its test converted to asserting the corrected
+      # behavior -- see each file's own header comment and CHANGELOG.md
+      # for the history), but the pattern itself still applies to any
+      # future one: when a fix lands, update that file's assertions (or,
+      # like tests/unit/active-profile-switch-submission-identity.test.tsx's
+      # second test did, convert it from vitest's it.fails() to a plain
+      # `it`) in the same commit -- don't leave a test asserting removed
+      # behavior.
       #
       # No wrapper needed here (unlike the SQL steps above): vitest's own
       # exit code already does the right thing for both shapes -- 0 when

@@ -73,6 +73,30 @@ export async function authenticateCreatorAccount(input: AuthenticateInput): Prom
   return { accountId, isAdmin: Boolean(body.isAdmin), displayName: body.displayName ?? null };
 }
 
+export interface LinkTripResult {
+  displayName: string | null;
+}
+
+// app/trips/page.tsx: an already logged-in device (session cookie
+// already valid, no phone/PIN re-entry needed) landing on ?link=<slug>
+// right after creating a second trip -- the same best-effort "link this
+// device's trip to my account" write authenticateCreatorAccount's own
+// POST does as a side effect of a *fresh* login, but reachable without
+// asking an already-authenticated creator to log in again (hypothesis
+// E, 2026-09-05 review).
+export async function linkTripToCurrentAccount(tripSlug: string): Promise<LinkTripResult> {
+  const response = await fetch("/api/account/link-trip", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tripSlug, deviceId: getDeviceId() }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error ?? "Nu am putut lega călătoria de cont.");
+  }
+  return { displayName: body?.displayName ?? null };
+}
+
 export interface AccountDetails {
   phoneNumber: string;
   displayName: string | null;
