@@ -4,8 +4,6 @@ import { Suspense, useCallback, useEffect, useState, type FormEvent } from "reac
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, LogOut, Plus } from "lucide-react";
-import { getTripBySlug } from "@/lib/trip";
-import { getOrCreateAdultParticipant } from "@/lib/participant";
 import {
   authenticateCreatorAccount,
   clearStoredAccountId,
@@ -89,16 +87,14 @@ function TripsPageInner() {
   // account" + auto-join steps. Best-effort, same as handleAuthSubmit's:
   // a failed link or join here still lands the user in the trip's
   // Setări, matching "right after creating a trip, land inside it"
-  // either way.
+  // either way. The join itself now happens entirely server-side
+  // (POST /api/account/link-trip, batch 2) -- this client no longer
+  // creates the participant row or passes an accountId to it at all (see
+  // src/lib/security/participantLink.ts for why).
   const linkNewTripThenRedirect = useCallback(
     async (slug: string) => {
       try {
-        const { displayName } = await linkTripToCurrentAccount(slug);
-        if (displayName) {
-          const trip = await getTripBySlug(slug);
-          const accountId = getStoredAccountId();
-          if (trip && accountId) await getOrCreateAdultParticipant(trip.id, displayName, accountId);
-        }
+        await linkTripToCurrentAccount(slug);
       } catch (err) {
         console.error("Linking a new trip to an already logged-in account failed", err);
       }
@@ -136,19 +132,13 @@ function TripsPageInner() {
 
       // Product owner request: whoever creates a trip should become its
       // first participant automatically instead of separately joining
-      // later through the onboarding wizard with the same name. Requires
-      // a name -- either just given (new account) or already on file
-      // (returning account, src/lib/creatorAccount.ts) -- so this is a
-      // no-op for an older account that never set one. Best-effort: a
-      // failure here shouldn't block getting into "Călătoriile mele".
-      if (linkSlug && result.displayName) {
-        try {
-          const trip = await getTripBySlug(linkSlug);
-          if (trip) await getOrCreateAdultParticipant(trip.id, result.displayName, result.accountId);
-        } catch (joinErr) {
-          console.error("Auto-join after account creation failed", joinErr);
-        }
-      }
+      // later through the onboarding wizard with the same name. Handled
+      // entirely server-side now, inside POST /api/account itself
+      // (app/api/account/route.ts, batch 2) -- requires a name (either
+      // just given, or already on file for a returning account) and the
+      // calling device's own verified anonymous session, so this is a
+      // no-op for an older account that never set one. Best-effort there
+      // too: a failure shouldn't block getting into "Călătoriile mele".
 
       // Right after creating a trip, land inside it (Setări > Toate
       // călătoriile) instead of on this standalone page -- product owner

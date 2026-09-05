@@ -1,5 +1,21 @@
-import { getDeviceId } from "./device";
+import { getDeviceId, ensureAuthSession } from "./device";
+import { supabase } from "./supabase/client";
 import type { Trip } from "./trip";
+
+// Batch 2 (2026-09-05 review, R1 continued): the account-linking routes
+// below (POST /api/account, POST /api/account/link-trip) now verify the
+// calling device's own anonymous participant session before stamping
+// participants.account_id -- this is what proves "this browser really is
+// the device joining as a participant", instead of trusting a
+// client-supplied accountId (src/lib/security/participantLink.ts). The
+// device's own Supabase Auth access token (never the creator account's
+// separate session -- see src/lib/security/session.ts) is what's sent.
+async function deviceAuthHeader(): Promise<Record<string, string>> {
+  await ensureAuthSession();
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
 
 // R1: the actual authorization boundary for reading/updating this
 // account, and for deciding which trips it can see, is now the httpOnly
@@ -24,10 +40,11 @@ export function setStoredAccountId(accountId: string): void {
   window.localStorage.setItem(STORAGE_KEY, accountId);
 }
 
-// Best-effort: also asks the server to drop the session cookie. A failed
-// request still clears the local "looks logged in" flag -- worst case,
-// the (still-valid) cookie quietly expires on its own after
-// SESSION_MAX_AGE_SECONDS.
+// Best-effort: also asks the server to revoke the Supabase Auth session
+// and drop its cookies. A failed request still clears the local "looks
+// logged in" flag -- worst case, the (still-valid) session quietly
+// expires on its own after REFRESH_COOKIE_MAX_AGE_SECONDS
+// (src/lib/security/session.ts).
 export function clearStoredAccountId(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(STORAGE_KEY);
@@ -57,7 +74,7 @@ export interface AuthenticateResult {
 export async function authenticateCreatorAccount(input: AuthenticateInput): Promise<AuthenticateResult> {
   const response = await fetch("/api/account", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(await deviceAuthHeader()) },
     body: JSON.stringify({ ...input, deviceId: getDeviceId() }),
   });
 
@@ -87,7 +104,7 @@ export interface LinkTripResult {
 export async function linkTripToCurrentAccount(tripSlug: string): Promise<LinkTripResult> {
   const response = await fetch("/api/account/link-trip", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(await deviceAuthHeader()) },
     body: JSON.stringify({ tripSlug, deviceId: getDeviceId() }),
   });
   const body = await response.json().catch(() => null);

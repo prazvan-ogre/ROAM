@@ -113,6 +113,24 @@ jobs:
           npm run test:sql:completion
           npm run test:sql:record-battle-answer
 
+      # Unlike the tests above, these exercise RLS itself -- each file's
+      # own scenarios `set role anon`/`set role authenticated` and
+      # `set local request.jwt.claim.sub`, which still enforces RLS
+      # per-statement even though the underlying connection here is the
+      # postgres superuser (SET ROLE changes the effective role for
+      # privilege/RLS checks, per Postgres's own documented behavior).
+      # test:sql:r1 and test:sql:r1-first-insert predate this CI wiring
+      # (2026-09-05 review, R1) and were never actually run in CI before
+      # now -- an oversight from the batch that first wired the tests
+      # above in, not a deliberate omission.
+      - name: Run RLS regression tests
+        run: |
+          npm run test:sql:r1
+          npm run test:sql:r1-first-insert
+          npm run test:sql:batch2-activity
+          npm run test:sql:batch2-lockdown
+          npm run test:sql:batch2-battle-authz
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:

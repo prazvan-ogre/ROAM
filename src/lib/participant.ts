@@ -22,17 +22,15 @@ export async function listProfilesForDevice(tripId: string): Promise<Participant
   return data ?? [];
 }
 
-// accountId links this participant to the "Călătoriile mele" account it
-// belongs to (only passed by the post-login auto-join in app/trips/
-// page.tsx) -- Setări > Utilizatori reads it back to show that account's
-// phone/PIN fields only under the profile that actually owns them,
-// instead of under any adult profile just because *some* account is
-// logged into this device (see 20260901100000_participant_account_link.sql).
-export async function getOrCreateAdultParticipant(
-  tripId: string,
-  displayName: string,
-  accountId?: string,
-): Promise<Participant> {
+// participants.account_id (which "Călătoriile mele" account this
+// participant belongs to, if any) is no longer settable from here at all
+// (batch 2, 2026-09-05 review): a direct anon-key call could previously
+// pass any accountId at all, self-granting membership in an account that
+// isn't the caller's. It's now stamped server-side only, after verifying
+// both the creator account's own session and this device's anonymous
+// session -- see src/lib/security/participantLink.ts, called from
+// app/api/account/route.ts and app/api/account/link-trip/route.ts.
+export async function getOrCreateAdultParticipant(tripId: string, displayName: string): Promise<Participant> {
   const deviceId = getDeviceId();
 
   const { data: existing, error: selectError } = await supabase
@@ -46,18 +44,9 @@ export async function getOrCreateAdultParticipant(
   if (selectError) throw selectError;
 
   if (existing) {
-    // Deliberately never sets auth_user_id here, even when this row is
-    // still a pre-R1 legacy one (auth_user_id null): matching on
-    // device_id -- a plain client-asserted string, not a credential --
-    // would be exactly the "claim an old profile via a public/
-    // localStorage identifier" migration R1 was written to avoid. A
-    // legacy row stays legacy (openly grandfathered) until whatever
-    // future, explicit decision re-establishes its ownership.
-    const update: { last_seen_at: string; account_id?: string } = { last_seen_at: new Date().toISOString() };
-    if (accountId) update.account_id = accountId;
     const { data: updated, error: updateError } = await supabase
       .from("participants")
-      .update(update)
+      .update({ last_seen_at: new Date().toISOString() })
       .eq("id", existing.id)
       .select()
       .single();
@@ -73,7 +62,6 @@ export async function getOrCreateAdultParticipant(
       device_id: deviceId,
       display_name: displayName,
       role: "adult" as ParticipantRole,
-      account_id: accountId ?? null,
       auth_user_id: authUserId,
     })
     .select()
