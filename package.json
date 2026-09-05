@@ -18,6 +18,7 @@
     "test:sql:r1": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r1_auth_ownership_rls.test.sql",
     "test:sql:r1-first-insert": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r1_participant_first_insert_returning.test.sql",
     "test:sql:content-isolation": "psql -v ON_ERROR_STOP=1 -f supabase/tests/content_trip_isolation.test.sql",
+    "test:sql:record-answer": "psql -v ON_ERROR_STOP=1 -f supabase/tests/record_answer.test.sql",
     "test": "vitest run"
   },
   "dependencies": {

@@ -299,6 +299,10 @@ export interface Database {
         Args: { p_trip_id: string };
         Returns: { team: BattleTeam; wins: number }[];
       };
+      // Superseded by record_answer below -- no app code calls this
+      // anymore, kept only because supabase/tests/
+      // record_battle_answer_atomicity.test.sql still exercises it as a
+      // historical regression fixture for hypothesis B.
       record_battle_answer: {
         Args: {
           p_participant_id: string;
@@ -319,6 +323,35 @@ export interface Database {
           response_time_ms: number | null;
           created_at: string;
         };
+      };
+      // R3 (20260906140000_record_answer_authoritative.sql): the single
+      // authoritative write path for Discover, Battle, Final and Catchup
+      // alike -- see that migration's header for the full contract.
+      record_answer: {
+        Args: {
+          p_participant_id: string;
+          p_question_id: string;
+          p_selected_option_id: string;
+        };
+        Returns: {
+          status: "accepted" | "already_recorded" | "conflict";
+          response: {
+            id: string;
+            question_id: string;
+            participant_id: string;
+            selected_option_id: string | null;
+            response_text: string | null;
+            is_correct: boolean | null;
+            response_time_ms: number | null;
+            created_at: string;
+          };
+          contributed_to_team: boolean;
+          correct_option_id: string | null;
+        };
+      };
+      get_answered_correct_options: {
+        Args: { p_question_ids: string[] };
+        Returns: { question_id: string; correct_option_id: string }[];
       };
     };
   };

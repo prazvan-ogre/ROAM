@@ -7,7 +7,7 @@ import { Check, X, History, ExternalLink } from "lucide-react";
 import { currentTripDay, type Trip } from "@/lib/trip";
 import {
   getCatchUpQuestions,
-  submitResponse,
+  submitAnswer,
   getOrAssignExtra,
   type CatchUpQuestion,
   type AnswerOption,
@@ -55,6 +55,8 @@ export default function CatchUpPage() {
   const [selected, setSelected] = useState<AnswerOption | null>(null);
   const [response, setResponse] = useState<Response | null>(null);
   const [extra, setExtra] = useState<Extra | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
 
   useEffect(() => {
     if (!trip || !profiles || profiles.length === 0 || !activeProfile) return;
@@ -75,6 +77,7 @@ export default function CatchUpPage() {
         setSelected(null);
         setResponse(null);
         setExtra(null);
+        setSubmitError(false);
         setStep(pending.length === 0 ? "empty" : "question");
       } catch {
         if (!cancelled) setStep("error");
@@ -87,16 +90,31 @@ export default function CatchUpPage() {
     };
   }, [trip, profiles, activeProfile]);
 
+  // Same idempotent/retry-safe/fire-and-forget-side-effects contract as
+  // Discover's handleSubmitAnswer (R3, 20260906140000_
+  // record_answer_authoritative.sql) -- submitAnswer never contributes to
+  // battle_scores here regardless of the underlying question's kind
+  // (Discover or Battle), matching the product-owner rule that a
+  // recovered/catch-up answer only ever scores personally.
   async function handleSubmit() {
-    if (!activeProfile || !selected) return;
+    if (!activeProfile || !selected || submitting) return;
     const current = questions[index];
-    const [r, assignedExtra] = await Promise.all([
-      submitResponse(activeProfile.id, current.question.id, selected),
-      getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id),
-    ]);
-    setResponse(r);
-    setExtra(assignedExtra);
-    setStep("reveal");
+    setSubmitting(true);
+    setSubmitError(false);
+    try {
+      const result = await submitAnswer(activeProfile.id, current.question.id, selected.id);
+      setResponse(result.response);
+      setStep("reveal");
+
+      getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id)
+        .then(setExtra)
+        .catch((err) => console.error("getOrAssignExtra failed", err));
+    } catch (err) {
+      console.error("submitAnswer failed", err);
+      setSubmitError(true);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function handleAdvance() {
@@ -104,6 +122,7 @@ export default function CatchUpPage() {
     setSelected(null);
     setResponse(null);
     setExtra(null);
+    setSubmitError(false);
     if (nextIndex >= questions.length) {
       setStep("done");
       return;
@@ -198,8 +217,13 @@ export default function CatchUpPage() {
             ))}
           </div>
           <div className="mt-auto pt-4">
-            <Btn onClick={handleSubmit} disabled={!selected}>
-              RĂSPUNDE
+            {submitError && (
+              <p className="mb-3 text-center text-[13px] text-destructive">
+                Nu am putut trimite răspunsul. Verifică-ți conexiunea și încearcă din nou.
+              </p>
+            )}
+            <Btn onClick={handleSubmit} disabled={!selected || submitting}>
+              {submitting ? "..." : submitError ? "ÎNCEARCĂ DIN NOU" : "RĂSPUNDE"}
             </Btn>
           </div>
         </div>
