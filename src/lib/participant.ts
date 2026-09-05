@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { getDeviceId } from "./device";
+import { getDeviceId, ensureAuthSession } from "./device";
 import type { Database, ParticipantRole } from "./supabase/types";
 
 export type Participant = Database["public"]["Tables"]["participants"]["Row"];
@@ -45,6 +45,13 @@ export async function getOrCreateAdultParticipant(
   if (selectError) throw selectError;
 
   if (existing) {
+    // Deliberately never sets auth_user_id here, even when this row is
+    // still a pre-R1 legacy one (auth_user_id null): matching on
+    // device_id -- a plain client-asserted string, not a credential --
+    // would be exactly the "claim an old profile via a public/
+    // localStorage identifier" migration R1 was written to avoid. A
+    // legacy row stays legacy (openly grandfathered) until whatever
+    // future, explicit decision re-establishes its ownership.
     const update: { last_seen_at: string; account_id?: string } = { last_seen_at: new Date().toISOString() };
     if (accountId) update.account_id = accountId;
     const { data: updated, error: updateError } = await supabase
@@ -57,6 +64,7 @@ export async function getOrCreateAdultParticipant(
     return updated;
   }
 
+  const authUserId = await ensureAuthSession();
   const { data: created, error: insertError } = await supabase
     .from("participants")
     .insert({
@@ -65,6 +73,7 @@ export async function getOrCreateAdultParticipant(
       display_name: displayName,
       role: "adult" as ParticipantRole,
       account_id: accountId ?? null,
+      auth_user_id: authUserId,
     })
     .select()
     .single();
@@ -155,6 +164,9 @@ export async function addChildProfile(
   managingAdultId?: string,
 ): Promise<Participant> {
   const deviceId = getDeviceId();
+  // Same auth session as the managing adult (same device, same
+  // signInAnonymously() call) -- a child never signs in separately.
+  const authUserId = await ensureAuthSession();
 
   const { data, error } = await supabase
     .from("participants")
@@ -165,6 +177,7 @@ export async function addChildProfile(
       role: "child" as ParticipantRole,
       age,
       managed_by_participant_id: managingAdultId ?? null,
+      auth_user_id: authUserId,
     })
     .select()
     .single();

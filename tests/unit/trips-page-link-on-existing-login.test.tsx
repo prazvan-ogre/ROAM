@@ -25,30 +25,36 @@ const getOrCreateAdultParticipant = vi.fn();
 vi.mock("@/lib/participant", () => ({ getOrCreateAdultParticipant }));
 
 const getTripBySlug = vi.fn();
-const getTripsForAccount = vi.fn();
-const getAllTrips = vi.fn();
 vi.mock("@/lib/trip", () => ({
   getTripBySlug: (...args: unknown[]) => getTripBySlug(...args),
-  getTripsForAccount: (...args: unknown[]) => getTripsForAccount(...args),
-  getAllTrips: (...args: unknown[]) => getAllTrips(...args),
 }));
 
+// R1 replaced the direct getTripsForAccount()/getAllTrips() + client-side
+// getStoredIsAdmin() reads with one server-verified call
+// (app/api/account/trips/route.ts, src/lib/creatorAccount.ts's
+// getTripsForCurrentAccount()) -- the R5 bug this test demonstrates is
+// unrelated to that plumbing change (it's about linkSlug never being
+// consulted on this render path) and is deliberately left unfixed this
+// batch (R1 explicitly excludes R2-R5), so this mock only needs to speak
+// the new interface, not fix the underlying behavior.
+const getTripsForCurrentAccount = vi.fn();
 vi.mock("@/lib/creatorAccount", () => ({
   authenticateCreatorAccount: vi.fn(),
   clearStoredAccountId: vi.fn(),
   getStoredAccountId: () => "existing-account-id",
-  getStoredIsAdmin: () => false,
+  getTripsForCurrentAccount: (...args: unknown[]) => getTripsForCurrentAccount(...args),
 }));
 
 describe("R5: returning creator's new trip linking", () => {
   it("never attempts to link the new trip and shows only the account's previously-linked trips", async () => {
     // The account's existing trip list -- deliberately does NOT include
     // "kassandra-2027" (the one just created and referenced by ?link=),
-    // matching getTripsForAccount's real .eq("created_by_account_id", ...)
-    // filter: an unlinked trip can never appear here.
-    getTripsForAccount.mockResolvedValue([
-      { id: "old-trip", slug: "kassandra-2025", content_status: "ready" },
-    ]);
+    // matching the real route's .eq("created_by_account_id", ...) filter:
+    // an unlinked trip can never appear here.
+    getTripsForCurrentAccount.mockResolvedValue({
+      isAdmin: false,
+      trips: [{ id: "old-trip", slug: "kassandra-2025", content_status: "ready" }],
+    });
 
     const { default: TripsPage } = await import("../../app/trips/page");
     render(<TripsPage />);

@@ -4,13 +4,13 @@ import { Suspense, useCallback, useEffect, useState, type FormEvent } from "reac
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, LogOut, Plus } from "lucide-react";
-import { getAllTrips, getTripBySlug, getTripsForAccount } from "@/lib/trip";
+import { getTripBySlug } from "@/lib/trip";
 import { getOrCreateAdultParticipant } from "@/lib/participant";
 import {
   authenticateCreatorAccount,
   clearStoredAccountId,
   getStoredAccountId,
-  getStoredIsAdmin,
+  getTripsForCurrentAccount,
 } from "@/lib/creatorAccount";
 
 // This page has no dynamic route segment, so Next would otherwise try to
@@ -67,26 +67,22 @@ function TripsPageInner() {
   // most recent; prefer one that's actually ready to look at. The list
   // itself only gets shown here (below) for the one case with nowhere
   // else to send you: an account with zero trips yet.
-  const loadTrips = useCallback(
-    async (accountId: string) => {
-      const admin = getStoredIsAdmin();
-      const list = admin ? await getAllTrips() : await getTripsForAccount(accountId);
-      setIsAdmin(admin);
+  const loadTrips = useCallback(async () => {
+    const { isAdmin: admin, trips: list } = await getTripsForCurrentAccount();
+    setIsAdmin(admin);
 
-      if (list.length === 0) {
-        setStep("list");
-        return;
-      }
-      const target = list.find((t) => t.content_status === "ready") ?? list[0];
-      router.push(`/trip/${target.slug}/settings`);
-    },
-    [router],
-  );
+    if (list.length === 0) {
+      setStep("list");
+      return;
+    }
+    const target = list.find((t) => t.content_status === "ready") ?? list[0];
+    router.push(`/trip/${target.slug}/settings`);
+  }, [router]);
 
   useEffect(() => {
     const accountId = getStoredAccountId();
     if (accountId) {
-      loadTrips(accountId).catch(() => setStep("auth"));
+      loadTrips().catch(() => setStep("auth"));
     } else {
       setStep("auth");
     }
@@ -131,7 +127,7 @@ function TripsPageInner() {
         return;
       }
 
-      await loadTrips(result.accountId);
+      await loadTrips();
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Nu am putut verifica contul. Încearcă din nou.");
     } finally {
