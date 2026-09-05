@@ -40,11 +40,25 @@ export async function ensureAuthSession(): Promise<string> {
   if (existing.session?.user.id) return existing.session.user.id;
 
   if (!signInPromise) {
-    signInPromise = supabase.auth.signInAnonymously().then(({ data, error }) => {
+    signInPromise = supabase.auth.signInAnonymously().then(async ({ data, error }) => {
       if (error || !data.session) {
         signInPromise = null;
         throw error ?? new Error("Anonymous sign-in returned no session.");
       }
+      // signInAnonymously() is supposed to leave the client's own request
+      // headers already pointed at this session by the time its promise
+      // resolves -- but in production this has been observed to race: the
+      // very next request (a participant insert whose RLS check requires
+      // auth.uid() to already equal this session's user id) sometimes
+      // still goes out under the old (anon-key) identity, failing with
+      // "new row violates row-level security policy". Re-asserting the
+      // session via setSession() and awaiting it closes that gap -- it's
+      // the same tokens signInAnonymously() just returned, not a new
+      // sign-in, so this is a no-op sync, never a duplicate session.
+      await supabase.auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      });
       return data.session.user.id;
     });
   }

@@ -74,7 +74,8 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
       await trackEvent(trip.id, "trip_joined", participant.id);
       setParticipantId(participant.id);
       goNext();
-    } catch {
+    } catch (err) {
+      console.error("OnboardingWizard join failed", err);
       setError("Nu s-a putut salva. Încearcă din nou.");
     } finally {
       setSubmitting(false);
