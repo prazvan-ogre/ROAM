@@ -11,6 +11,7 @@ import {
   clearStoredAccountId,
   getStoredAccountId,
   getTripsForCurrentAccount,
+  linkTripToCurrentAccount,
 } from "@/lib/creatorAccount";
 
 // This page has no dynamic route segment, so Next would otherwise try to
@@ -79,14 +80,45 @@ function TripsPageInner() {
     router.push(`/trip/${target.slug}/settings`);
   }, [router]);
 
+  // The already-logged-in counterpart to handleAuthSubmit's own linking
+  // below (hypothesis E, 2026-09-05 review): a device that already has a
+  // valid session (no phone/PIN re-entry needed) landing here via
+  // ?link=<slug> right after creating a second trip used to skip
+  // straight to loadTrips(), never looking at linkSlug at all -- only a
+  // *fresh* login's handleAuthSubmit ever ran the "link this trip to my
+  // account" + auto-join steps. Best-effort, same as handleAuthSubmit's:
+  // a failed link or join here still lands the user in the trip's
+  // Setări, matching "right after creating a trip, land inside it"
+  // either way.
+  const linkNewTripThenRedirect = useCallback(
+    async (slug: string) => {
+      try {
+        const { displayName } = await linkTripToCurrentAccount(slug);
+        if (displayName) {
+          const trip = await getTripBySlug(slug);
+          const accountId = getStoredAccountId();
+          if (trip && accountId) await getOrCreateAdultParticipant(trip.id, displayName, accountId);
+        }
+      } catch (err) {
+        console.error("Linking a new trip to an already logged-in account failed", err);
+      }
+      router.push(`/trip/${slug}/settings`);
+    },
+    [router],
+  );
+
   useEffect(() => {
     const accountId = getStoredAccountId();
-    if (accountId) {
-      loadTrips().catch(() => setStep("auth"));
-    } else {
+    if (!accountId) {
       setStep("auth");
+      return;
     }
-  }, [loadTrips]);
+    if (linkSlug) {
+      linkNewTripThenRedirect(linkSlug);
+    } else {
+      loadTrips().catch(() => setStep("auth"));
+    }
+  }, [linkSlug, loadTrips, linkNewTripThenRedirect]);
 
   async function handleAuthSubmit(e: FormEvent) {
     e.preventDefault();

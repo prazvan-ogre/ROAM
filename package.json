@@ -14,6 +14,7 @@
     "test:sql": "psql -v ON_ERROR_STOP=1 -f supabase/tests/battle_scoring.test.sql",
     "test:sql:fractional": "psql -v ON_ERROR_STOP=1 -f supabase/tests/battle_scoring_fractional_average.test.sql",
     "test:sql:completion": "psql -v ON_ERROR_STOP=1 -f supabase/tests/profile_completion_signal.test.sql",
+    "test:sql:record-battle-answer": "psql -v ON_ERROR_STOP=1 -f supabase/tests/record_battle_answer_atomicity.test.sql",
     "test:sql:r1": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r1_auth_ownership_rls.test.sql",
     "test:sql:r1-first-insert": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r1_participant_first_insert_returning.test.sql",
     "test": "vitest run"

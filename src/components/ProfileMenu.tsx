@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, UserRoundPlus, UsersRound } from "lucide-react";
-import { getStoredActiveProfileId, setStoredActiveProfileId } from "@/lib/participant";
-import { useTrip, useProfiles } from "@/lib/hooks";
+import { setStoredActiveProfileId } from "@/lib/participant";
+import { useTrip, useProfiles, useActiveProfile } from "@/lib/hooks";
 
 type View = "menu" | "switch";
 
@@ -24,15 +24,9 @@ export function ProfileMenu({ slug }: { slug: string }) {
   const { data: trip } = useTrip(slug);
   const tripId = trip?.id ?? null;
   const { data: profiles = [] } = useProfiles(tripId ?? undefined);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const active = useActiveProfile(tripId ?? undefined, profiles);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("menu");
-
-  useEffect(() => {
-    if (!tripId || profiles.length === 0) return;
-    const stored = getStoredActiveProfileId(tripId);
-    setActiveId((profiles.find((p) => p.id === stored) ?? profiles[0]).id);
-  }, [tripId, profiles]);
 
   const closeMenu = useCallback(() => {
     setOpen(false);
@@ -58,16 +52,21 @@ export function ProfileMenu({ slug }: { slug: string }) {
   }, [open, closeMenu]);
 
   // Nothing to show before this device has joined the trip (onboarding
-  // wizard handles that case on Home) -- no profile exists yet.
-  if (profiles.length === 0) return null;
+  // wizard handles that case on Home) -- no profile exists yet. Also
+  // narrows `active` for TS below: useActiveProfile only returns null
+  // when profiles is empty, which this already ruled out.
+  if (profiles.length === 0 || !active) return null;
 
-  const active = profiles.find((p) => p.id === activeId) ?? profiles[0];
   const hasChildProfile = profiles.some((p) => p.role === "child");
 
   function handleSwitchProfile(participantId: string) {
     if (!tripId) return;
+    // setStoredActiveProfileId writes localStorage and broadcasts the
+    // new id via SWR's global mutate() on the same key useActiveProfile
+    // reads -- this component's own `active` above updates from that,
+    // same as every other mounted consumer, so no local state to set
+    // here.
     setStoredActiveProfileId(tripId, participantId);
-    setActiveId(participantId);
     closeMenu();
   }
 
@@ -76,7 +75,11 @@ export function ProfileMenu({ slug }: { slug: string }) {
     // name= skips the "Ai deja cont?" chooser on /trips straight to the
     // name+phone+PIN form, pre-filled with this profile's name -- we
     // already know who's asking, no need to ask twice.
-    router.push(`/trips?link=${slug}&name=${encodeURIComponent(active.display_name)}`);
+    // Non-null: TS doesn't carry the `if (!active) return null` narrowing
+    // above into this function declaration's closure, but this can only
+    // ever run from a click on the already-rendered menu below, which
+    // never renders without `active` being non-null.
+    router.push(`/trips?link=${slug}&name=${encodeURIComponent(active!.display_name)}`);
   }
 
   return (

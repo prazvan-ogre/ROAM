@@ -5,7 +5,6 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Check, X, ExternalLink } from "lucide-react";
 import { currentTripDay } from "@/lib/trip";
-import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import {
   getDiscoverQuestion,
   getMyResponse,
@@ -21,7 +20,7 @@ import type { QuestionSlot } from "@/lib/supabase/types";
 import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Btn, FlowHeader, OptionButton, Centered } from "@/components/ui";
 import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
-import { useTrip, useProfiles } from "@/lib/hooks";
+import { useTrip, useProfiles, useActiveProfile } from "@/lib/hooks";
 
 type Step = "loading" | "question" | "reveal" | "unavailable" | "closed" | "error";
 
@@ -33,9 +32,17 @@ export default function DiscoverPage() {
   const discoverSlot = slot as QuestionSlot;
   const { data: trip, error: tripError } = useTrip(slug);
   const { data: profiles, error: profilesError } = useProfiles(trip?.id);
+  // Reactive to ProfileMenu's "Schimbă profilul" (hypothesis D's sibling
+  // issue, 2026-09-05 review) -- previously resolved once, inside the
+  // effect below, from a plain getStoredActiveProfileId() snapshot at
+  // the moment this page's question first loaded. Switching profile
+  // while the question was already open never updated that snapshot, so
+  // the submission below still went out under whoever was active at
+  // load time, even though ProfileMenu's own avatar had already moved
+  // on to someone else.
+  const activeProfile = useActiveProfile(trip?.id, profiles);
 
   const [step, setStep] = useState<Step>("loading");
-  const [activeProfile, setActiveProfile] = useState<Participant | null>(null);
   const [content, setContent] = useState<DiscoverQuestion | null>(null);
   const [selectedOption, setSelectedOption] = useState<AnswerOption | null>(null);
   const [myResponse, setMyResponse] = useState<Response | null>(null);
@@ -45,7 +52,7 @@ export default function DiscoverPage() {
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
   useEffect(() => {
-    if (!trip || !profiles || profiles.length === 0) return;
+    if (!trip || !profiles || profiles.length === 0 || !activeProfile) return;
 
     let cancelled = false;
 
@@ -59,26 +66,23 @@ export default function DiscoverPage() {
         }
         setContent(c);
         await trackEvent(trip!.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
-
-        // Product owner request: use the profile picked top-right (the
-        // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
-        // asking "Cine răspunde?" here -- same resolution it uses (stored
-        // active profile, falling back to this device's first one).
-        const stored = getStoredActiveProfileId(trip!.id);
-        const resolved = profiles!.find((p) => p.id === stored) ?? profiles![0];
-        await selectProfile(resolved, c);
+        await selectProfile(c);
       } catch {
         if (!cancelled) setStep("error");
       }
     }
 
-    async function selectProfile(profile: Participant, c: DiscoverQuestion) {
-      setActiveProfile(profile);
-      const existing = await getMyResponse(profile.id, c.question.id);
+    // Re-runs (via the activeProfile dependency below) every time the
+    // active profile changes, even mid-session -- not just this page's
+    // own reveal-vs-question state, but the identity handleSubmitAnswer
+    // below will submit as, since activeProfile itself is read fresh
+    // from the hook on every render, not captured into local state here.
+    async function selectProfile(c: DiscoverQuestion) {
+      const existing = await getMyResponse(activeProfile!.id, c.question.id);
       if (cancelled) return;
       if (existing) {
         setMyResponse(existing);
-        const assignedExtra = await getOrAssignExtra(profile.id, profile.role, c.question.id);
+        const assignedExtra = await getOrAssignExtra(activeProfile!.id, activeProfile!.role, c.question.id);
         if (cancelled) return;
         setExtra(assignedExtra);
         setStep("reveal");
@@ -100,7 +104,7 @@ export default function DiscoverPage() {
     return () => {
       cancelled = true;
     };
-  }, [trip, profiles, discoverSlot]);
+  }, [trip, profiles, discoverSlot, activeProfile]);
 
   async function handleSubmitAnswer() {
     if (!trip || !content || !activeProfile || !selectedOption) return;

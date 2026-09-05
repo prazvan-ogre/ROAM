@@ -1,3 +1,4 @@
+import { mutate } from "swr";
 import { supabase } from "./supabase/client";
 import { getDeviceId, ensureAuthSession } from "./device";
 import type { Database, ParticipantRole } from "./supabase/types";
@@ -147,6 +148,13 @@ const ACTIVE_PROFILE_KEY_PREFIX = "roam_active_profile_";
 // so it's clear at a glance whose answers are being tracked when a
 // device has more than one (e.g. a parent's phone with a child's profile
 // too). Scoped per trip, same as the device id itself.
+// The SWR cache key src/lib/hooks.ts's useActiveProfileId()/useActiveProfile()
+// read this same value through -- exported so setStoredActiveProfileId
+// below can broadcast a change to it on that exact key.
+export function activeProfileSwrKey(tripId: string) {
+  return ["activeProfileId", tripId] as const;
+}
+
 export function getStoredActiveProfileId(tripId: string): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem(ACTIVE_PROFILE_KEY_PREFIX + tripId);
@@ -155,6 +163,15 @@ export function getStoredActiveProfileId(tripId: string): string | null {
 export function setStoredActiveProfileId(tripId: string, participantId: string): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(ACTIVE_PROFILE_KEY_PREFIX + tripId, participantId);
+  // A plain localStorage write triggers no re-render on its own, and the
+  // browser's own "storage" event never fires in the same tab that made
+  // the change -- so without this, every already-mounted
+  // useActiveProfileId(tripId) consumer (ProfileMenu itself aside, which
+  // updates its own local state directly) would keep showing/using
+  // whatever it read at its own mount time until it happened to
+  // unmount/remount. This pushes the new value into SWR's cache on the
+  // same key those hooks read, so they all pick it up immediately.
+  mutate(activeProfileSwrKey(tripId), participantId, { revalidate: false });
 }
 
 export async function addChildProfile(

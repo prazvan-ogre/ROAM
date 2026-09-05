@@ -59,6 +59,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A bare postgres:16 image has none of what a real Supabase project
+      # provisions (anon/authenticated roles, the auth schema, the
+      # supabase_realtime publication) -- without this, migrations that
+      # grant to anon/authenticated or reference auth.uid()/auth.users
+      # fail outright and ON_ERROR_STOP=1 aborts the whole sequence before
+      # any later migration (including the ones the tests below actually
+      # exercise) ever applies. See supabase/ci-bootstrap.sql for exactly
+      # what this does and does not cover -- it is NOT a full Supabase
+      # Auth/RLS emulation, only enough for every migration to apply and
+      # for the SQL regression tests below (which run as the postgres
+      # superuser, so RLS enforcement itself is not what they check) to
+      # run against a fully-migrated schema.
+      - name: Bootstrap Supabase-only roles/schema/publication (not a full Auth/RLS emulation)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci-bootstrap.sql
+
       - name: Apply migrations
         run: |
           for f in supabase/migrations/*.sql; do
@@ -74,5 +89,61 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Regression: must always pass. A non-zero exit here is always a
+      # real failure -- no wrapper, no swallowed exit code.
+      #
+      # test:sql:fractional (hypothesis C/R3) and test:sql:completion
+      # (hypothesis D/R2) were both deliberately-red reproductions until
+      # 20260906110000_fix_battle_score_fractional_average.sql and the
+      # active-profile scoping in app/trip/[slug]/page.tsx fixed their
+      # underlying bugs; both supabase/tests/*.test.sql files were
+      # converted in the same batch as each fix to assert the now-correct
+      # behavior instead of reproducing the wrong one. test:sql:record-battle-answer
+      # is new (hypothesis B/R3's fix, 20260906120000_atomic_record_battle_answer.sql)
+      # and was never a reproduction to begin with -- it goes straight in
+      # here as an ordinary regression test. If a future hypothesis needs
+      # a deliberately-red reproduction again, follow the pattern this
+      # replaced: assert the *exact* expected failure (exit code AND
+      # message), not just "any non-zero exit", so a real setup/
+      # migration/connection problem is never mistaken for the known bug.
       - name: Run battle scoring regression tests
-        run: npm run test:sql
+        run: |
+          npm run test:sql
+          npm run test:sql:fractional
+          npm run test:sql:completion
+          npm run test:sql:record-battle-answer
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # A test file can legitimately PASS *because* the bug it covers is
+      # still present -- asserting today's actual (buggy) behavior at a
+      # real code boundary, rather than the corrected one, until the fix
+      # lands. As of this commit none of the files here are in that state
+      # (every one of the 2026-09-05 review's hypotheses, plus the
+      # profile-switch defect found while completing this batch, has been
+      # fixed and its test converted to asserting the corrected
+      # behavior -- see each file's own header comment and CHANGELOG.md
+      # for the history), but the pattern itself still applies to any
+      # future one: when a fix lands, update that file's assertions (or,
+      # like tests/unit/active-profile-switch-submission-identity.test.tsx's
+      # second test did, convert it from vitest's it.fails() to a plain
+      # `it`) in the same commit -- don't leave a test asserting removed
+      # behavior.
+      #
+      # No wrapper needed here (unlike the SQL steps above): vitest's own
+      # exit code already does the right thing for both shapes -- 0 when
+      # every test (including any future it.fails()) behaves as currently
+      # contracted, non-zero the moment any of them doesn't.
+      - name: Run Vitest unit/component tests
+        run: npm test

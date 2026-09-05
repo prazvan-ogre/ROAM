@@ -1,22 +1,33 @@
--- Regression test for a hypothesis raised in the 2026-09-05 architecture
--- review (R2): the Home dashboard's "is this Discover slot completed?"
--- check (app/trip/[slug]/page.tsx's loadSlotStatus/isCompleted) is:
+-- Regression test for hypothesis D (2026-09-05 architecture/security
+-- review): the Home dashboard's "is this Discover slot completed?"
+-- check (app/trip/[slug]/page.tsx's loadSlotStatus/isCompleted) used to
+-- be
 --
 --   select count(*) from responses
 --   where question_id = :questionId and participant_id in (:profileIds)
 --
--- where :profileIds is *every* participant on this device
--- (listProfilesForDevice), not just the currently active profile
--- (ProfileMenu's stored active-profile id). This file reproduces that
--- exact query shape against fixture data to demonstrate the consequence:
--- one profile's answer marks the slot "completed" for every other
--- profile sharing the device, even one that has never answered.
+-- where :profileIds was *every* participant on this device
+-- (listProfilesForDevice), not just the currently active profile -- one
+-- profile's answer marked the slot "completed" for every other profile
+-- sharing the device, even one that had never answered.
 --
--- This file only demonstrates the hypothesis; it does not fix it (fixing
--- it means scoping the check to the active profile, an application-code
--- change, not a database one). Run against a scratch/dev database with
--- all migrations applied (never against real trip data) -- wrapped in a
--- transaction that is rolled back at the end.
+-- Fixed in app/trip/[slug]/page.tsx by resolving a single active profile
+-- (resolveActiveProfile(), the same getStoredActiveProfileId()
+-- resolution ProfileMenu/Discover/Battle/Catchup already use) once per
+-- load and scoping the check to it alone:
+--
+--   select count(*) from responses
+--   where question_id = :questionId and participant_id = :activeProfileId
+--
+-- This file reproduces that exact query shape against fixture data to
+-- verify the fix, not to demonstrate the bug (that was this file's job
+-- until the fix shipped): the Parent's answer no longer marks the slot
+-- "completed" when the Child is the active profile, and the Parent's own
+-- completion is still correctly reported when the Parent is active.
+--
+-- Run against a scratch/dev database with all migrations applied (never
+-- against real trip data) -- wrapped in a transaction that is rolled
+-- back at the end.
 --
 --   PGDATABASE=<scratch> PGUSER=postgres PGHOST=localhost npm run test:sql:completion
 
@@ -44,30 +55,32 @@ insert into responses (question_id, participant_id, selected_option_id, is_corre
   ('00000000-0000-0000-0000-000000000321', '00000000-0000-0000-0000-000000000311', '00000000-0000-0000-0000-000000000331', true);
 
 do $$
-declare device_completed_count bigint;
-declare child_only_completed_count bigint;
+declare child_active_count bigint;
+declare parent_active_count bigint;
 begin
-  -- The app's literal query: every profile on the device, exactly as
-  -- listProfilesForDevice()/loadSlotStatus() build `profileIds`.
-  select count(*) into device_completed_count
+  -- The app's current (fixed) query, active profile = Child, who has
+  -- not answered.
+  select count(*) into child_active_count
   from responses
   where question_id = '00000000-0000-0000-0000-000000000321'
-    and participant_id in ('00000000-0000-0000-0000-000000000311', '00000000-0000-0000-0000-000000000312');
+    and participant_id = '00000000-0000-0000-0000-000000000312';
 
-  -- What the signal *should* be if scoped to the Child alone (the
-  -- profile that actually has not answered).
-  select count(*) into child_only_completed_count
+  -- Same query, active profile = Parent, who has answered.
+  select count(*) into parent_active_count
   from responses
   where question_id = '00000000-0000-0000-0000-000000000321'
-    and participant_id in ('00000000-0000-0000-0000-000000000312');
+    and participant_id = '00000000-0000-0000-0000-000000000311';
 
-  raise notice 'device-wide count=% (drives "completed" if >0), child-only count=%', device_completed_count, child_only_completed_count;
+  raise notice 'active-profile completed count: Child=% Parent=%', child_active_count, parent_active_count;
 
-  if device_completed_count > 0 and child_only_completed_count = 0 then
-    raise exception 'HYPOTHESIS CONFIRMED: the Parent''s answer alone makes this slot read as "completed" (count=%) for the whole device, even though the Child (count=%) has never answered it.', device_completed_count, child_only_completed_count;
-  else
-    raise notice 'HYPOTHESIS NOT REPRODUCED with this fixture (device_completed_count=%, child_only_completed_count=%).', device_completed_count, child_only_completed_count;
+  if child_active_count <> 0 then
+    raise exception 'REGRESSION: the Child (active profile) reads as having completed this slot (count=%) even though only the Parent answered -- the device-wide leak is back.', child_active_count;
   end if;
+  if parent_active_count = 0 then
+    raise exception 'REGRESSION: the Parent (active profile) reads as NOT having completed this slot, even though the Parent is the one who answered.';
+  end if;
+
+  raise notice 'PASS: completion is scoped to the active profile alone -- the Parent''s answer no longer leaks onto the Child';
 end $$;
 
 rollback;

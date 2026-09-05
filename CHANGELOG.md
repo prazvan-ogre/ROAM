@@ -953,6 +953,104 @@
     same command is still in the middle of inserting. New regression
     test: `supabase/tests/r1_participant_first_insert_returning.test.sql`
     (`npm run test:sql:r1-first-insert`).
+- Fixed: `battle_team_score()`/`trip_battle_win_tally()` divided
+  `sum(score)` by `count(distinct participant_id)` as plain `bigint`
+  arithmetic, truncating a real fractional per-participant average before
+  it ever reached `battle_team_score`'s declared `numeric` return column
+  or `trip_battle_win_tally`'s own win/loss comparison (hypothesis C,
+  2026-09-05 review). Concretely: adults averaging 20/3 (6.667) vs. kids
+  averaging 30/5 (6.0) both truncated to 6 -- reported as a tied score,
+  and credited *both* teams with the evening's win in the season-long
+  tally instead of adults alone. Fixed in
+  `20260906110000_fix_battle_score_fractional_average.sql` by casting the
+  sum operand to `numeric` before dividing, in both functions.
+  `supabase/tests/battle_scoring_fractional_average.test.sql` (previously
+  a reproduction of the bug) now asserts the corrected behavior for both
+  functions.
+- Fixed: the Home dashboard's "is this Discover/Battle slot completed?"
+  check (`app/trip/[slug]/page.tsx`'s `loadSlotStatus`/`loadBattleStatus`)
+  counted responses across *every* profile on the device
+  (`listProfilesForDevice`), not just the currently active one -- one
+  profile's answer marked a slot "completed" for a sibling profile that
+  had never answered it (hypothesis D, 2026-09-05 review). Now resolves
+  the single active profile once per load (`resolveActiveProfile()`, the
+  same `getStoredActiveProfileId()` resolution ProfileMenu/Discover/
+  Battle/Catchup already use) and scopes both checks to it alone, the
+  same way `loadCatchUpStatus`'s catch-up banner already was (see
+  9fcc72e). `supabase/tests/profile_completion_signal.test.sql`
+  (previously a reproduction of the bug) now asserts the corrected
+  behavior.
+- Fixed: switching the device's active profile (top-right ProfileMenu,
+  "Schimbă profilul") while already sitting on an open Discover or
+  catch-up question kept submitting the answer under whichever profile
+  had been active when the page first loaded -- ProfileMenu's own
+  avatar/name switched instantly, but `app/trip/[slug]/discover/[slot]/page.tsx`
+  and `app/trip/[slug]/catchup/page.tsx` each resolved `activeProfile`
+  only once, inside a mount-time effect, with nothing to tell them it
+  had changed underneath them (found while completing the 2026-09-05
+  review's batch, not one of the original 5 hypotheses). Fixed by making
+  the active profile reactive across every consumer:
+  `setStoredActiveProfileId` (`src/lib/participant.ts`) now broadcasts
+  the new id through SWR's global `mutate()`, and new
+  `useActiveProfileId`/`useActiveProfile` hooks (`src/lib/hooks.ts`) read
+  that same key -- ProfileMenu, Discover, and Catchup all pick up a
+  switch the instant it happens instead of only at their own next mount.
+  `src/components/BattleFlow.tsx` deliberately keeps its own separate
+  in-flow "Alt profil răspunde" picker (product spec: passing the phone
+  between family members mid-battle) and was never the same bug, since
+  it already re-reads the stored active profile fresh at its own
+  `handleStart()` click time.
+- Fixed: `recordBattleAnswer` (`src/lib/battle.ts`) wrote the personal
+  `responses` row and the team `battle_scores` row as two separate,
+  sequential client-side inserts with no shared transaction -- a failure
+  on the second write left the first one already committed, with no way
+  to tell from the thrown error alone that the team never got credit
+  for it, and no clean retry path (`responses` has `unique (question_id,
+  participant_id)`) (hypothesis B, 2026-09-05 review; confirmed by
+  `tests/unit/battle-score-divergence.test.ts`). Fixed by moving both
+  writes into a single new `record_battle_answer()` Postgres function
+  (`20260906120000_atomic_record_battle_answer.sql`): a function body
+  runs inside the same transaction as the call that invoked it, so a
+  failure anywhere inside -- including the `battle_scores` insert --
+  rolls back the `responses` insert too. Also moved the 15-minute
+  result-window check into the same transaction, evaluated against the
+  database's own `now()` instead of a client-side `Date.now()` compared
+  against an earlier, separately-fetched value.
+  `getBattleWindowStatus()` itself is unchanged and stays in use for its
+  other purpose (`BattleFlow.tsx`'s "done" screen display). Since
+  `SECURITY DEFINER` (required to write both tables from one call)
+  bypasses the RLS ownership policies R1 put on `responses`/
+  `battle_scores`, the function re-checks the same
+  `participant_is_self_or_legacy` ownership rule explicitly before
+  writing anything -- new `supabase/tests/record_battle_answer_atomicity.test.sql`
+  (`npm run test:sql:record-battle-answer`) verifies the success path,
+  that ownership check, and the atomicity itself (a forced
+  `battle_scores` failure leaves no orphaned `responses` row).
+  `tests/unit/battle-score-divergence.test.ts` and its fake Supabase
+  client (`tests/unit/helpers/fakeSupabaseClient.ts`) were rewritten to
+  match: they now simulate the single RPC call instead of two separate
+  table inserts, and assert that a failed call commits neither write.
+- Fixed: an already logged-in creator ("Călătoriile mele" session cookie
+  already valid, no phone/PIN re-entry needed) landing on
+  `/trips?link=<newSlug>` right after creating a second trip never got
+  that trip linked to their account -- `app/trips/page.tsx`'s mount
+  effect skipped straight to `loadTrips()` whenever an account id was
+  already stored, never consulting `linkSlug` at all; only
+  `handleAuthSubmit` (a *fresh* phone+PIN login) ran the actual
+  "link this device's trip to my account" write, inside
+  `app/api/account/route.ts`'s POST (hypothesis E, 2026-09-05 review).
+  Fixed with a new, session-cookie-gated endpoint,
+  `app/api/account/link-trip/route.ts` (same pattern as
+  `app/api/account/trips/route.ts` -- no phone/PIN, no client-supplied
+  accountId), and `src/lib/creatorAccount.ts`'s new
+  `linkTripToCurrentAccount()`: the mount effect now calls it (plus the
+  same `getOrCreateAdultParticipant` auto-join `handleAuthSubmit` already
+  did) before redirecting into the trip, best-effort like
+  `handleAuthSubmit`'s own linking -- a failed link still lands the user
+  in the trip's Setări rather than stranding them.
+  `tests/unit/trips-page-link-on-existing-login.test.tsx` (previously a
+  reproduction of the bug) now asserts the corrected behavior, plus a
+  second case for the best-effort failure path.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see
