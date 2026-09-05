@@ -124,29 +124,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Unlike the SQL reproductions above, most of these tests currently
-      # PASS *because* the bug they cover is still present -- they assert
-      # today's actual (buggy) behavior at a real code boundary (see each
-      # file's own header comment for which lib/route it exercises):
+      # Some of these tests currently PASS *because* the bug they cover is
+      # still present -- they assert today's actual (buggy) behavior at a
+      # real code boundary (see each file's own header comment for which
+      # lib/route it exercises):
       #   - tests/unit/api-account-ownership.test.ts
       #   - tests/unit/battle-score-divergence.test.ts
       #   - tests/unit/trips-page-link-on-existing-login.test.tsx
       # When the batch that fixes one of those defects lands, update that
       # file's assertions to expect the corrected behavior as part of the
-      # same commit -- don't leave it asserting removed behavior.
-      #
-      # tests/unit/active-profile-switch-submission-identity.test.tsx is
-      # the opposite shape, matching the SQL scripts above instead: its
-      # second test uses vitest's it.fails() to assert a newly-confirmed,
-      # still-unfixed defect (switching the active profile after a
-      # question is already open doesn't change who it submits as). See
-      # that file's header for the exact contract; when fixed, it.fails()
-      # itself will start failing ("Expect test to fail") -- that is the
-      # signal to convert it to a plain `it` in the same batch.
+      # same commit -- don't leave it asserting removed behavior. (This is
+      # exactly what happened to
+      # tests/unit/active-profile-switch-submission-identity.test.tsx's
+      # own second test: it used vitest's it.fails() to assert a
+      # newly-confirmed defect -- switching the active profile after a
+      # question was already open didn't change who it submitted as --
+      # until the fix shipped in the same batch as the file's own
+      # conversion to a plain `it` asserting the corrected behavior. See
+      # that file's header for the fix itself.)
       #
       # No wrapper needed here (unlike the SQL steps above): vitest's own
       # exit code already does the right thing for both shapes -- 0 when
-      # every test (including every it.fails()) behaves as currently
+      # every test (including any future it.fails()) behaves as currently
       # contracted, non-zero the moment any of them doesn't.
       - name: Run Vitest unit/component tests
         run: npm test

@@ -980,6 +980,26 @@
   9fcc72e). `supabase/tests/profile_completion_signal.test.sql`
   (previously a reproduction of the bug) now asserts the corrected
   behavior.
+- Fixed: switching the device's active profile (top-right ProfileMenu,
+  "Schimbă profilul") while already sitting on an open Discover or
+  catch-up question kept submitting the answer under whichever profile
+  had been active when the page first loaded -- ProfileMenu's own
+  avatar/name switched instantly, but `app/trip/[slug]/discover/[slot]/page.tsx`
+  and `app/trip/[slug]/catchup/page.tsx` each resolved `activeProfile`
+  only once, inside a mount-time effect, with nothing to tell them it
+  had changed underneath them (found while completing the 2026-09-05
+  review's batch, not one of the original 5 hypotheses). Fixed by making
+  the active profile reactive across every consumer:
+  `setStoredActiveProfileId` (`src/lib/participant.ts`) now broadcasts
+  the new id through SWR's global `mutate()`, and new
+  `useActiveProfileId`/`useActiveProfile` hooks (`src/lib/hooks.ts`) read
+  that same key -- ProfileMenu, Discover, and Catchup all pick up a
+  switch the instant it happens instead of only at their own next mount.
+  `src/components/BattleFlow.tsx` deliberately keeps its own separate
+  in-flow "Alt profil răspunde" picker (product spec: passing the phone
+  between family members mid-battle) and was never the same bug, since
+  it already re-reads the stored active profile fresh at its own
+  `handleStart()` click time.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see

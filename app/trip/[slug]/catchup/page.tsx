@@ -5,7 +5,6 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, X, History, ExternalLink } from "lucide-react";
 import { currentTripDay, type Trip } from "@/lib/trip";
-import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import {
   getCatchUpQuestions,
   submitResponse,
@@ -17,7 +16,7 @@ import {
 } from "@/lib/discover";
 import { Btn, FlowHeader, Centered } from "@/components/ui";
 import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
-import { useTrip, useProfiles } from "@/lib/hooks";
+import { useTrip, useProfiles, useActiveProfile } from "@/lib/hooks";
 
 type Step = "loading" | "error" | "empty" | "question" | "reveal" | "done";
 
@@ -43,9 +42,14 @@ export default function CatchUpPage() {
 
   const { data: trip, error: tripError } = useTrip(slug);
   const { data: profiles, error: profilesError } = useProfiles(trip?.id);
+  // Reactive to ProfileMenu's "Schimbă profilul" (same fix as Discover,
+  // hypothesis D's sibling issue, 2026-09-05 review) -- previously
+  // resolved once, inside the effect below, from a plain
+  // getStoredActiveProfileId() snapshot at the moment this page's
+  // questions first loaded.
+  const activeProfile = useActiveProfile(trip?.id, profiles);
 
   const [step, setStep] = useState<Step>("loading");
-  const [activeProfile, setActiveProfile] = useState<Participant | null>(null);
   const [questions, setQuestions] = useState<CatchUpQuestion[]>([]);
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<AnswerOption | null>(null);
@@ -53,41 +57,35 @@ export default function CatchUpPage() {
   const [extra, setExtra] = useState<Extra | null>(null);
 
   useEffect(() => {
-    if (!trip || !profiles || profiles.length === 0) return;
+    if (!trip || !profiles || profiles.length === 0 || !activeProfile) return;
 
     let cancelled = false;
 
-    async function load() {
+    // Re-runs (via the activeProfile dependency below) every time the
+    // active profile changes, even mid-session -- both the pending-
+    // question list shown and the identity handleSubmit below will
+    // submit as, since activeProfile is read fresh from the hook on
+    // every render, not captured into local state here.
+    async function load(t: Trip) {
       try {
-        // Product owner request: use the profile picked top-right (the
-        // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
-        // asking again here -- same resolution it uses (stored active
-        // profile, falling back to the first one).
-        const stored = getStoredActiveProfileId(trip!.id);
-        const resolved = profiles!.find((p) => p.id === stored) ?? profiles![0];
-        await selectProfile(resolved, trip!);
+        const pending = await getCatchUpQuestions(t.id, currentTripDay(t), activeProfile!.id);
+        if (cancelled) return;
+        setQuestions(pending);
+        setIndex(0);
+        setSelected(null);
+        setResponse(null);
+        setExtra(null);
+        setStep(pending.length === 0 ? "empty" : "question");
       } catch {
         if (!cancelled) setStep("error");
       }
     }
 
-    async function selectProfile(profile: Participant, t: Trip) {
-      setActiveProfile(profile);
-      const pending = await getCatchUpQuestions(t.id, currentTripDay(t), profile.id);
-      if (cancelled) return;
-      setQuestions(pending);
-      setIndex(0);
-      setSelected(null);
-      setResponse(null);
-      setExtra(null);
-      setStep(pending.length === 0 ? "empty" : "question");
-    }
-
-    load();
+    load(trip);
     return () => {
       cancelled = true;
     };
-  }, [trip, profiles]);
+  }, [trip, profiles, activeProfile]);
 
   async function handleSubmit() {
     if (!activeProfile || !selected) return;

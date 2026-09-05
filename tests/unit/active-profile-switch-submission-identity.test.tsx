@@ -1,56 +1,65 @@
-// Regression test for the "completează batch-ul" request following the
-// 2026-09-05 review: does switching the device's active profile (top-right
-// ProfileMenu, "Schimbă profilul") while already sitting on an open
-// question actually change WHO the question gets submitted as -- or only
-// the avatar shown in the menu?
+// Regression test following the 2026-09-05 review: does switching the
+// device's active profile (top-right ProfileMenu, "Schimbă profilul")
+// while already sitting on an open question actually change WHO the
+// question gets submitted as -- or only the avatar shown in the menu?
 //
 // 9fcc72e ("Fix catch-up banner to check the active profile, not any
-// profile") only touched the Home dashboard's catch-up banner visibility
-// check (app/trip/[slug]/page.tsx). It never touched the actual
-// submission flow in app/trip/[slug]/discover/[slot]/page.tsx.
+// profile") only ever touched the Home dashboard's catch-up banner
+// visibility check (app/trip/[slug]/page.tsx). It never touched the
+// actual submission flow in app/trip/[slug]/discover/[slot]/page.tsx.
 //
-// NEWLY CONFIRMED DEFECT (not one of the original 5 hypotheses, not fixed
-// by 9fcc72e or by any other commit so far): DiscoverPage resolves
-// `activeProfile` exactly once, inside a mount-time useEffect keyed on
-// [trip, profiles, discoverSlot] -- none of which change when the user
-// switches profile via ProfileMenu (a plain localStorage write + a
-// setState local to ProfileMenu itself, no shared context/event). So a
-// profile switch made *after* the question has already loaded submits
-// under the *previous* profile's identity, even though ProfileMenu's own
-// avatar/name already shows the new one -- confirmed below by asserting
-// on submitResponse's actual participantId argument, not just the
-// avatar's text.
+// CONFIRMED, then FIXED (not one of the original 5 hypotheses; found
+// while completing this batch, not covered by 9fcc72e or any earlier
+// commit): DiscoverPage used to resolve `activeProfile` exactly once,
+// inside a mount-time useEffect keyed on [trip, profiles, discoverSlot]
+// -- none of which changed when the user switched profile via
+// ProfileMenu (a plain localStorage write + local setState in
+// ProfileMenu itself, no shared context/event). So a profile switch made
+// *after* the question had already loaded submitted under the *previous*
+// profile's identity, even though ProfileMenu's own avatar/name already
+// showed the new one.
+//
+// Fixed by making the active profile itself reactive across every
+// consumer: setStoredActiveProfileId (src/lib/participant.ts) now
+// broadcasts the new id through SWR's global mutate() on a shared key,
+// and src/lib/hooks.ts's new useActiveProfileId/useActiveProfile read
+// that same key -- so ProfileMenu, DiscoverPage, and
+// app/trip/[slug]/catchup/page.tsx (same fix, same pattern) all see a
+// switch the instant it happens, not just at their own next mount.
+// src/components/BattleFlow.tsx is deliberately NOT part of this fix: it
+// has its own explicit in-flow "Alt profil răspunde" picker for passing
+// the phone between family members mid-battle (product spec), and
+// already re-reads getStoredActiveProfileId() fresh at its own
+// handleStart() click time rather than capturing a stale snapshot, so it
+// was never the same bug.
 //
 // This test renders the real ProfileMenu and the real DiscoverPage
-// together (both wired to the same jsdom localStorage that
-// getStoredActiveProfileId/setStoredActiveProfileId actually use -- not
-// mocked), switches the active profile through ProfileMenu's own real
-// "Schimbă profilul" UI the way a user would, then answers the question
-// and inspects which participantId submitResponse was actually called
-// with. Only the Supabase-touching lib functions (@/lib/discover,
-// @/lib/analytics, @/lib/schedule, @/lib/hooks, @/lib/trip) are mocked at
-// the module boundary -- @/lib/participant's active-profile storage is
-// real, and no new test dependency (e.g. user-event) is introduced:
+// together (both wired to the same jsdom localStorage AND the same real,
+// unmocked useActiveProfile/useActiveProfileId + SWR global cache that
+// getStoredActiveProfileId/setStoredActiveProfileId actually drive),
+// switches the active profile through ProfileMenu's own real "Schimbă
+// profilul" UI the way a user would, then answers the question and
+// inspects which participantId submitResponse was actually called with
+// -- not just which name is shown. Only the Supabase-touching lib
+// functions (@/lib/discover, @/lib/analytics, @/lib/schedule) and the
+// network-backed halves of @/lib/hooks/@/lib/trip (useTrip/useProfiles/
+// currentTripDay) are mocked at the module boundary; @/lib/participant's
+// active-profile storage and the useActiveProfile*/SWR plumbing under
+// test are real. No new test dependency (e.g. user-event) is introduced:
 // fireEvent from the already-present @testing-library/react is enough
 // for plain clicks.
 //
-// CONTRACT (opposite of the A/B/E hypothesis tests in
-// api-account-ownership.test.ts / battle-score-divergence.test.ts /
-// trips-page-link-on-existing-login.test.tsx, which assert the *current*
-// buggy behavior and so PASS while it's unfixed): the second test below
-// asserts the *correct* behavior and is wrapped in vitest's it.fails() --
-// it currently fails (confirmed: submitResponse is called with the stale
-// "parent-1", not "child-1") the same way the SQL hypothesis tests RAISE
-// on a confirmed bug, so it.fails() reports that as an *expected*
-// failure and the suite stays green. The moment this is fixed,
-// it.fails() will itself start failing ("Expect test to fail") -- that
-// is the signal to convert this into a plain `it(...)` asserting the
-// corrected behavior, in the same batch that ships the fix. The first
-// test is a plain `it` (must always pass): it isolates that switching
-// itself and this file's mocks work, so the second test's failure can
-// only be about submission identity, not test setup.
+// CONTRACT: both tests below are plain `it` and must always pass --
+// unlike the A/B/E hypothesis tests (api-account-ownership.test.ts /
+// battle-score-divergence.test.ts / trips-page-link-on-existing-login.test.tsx),
+// which assert *today's* buggy behavior and are expected to need
+// updating once fixed, this file's defect has already been fixed in the
+// same batch that added this file's second test, so there is nothing
+// left asserting a bug -- only the corrected behavior, as an ordinary
+// regression test from here on.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
+import { mutate } from "swr";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -90,18 +99,24 @@ const trip = { id: "trip-1", slug: "trip-1", duration_days: 5, start_date: null 
 // reference until the underlying fetch actually revalidates with new
 // data (neither the trip, the device's participants, nor anything else
 // this test touches changes during it). A fresh `[parent, child]` array
-// literal returned on every call would make DiscoverPage's mount effect
-// (keyed on `[trip, profiles, discoverSlot]`) see `profiles` as "changed"
-// on every one of the component's own re-renders and re-run, silently
-// re-resolving activeProfile against localStorage each time -- which
-// would hide the exact bug this test exists to catch, since nothing
-// about DiscoverPage's own re-renders would do that in the real app.
+// literal returned on every call would make every effect keyed on
+// `profiles` see it as "changed" on every one of a component's own
+// re-renders and re-run needlessly -- this just matches real SWR
+// caching behavior, not a special accommodation for this test.
 const profiles = [parent, child];
 
-vi.mock("@/lib/hooks", () => ({
-  useTrip: () => ({ data: trip, error: undefined }),
-  useProfiles: () => ({ data: profiles, error: undefined }),
-}));
+// Partial mock: useTrip/useProfiles are network-backed in the real
+// module and need faking, but useActiveProfileId/useActiveProfile (the
+// hooks this test actually exercises) are pure localStorage + SWR and
+// stay real, via importOriginal.
+vi.mock("@/lib/hooks", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/hooks")>();
+  return {
+    ...actual,
+    useTrip: () => ({ data: trip, error: undefined }),
+    useProfiles: () => ({ data: profiles, error: undefined }),
+  };
+});
 
 vi.mock("@/lib/trip", () => ({
   currentTripDay: () => 1,
@@ -158,6 +173,13 @@ beforeEach(() => {
   window.localStorage.clear();
   submitResponse.mockClear();
   getMyResponse.mockClear();
+  // useActiveProfileId is real in this file (see the @/lib/hooks partial
+  // mock above), so it's backed by SWR's real, module-level global
+  // cache -- which otherwise persists across the `it` blocks below,
+  // since it isn't reset by @testing-library/react's cleanup(). Wiping
+  // every key keeps each test starting from "nothing stored yet",
+  // matching the fresh localStorage.clear() above.
+  mutate(() => true, undefined, { revalidate: false });
 });
 
 // This vitest.config.ts doesn't set test.globals, so @testing-library/react's
@@ -188,7 +210,7 @@ describe("active profile switch vs. submission identity", () => {
     await screen.findByText("Copilul");
   });
 
-  it.fails("KNOWN BUG (unfixed, not covered by 9fcc72e): switching the active profile after a question is already open should submit the new (switched-to) profile's identity, not the one loaded at mount", async () => {
+  it("switching the active profile after a question is already open submits the new (switched-to) profile's identity, not the one loaded at mount", async () => {
     const { ProfileMenu } = await import("@/components/ProfileMenu");
     const { default: DiscoverPage } = await import("../../app/trip/[slug]/discover/[slot]/page");
 
@@ -218,10 +240,9 @@ describe("active profile switch vs. submission identity", () => {
 
     await waitFor(() => expect(submitResponse).toHaveBeenCalled());
 
-    // Expected/correct behavior: the question the user is looking at
-    // right now should be submitted as whoever ProfileMenu currently
-    // shows as active -- the Child, since that's who they just switched
-    // to before answering.
+    // The question the user is looking at right now is submitted as
+    // whoever ProfileMenu currently shows as active -- the Child, since
+    // that's who they just switched to before answering.
     expect(submitResponse).toHaveBeenCalledWith(child.id, "q1", option);
   });
 });
