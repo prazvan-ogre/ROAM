@@ -19,6 +19,7 @@
     "test:sql:r1-first-insert": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r1_participant_first_insert_returning.test.sql",
     "test:sql:content-isolation": "psql -v ON_ERROR_STOP=1 -f supabase/tests/content_trip_isolation.test.sql",
     "test:sql:record-answer": "psql -v ON_ERROR_STOP=1 -f supabase/tests/record_answer.test.sql",
+    "test:sql:record-answer-rollback": "psql -v ON_ERROR_STOP=1 -f supabase/tests/record_answer_atomicity_fault_injection.test.sql",
     "test:sql:batch2-activity": "psql -v ON_ERROR_STOP=1 -f supabase/tests/batch2_trip_activity_rls.test.sql",
     "test:sql:batch2-lockdown": "psql -v ON_ERROR_STOP=1 -f supabase/tests/batch2_participant_lockdown.test.sql",
     "test:sql:batch2-battle-authz": "psql -v ON_ERROR_STOP=1 -f supabase/tests/batch2_battle_aggregate_authz.test.sql",
