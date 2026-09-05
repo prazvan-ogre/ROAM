@@ -67,6 +67,12 @@ its content is drafted and inserted the same way Kassandra's was, an
 additive migration relying on the same column defaults rather than an
 explicit `verified: false`, so it's exactly as hidden pending review.
 
+That `verified and published` check is the **only** gate on `questions`/
+`answer_options`/`extras`/`explore_links` reads — there is deliberately no
+`trip_id` scoping in RLS on top of it. See "Security model" point 11 below
+for why, and for the tenant-isolation question this raises now that public
+trip creation exists.
+
 ## Security model (RLS)
 
 There is **no Supabase Auth** — the app uses only the `anon` key, and the
@@ -204,6 +210,42 @@ Row Level Security is the actual access boundary:
     account at all (`getStoredAccountId()`); a phone number collision
     with another account surfaces the same unique-constraint error as
     account creation does.
+11. **Content tables (`questions`, `answer_options`, `extras`,
+    `explore_links`) are not `trip_id`-scoped in RLS — deliberately, a
+    product-owner decision, re-confirmed 2026-09-05**. Their `select`
+    policies (point 1 above, `20260825120000_profiles_and_content_model.sql`)
+    check only `verified = true and published = true`; any trip's
+    published content is readable by anyone with the anon key, including
+    a *different* trip's participants. This was never a gap while ROAM
+    was one private pilot (Kassandra 2026) — content was never meant to
+    be secret between families on the *same* trip, so there was no
+    "other trip" to isolate from. `app/api/trips/create`
+    (`docs/ARCHITECTURE.md` "Public trip creation") changed the shape of
+    the question, since it lets strangers spin up unrelated trips on the
+    same project: once flagged in the 2026-09-05 architecture/security
+    review, the tradeoff was re-examined and re-confirmed rather than
+    changed. **Accepted risk, same posture as points 5 and 7**: a
+    stranger's trip's Discover questions/answers/Extras, once verified
+    and published, are exactly as readable by any other trip's
+    participants (or anyone with the anon key) as Kassandra's own content
+    is to its own participants — there is no per-tenant content
+    boundary, only the verified+published gate.
+    Isolating this later is more than a policy tweak: the natural
+    approach is gating `select` on `is_trip_member(trip_id)` (point 6 of
+    the R1 migration, `20260906090000_auth_ownership.sql`), but that
+    function only recognizes participants with a non-null
+    `auth_user_id`, and `getOrCreateAdultParticipant`
+    (`src/lib/participant.ts`) deliberately never backfills
+    `auth_user_id` onto a returning legacy (pre-R1) participant — only a
+    brand-new insert gets one. Content tables have no per-row identity to
+    grandfather against the way `participants`/`responses`/
+    `battle_scores` do (point 5) — only a `trip_id` — so a naive
+    `is_trip_member(trip_id)` gate would lock out every legacy
+    participant on any trip that picks up even one newly-authenticated
+    member, mid-trip, with no way to distinguish "legacy trip, still
+    fully open" from "isolated trip" short of a real backfill or a new
+    per-trip flag. Revisiting this is a real option, but it is its own
+    migration design exercise, not a drop-in policy change.
 
 ## Migrations
 
