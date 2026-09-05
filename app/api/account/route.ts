@@ -15,6 +15,7 @@ import {
 import { checkLoginLock, recordFailedLogin, resetLoginAttempts } from "@/lib/security/loginRateLimit";
 import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit";
 import { linkCreatorParticipant } from "@/lib/security/participantLink";
+import { isSameOriginRequest } from "@/lib/security/csrf";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,9 @@ function withRefreshedCookies(response: NextResponse, refreshed?: { access_token
 }
 
 export async function POST(request: Request) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Cerere respinsă." }, { status: 403 });
+  }
   try {
     return await handleAccount(request);
   } catch (err) {
@@ -106,6 +110,9 @@ export async function GET(request: Request) {
 // (updateUserById) -- it owns password verification/hashing and phone
 // uniqueness, not this app.
 export async function PATCH(request: Request) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Cerere respinsă." }, { status: 403 });
+  }
   try {
     return await handleUpdateAccount(request);
   } catch (err) {
@@ -118,6 +125,9 @@ export async function PATCH(request: Request) {
 // (so the refresh token can't be replayed), then always clears both
 // cookies regardless of whether that revoke succeeded.
 export async function DELETE(request: Request) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Cerere respinsă." }, { status: 403 });
+  }
   const accessToken = readCookie(request, ACCESS_COOKIE_NAME);
   const refreshToken = readCookie(request, REFRESH_COOKIE_NAME);
   if (accessToken && refreshToken) {
