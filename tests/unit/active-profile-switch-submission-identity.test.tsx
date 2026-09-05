@@ -1,0 +1,227 @@
+// Regression test for the "completează batch-ul" request following the
+// 2026-09-05 review: does switching the device's active profile (top-right
+// ProfileMenu, "Schimbă profilul") while already sitting on an open
+// question actually change WHO the question gets submitted as -- or only
+// the avatar shown in the menu?
+//
+// 9fcc72e ("Fix catch-up banner to check the active profile, not any
+// profile") only touched the Home dashboard's catch-up banner visibility
+// check (app/trip/[slug]/page.tsx). It never touched the actual
+// submission flow in app/trip/[slug]/discover/[slot]/page.tsx.
+//
+// NEWLY CONFIRMED DEFECT (not one of the original 5 hypotheses, not fixed
+// by 9fcc72e or by any other commit so far): DiscoverPage resolves
+// `activeProfile` exactly once, inside a mount-time useEffect keyed on
+// [trip, profiles, discoverSlot] -- none of which change when the user
+// switches profile via ProfileMenu (a plain localStorage write + a
+// setState local to ProfileMenu itself, no shared context/event). So a
+// profile switch made *after* the question has already loaded submits
+// under the *previous* profile's identity, even though ProfileMenu's own
+// avatar/name already shows the new one -- confirmed below by asserting
+// on submitResponse's actual participantId argument, not just the
+// avatar's text.
+//
+// This test renders the real ProfileMenu and the real DiscoverPage
+// together (both wired to the same jsdom localStorage that
+// getStoredActiveProfileId/setStoredActiveProfileId actually use -- not
+// mocked), switches the active profile through ProfileMenu's own real
+// "Schimbă profilul" UI the way a user would, then answers the question
+// and inspects which participantId submitResponse was actually called
+// with. Only the Supabase-touching lib functions (@/lib/discover,
+// @/lib/analytics, @/lib/schedule, @/lib/hooks, @/lib/trip) are mocked at
+// the module boundary -- @/lib/participant's active-profile storage is
+// real, and no new test dependency (e.g. user-event) is introduced:
+// fireEvent from the already-present @testing-library/react is enough
+// for plain clicks.
+//
+// CONTRACT (opposite of the A/B/E hypothesis tests in
+// api-account-ownership.test.ts / battle-score-divergence.test.ts /
+// trips-page-link-on-existing-login.test.tsx, which assert the *current*
+// buggy behavior and so PASS while it's unfixed): the second test below
+// asserts the *correct* behavior and is wrapped in vitest's it.fails() --
+// it currently fails (confirmed: submitResponse is called with the stale
+// "parent-1", not "child-1") the same way the SQL hypothesis tests RAISE
+// on a confirmed bug, so it.fails() reports that as an *expected*
+// failure and the suite stays green. The moment this is fixed,
+// it.fails() will itself start failing ("Expect test to fail") -- that
+// is the signal to convert this into a plain `it(...)` asserting the
+// corrected behavior, in the same batch that ships the fix. The first
+// test is a plain `it` (must always pass): it isolates that switching
+// itself and this file's mocks work, so the second test's failure can
+// only be about submission identity, not test setup.
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "trip-1", slot: "morning" }),
+  useRouter: () => ({ push }),
+}));
+
+// Plain object literals, deliberately not cast to their Supabase row
+// types (unlike the fixtures in the other test files here, which get
+// passed directly into strongly-typed lib functions): these only ever
+// flow through vi.mock() factories, whose return shape isn't
+// type-checked against the real module, and this file reads `.id` back
+// off them directly in its assertions -- a `never` cast would make that
+// a type error instead.
+const parent = {
+  id: "parent-1",
+  trip_id: "trip-1",
+  device_id: "dev-shared",
+  display_name: "Parintele",
+  role: "adult",
+  created_at: "2026-01-01T00:00:00Z",
+};
+
+const child = {
+  id: "child-1",
+  trip_id: "trip-1",
+  device_id: "dev-shared",
+  display_name: "Copilul",
+  role: "child",
+  created_at: "2026-01-01T00:00:01Z",
+};
+
+const trip = { id: "trip-1", slug: "trip-1", duration_days: 5, start_date: null };
+
+// A *stable* array reference, reused across every render -- the real
+// useProfiles() is an SWR hook, which caches and returns the same data
+// reference until the underlying fetch actually revalidates with new
+// data (neither the trip, the device's participants, nor anything else
+// this test touches changes during it). A fresh `[parent, child]` array
+// literal returned on every call would make DiscoverPage's mount effect
+// (keyed on `[trip, profiles, discoverSlot]`) see `profiles` as "changed"
+// on every one of the component's own re-renders and re-run, silently
+// re-resolving activeProfile against localStorage each time -- which
+// would hide the exact bug this test exists to catch, since nothing
+// about DiscoverPage's own re-renders would do that in the real app.
+const profiles = [parent, child];
+
+vi.mock("@/lib/hooks", () => ({
+  useTrip: () => ({ data: trip, error: undefined }),
+  useProfiles: () => ({ data: profiles, error: undefined }),
+}));
+
+vi.mock("@/lib/trip", () => ({
+  currentTripDay: () => 1,
+}));
+
+vi.mock("@/lib/schedule", () => ({
+  getSlotAvailability: () => ({ status: "open", opensAt: "07:00", closesAt: "11:59" }),
+}));
+
+const questionFixture = {
+  id: "q1",
+  trip_id: "trip-1",
+  kind: "discover",
+  day_number: 1,
+  slot: "morning",
+  order_index: 1,
+  prompt: "Cine a raspuns?",
+  question_type: "single_choice",
+  points: 10,
+  verified: true,
+  published: true,
+};
+
+const option = { id: "opt1", question_id: "q1", order_index: 1, label: "Raspunsul A", is_correct: true };
+
+const getMyResponse = vi.fn().mockResolvedValue(null);
+const submitResponse = vi.fn().mockResolvedValue({
+  id: "resp1",
+  participant_id: "unset",
+  question_id: "q1",
+  selected_option_id: "opt1",
+  is_correct: true,
+});
+const getOrAssignExtra = vi.fn().mockResolvedValue(null);
+
+vi.mock("@/lib/discover", () => ({
+  getDiscoverQuestion: vi.fn().mockResolvedValue({ question: questionFixture, options: [option], exploreLinks: [] }),
+  getMyResponse: (...args: unknown[]) => getMyResponse(...args),
+  submitResponse: (...args: unknown[]) => submitResponse(...args),
+  getOrAssignExtra: (...args: unknown[]) => getOrAssignExtra(...args),
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  trackEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+async function click(el: HTMLElement) {
+  await act(async () => {
+    fireEvent.click(el);
+  });
+}
+
+beforeEach(() => {
+  window.localStorage.clear();
+  submitResponse.mockClear();
+  getMyResponse.mockClear();
+});
+
+// This vitest.config.ts doesn't set test.globals, so @testing-library/react's
+// own automatic afterEach(cleanup) (which only registers itself against a
+// detected *global* afterEach) never runs -- without this, a second render()
+// in the same file leaves the previous test's DOM behind. Every existing
+// component test in this repo so far only ever called render() once per
+// file, so this gap was never visible before.
+afterEach(() => {
+  cleanup();
+});
+
+describe("active profile switch vs. submission identity", () => {
+  it("ProfileMenu's own 'Schimba profilul' UI actually changes the displayed active profile (sanity check for this test's own setup)", async () => {
+    const { ProfileMenu } = await import("@/components/ProfileMenu");
+    render(<ProfileMenu slug="trip-1" />);
+
+    // Defaults to the first profile (Parent) -- no stored active id yet.
+    // (findByText itself throws/fails the test if the text never appears,
+    // so its resolution is the presence assertion -- no jest-dom matcher
+    // needed, keeping this batch's dependency footprint unchanged.)
+    await screen.findByText("Parintele");
+
+    await click(screen.getByRole("button", { name: /profil/i }));
+    await click(screen.getByRole("button", { name: /schimb.* profilul/i }));
+    await click(screen.getByRole("button", { name: "Copilul" }));
+
+    await screen.findByText("Copilul");
+  });
+
+  it.fails("KNOWN BUG (unfixed, not covered by 9fcc72e): switching the active profile after a question is already open should submit the new (switched-to) profile's identity, not the one loaded at mount", async () => {
+    const { ProfileMenu } = await import("@/components/ProfileMenu");
+    const { default: DiscoverPage } = await import("../../app/trip/[slug]/discover/[slot]/page");
+
+    render(
+      <>
+        <ProfileMenu slug="trip-1" />
+        <DiscoverPage />
+      </>,
+    );
+
+    // DiscoverPage has mounted and resolved its own activeProfile to the
+    // Parent (the only stored/default choice at this point) before any
+    // switch happens.
+    await screen.findByText("Cine a raspuns?");
+
+    // Now switch the device's active profile to the Child, the same way
+    // a user actually would -- through ProfileMenu's real menu, already
+    // mounted alongside the still-open question.
+    await click(screen.getByRole("button", { name: /profil/i }));
+    await click(screen.getByRole("button", { name: /schimb.* profilul/i }));
+    await click(screen.getByRole("button", { name: "Copilul" }));
+    await screen.findByText("Copilul"); // ProfileMenu's own avatar/name did switch.
+
+    // Answer and submit the still-open question.
+    await click(screen.getByRole("button", { name: "Raspunsul A" }));
+    await click(screen.getByRole("button", { name: "RĂSPUNDE" }));
+
+    await waitFor(() => expect(submitResponse).toHaveBeenCalled());
+
+    // Expected/correct behavior: the question the user is looking at
+    // right now should be submitted as whoever ProfileMenu currently
+    // shows as active -- the Child, since that's who they just switched
+    // to before answering.
+    expect(submitResponse).toHaveBeenCalledWith(child.id, "q1", option);
+  });
+});

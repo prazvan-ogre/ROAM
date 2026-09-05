@@ -25,5 +25,16 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["tests/**/*.test.{ts,tsx}"],
+    // src/lib/supabase/client.ts throws at import time if these are
+    // unset -- most tests avoid that by mocking the module entirely, but
+    // a test that needs a *real* lib function which itself imports that
+    // client at module scope (even one that, like @/lib/participant's
+    // localStorage-only helpers, never actually calls it) still needs the
+    // module to load. Same placeholder values CI's `next build` step
+    // uses; never dialed over the network by anything these tests mock.
+    env: {
+      NEXT_PUBLIC_SUPABASE_URL: "https://placeholder.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "placeholder-anon-key",
+    },
   },
 });

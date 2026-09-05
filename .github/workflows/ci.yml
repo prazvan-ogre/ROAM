@@ -59,6 +59,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A bare postgres:16 image has none of what a real Supabase project
+      # provisions (anon/authenticated roles, the auth schema, the
+      # supabase_realtime publication) -- without this, migrations that
+      # grant to anon/authenticated or reference auth.uid()/auth.users
+      # fail outright and ON_ERROR_STOP=1 aborts the whole sequence before
+      # any later migration (including the ones the tests below actually
+      # exercise) ever applies. See supabase/ci-bootstrap.sql for exactly
+      # what this does and does not cover -- it is NOT a full Supabase
+      # Auth/RLS emulation, only enough for every migration to apply and
+      # for the SQL regression tests below (which run as the postgres
+      # superuser, so RLS enforcement itself is not what they check) to
+      # run against a fully-migrated schema.
+      - name: Bootstrap Supabase-only roles/schema/publication (not a full Auth/RLS emulation)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/ci-bootstrap.sql
+
       - name: Apply migrations
         run: |
           for f in supabase/migrations/*.sql; do
@@ -74,5 +89,92 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Regression: must always pass. A non-zero exit here is always a
+      # real failure -- no wrapper, no swallowed exit code.
       - name: Run battle scoring regression tests
         run: npm run test:sql
+
+      # The next two steps are deliberately-red reproductions of known,
+      # still-unfixed defects (2026-09-05 review, hypotheses R3/R2) -- see
+      # supabase/tests/battle_scoring_fractional_average.test.sql and
+      # supabase/tests/profile_completion_signal.test.sql for the SQL
+      # itself. Each script RAISEs (psql exit 3) with a message containing
+      # "HYPOTHESIS CONFIRMED" when the bug is still present, which is the
+      # *current, expected* result -- so each step below asserts that
+      # exact outcome (exit code AND message, not just "any non-zero
+      # exit") and turns it into a passing CI step. Anything else --
+      # exit 0, a different exit code, or exit 3 without that message --
+      # fails the job loudly instead of being swallowed, since it means
+      # either a real setup/connection/migration problem, or the bug
+      # having actually been fixed. In the latter case: convert the .sql
+      # file's assertion into a real regression test asserting the
+      # correct behavior, and delete the matching wrapper step below, in
+      # the same batch that ships the fix -- do not just widen this
+      # wrapper to also accept the passing case.
+      - name: "Known-bug reproduction: fractional battle average truncated to a false tie (R3, unfixed)"
+        run: |
+          set +e
+          output="$(npm run test:sql:fractional 2>&1)"
+          code=$?
+          set -e
+          echo "$output"
+          if [ "$code" -eq 3 ] && echo "$output" | grep -q "HYPOTHESIS CONFIRMED"; then
+            echo "::notice::Known bug reproduced as expected (exit 3, HYPOTHESIS CONFIRMED). Not a pipeline failure by design."
+            exit 0
+          fi
+          echo "::error::test:sql:fractional did not fail the expected way (exit=$code). This is either a real setup/migration/connection problem (investigate -- do not assume it's the known bug), or the bug has been fixed (if so, convert this into a real regression test and remove this wrapper step in the same batch)."
+          exit 1
+
+      - name: "Known-bug reproduction: device-wide response count mismarks a sibling profile's slot as completed (R2, unfixed)"
+        run: |
+          set +e
+          output="$(npm run test:sql:completion 2>&1)"
+          code=$?
+          set -e
+          echo "$output"
+          if [ "$code" -eq 3 ] && echo "$output" | grep -q "HYPOTHESIS CONFIRMED"; then
+            echo "::notice::Known bug reproduced as expected (exit 3, HYPOTHESIS CONFIRMED). Not a pipeline failure by design."
+            exit 0
+          fi
+          echo "::error::test:sql:completion did not fail the expected way (exit=$code). This is either a real setup/migration/connection problem (investigate -- do not assume it's the known bug), or the bug has been fixed (if so, convert this into a real regression test and remove this wrapper step in the same batch)."
+          exit 1
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Unlike the SQL reproductions above, most of these tests currently
+      # PASS *because* the bug they cover is still present -- they assert
+      # today's actual (buggy) behavior at a real code boundary (see each
+      # file's own header comment for which lib/route it exercises):
+      #   - tests/unit/api-account-ownership.test.ts
+      #   - tests/unit/battle-score-divergence.test.ts
+      #   - tests/unit/trips-page-link-on-existing-login.test.tsx
+      # When the batch that fixes one of those defects lands, update that
+      # file's assertions to expect the corrected behavior as part of the
+      # same commit -- don't leave it asserting removed behavior.
+      #
+      # tests/unit/active-profile-switch-submission-identity.test.tsx is
+      # the opposite shape, matching the SQL scripts above instead: its
+      # second test uses vitest's it.fails() to assert a newly-confirmed,
+      # still-unfixed defect (switching the active profile after a
+      # question is already open doesn't change who it submits as). See
+      # that file's header for the exact contract; when fixed, it.fails()
+      # itself will start failing ("Expect test to fail") -- that is the
+      # signal to convert it to a plain `it` in the same batch.
+      #
+      # No wrapper needed here (unlike the SQL steps above): vitest's own
+      # exit code already does the right thing for both shapes -- 0 when
+      # every test (including every it.fails()) behaves as currently
+      # contracted, non-zero the moment any of them doesn't.
+      - name: Run Vitest unit/component tests
+        run: npm test
