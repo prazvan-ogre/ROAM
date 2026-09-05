@@ -18,6 +18,9 @@
     "test:sql:r1": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r1_auth_ownership_rls.test.sql",
     "test:sql:r1-first-insert": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r1_participant_first_insert_returning.test.sql",
     "test:sql:content-isolation": "psql -v ON_ERROR_STOP=1 -f supabase/tests/content_trip_isolation.test.sql",
+    "test:sql:batch2-activity": "psql -v ON_ERROR_STOP=1 -f supabase/tests/batch2_trip_activity_rls.test.sql",
+    "test:sql:batch2-lockdown": "psql -v ON_ERROR_STOP=1 -f supabase/tests/batch2_participant_lockdown.test.sql",
+    "test:sql:batch2-battle-authz": "psql -v ON_ERROR_STOP=1 -f supabase/tests/batch2_battle_aggregate_authz.test.sql",
     "test": "vitest run"
   },
   "dependencies": {

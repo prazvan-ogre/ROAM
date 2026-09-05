@@ -26,8 +26,8 @@
 begin;
 
 insert into auth.users (id) values
-  ('00000000-0000-0000-0000-0000000010a1'), -- Family A's session (trip AB member)
-  ('00000000-0000-0000-0000-0000000010c1'); -- Family C's session (trip C member)
+  ('00000000-0000-0000-0000-0000000050a1'), -- Family A's session (trip AB member)
+  ('00000000-0000-0000-0000-0000000050c1'); -- Family C's session (trip C member)
 
 insert into trips (id, slug, name, duration_days) values
   ('00000000-0000-0000-0000-000000000501', 'ci-trip-ab', 'CI Trip AB', 5),
@@ -35,8 +35,8 @@ insert into trips (id, slug, name, duration_days) values
   ('00000000-0000-0000-0000-000000000503', 'ci-trip-legacy', 'CI Trip Legacy', 5);
 
 insert into participants (id, trip_id, device_id, display_name, role, auth_user_id) values
-  ('00000000-0000-0000-0000-000000000511', '00000000-0000-0000-0000-000000000501', 'dev-a', 'Family A Adult', 'adult', '00000000-0000-0000-0000-0000000010a1'),
-  ('00000000-0000-0000-0000-000000000521', '00000000-0000-0000-0000-000000000502', 'dev-c', 'Family C Adult', 'adult', '00000000-0000-0000-0000-0000000010c1'),
+  ('00000000-0000-0000-0000-000000000511', '00000000-0000-0000-0000-000000000501', 'dev-a', 'Family A Adult', 'adult', '00000000-0000-0000-0000-0000000050a1'),
+  ('00000000-0000-0000-0000-000000000521', '00000000-0000-0000-0000-000000000502', 'dev-c', 'Family C Adult', 'adult', '00000000-0000-0000-0000-0000000050c1'),
   ('00000000-0000-0000-0000-000000000531', '00000000-0000-0000-0000-000000000503', 'dev-legacy', 'Legacy Participant', 'adult', null);
 
 -- Trip AB's content: a verified+published question, its answer option, an
@@ -80,7 +80,7 @@ commit;
 -- -----------------------------------------------------------------------
 begin;
 set role authenticated;
-set local request.jwt.claim.sub = '00000000-0000-0000-0000-0000000010a1';
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-0000000050a1';
 do $$
 declare q_count bigint;
 declare draft_q_count bigint;
@@ -114,7 +114,7 @@ rollback;
 -- -----------------------------------------------------------------------
 begin;
 set role authenticated;
-set local request.jwt.claim.sub = '00000000-0000-0000-0000-0000000010c1';
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-0000000050c1';
 do $$
 declare q_count bigint;
 declare opt_count bigint;
@@ -235,6 +235,6 @@ delete from participants where trip_id in (
 delete from trips where id in (
   '00000000-0000-0000-0000-000000000501', '00000000-0000-0000-0000-000000000502', '00000000-0000-0000-0000-000000000503'
 );
-delete from auth.users where id in ('00000000-0000-0000-0000-0000000010a1', '00000000-0000-0000-0000-0000000010c1');
+delete from auth.users where id in ('00000000-0000-0000-0000-0000000050a1', '00000000-0000-0000-0000-0000000050c1');
 
 \echo 'content_trip_isolation.test.sql: all scenarios passed.'
