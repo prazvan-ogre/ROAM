@@ -57,6 +57,9 @@ export default function CatchUpPage() {
   const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
+  // R3 (2026-09-05 review, closure batch): same "conflict" distinction as
+  // Discover -- see that page's wasConflict for the full rationale.
+  const [wasConflict, setWasConflict] = useState(false);
 
   // R2 (2026-09-05 review, closure batch): same guard as Discover's
   // activeProfileIdRef -- kept in sync every render so handleSubmit's async
@@ -85,6 +88,7 @@ export default function CatchUpPage() {
         setResponse(null);
         setExtra(null);
         setSubmitError(false);
+        setWasConflict(false);
         setStep(pending.length === 0 ? "empty" : "question");
       } catch {
         if (!cancelled) setStep("error");
@@ -120,6 +124,7 @@ export default function CatchUpPage() {
         return;
       }
       setResponse(result.response);
+      setWasConflict(result.status === "conflict");
       setStep("reveal");
 
       getOrAssignExtra(submittedProfileId, submittedProfileRole, current.question.id)
@@ -146,6 +151,7 @@ export default function CatchUpPage() {
     setResponse(null);
     setExtra(null);
     setSubmitError(false);
+    setWasConflict(false);
     if (nextIndex >= questions.length) {
       setStep("done");
       return;
@@ -262,6 +268,12 @@ export default function CatchUpPage() {
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
       <FlowHeader label="De recuperat" icon={<History size={15} />} onClose={goHome} />
       <div className="flex flex-1 flex-col gap-5">
+        {wasConflict && (
+          <p className="rounded-xl bg-secondary px-4 py-3 text-[13px] leading-relaxed text-secondary-foreground">
+            Răspunsul tău fusese deja înregistrat cu o altă opțiune înainte să încerci din nou -- rămâne cel
+            înregistrat prima dată, cel de mai jos.
+          </p>
+        )}
         <div>
           <p className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-primary">{progressLabel}</p>
           <div

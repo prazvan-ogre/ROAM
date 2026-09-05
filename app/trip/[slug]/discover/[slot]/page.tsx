@@ -49,6 +49,15 @@ export default function DiscoverPage() {
   const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
+  // R3 (2026-09-05 review, closure batch): record_answer()'s 3-way status
+  // ("accepted" | "already_recorded" | "conflict") used to collapse into
+  // the same reveal screen regardless of which one came back -- a retry
+  // that landed on a DIFFERENT option than the one already on record
+  // (status "conflict") looked identical to a normal fresh accept, even
+  // though myResponse below is actually the ORIGINAL answer, not the one
+  // just clicked. True for "accepted"/"already_recorded" (same answer
+  // either way) but misleading for "conflict".
+  const [wasConflict, setWasConflict] = useState(false);
   const [openedAt] = useState(() => Date.now());
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
@@ -76,6 +85,7 @@ export default function DiscoverPage() {
     setSubmitError(false);
     setMyResponse(null);
     setExtra(null);
+    setWasConflict(false);
 
     async function load() {
       try {
@@ -163,6 +173,7 @@ export default function DiscoverPage() {
         return;
       }
       setMyResponse(result.response);
+      setWasConflict(result.status === "conflict");
       setStep("reveal");
 
       getOrAssignExtra(submittedProfileId, submittedProfileRole, questionId)
@@ -302,6 +313,12 @@ export default function DiscoverPage() {
       <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
         <FlowHeader label={SLOT_LABEL[discoverSlot]} icon={<SlotIcon size={15} />} onClose={goHome} />
         <div className="flex flex-1 flex-col gap-6">
+          {wasConflict && (
+            <p className="rounded-xl bg-secondary px-4 py-3 text-[13px] leading-relaxed text-secondary-foreground">
+              Răspunsul tău fusese deja înregistrat cu o altă opțiune înainte să încerci din nou -- rămâne cel
+              înregistrat prima dată, cel de mai jos.
+            </p>
+          )}
           <div>
             <div className={`mb-5 flex h-10 w-10 items-center justify-center rounded-full ${isCorrect ? "bg-accent" : "bg-secondary"}`}>
               {isCorrect ? <Check size={18} className="text-primary" /> : <X size={18} className="text-muted-foreground" />}
