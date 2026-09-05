@@ -953,6 +953,20 @@
     same command is still in the middle of inserting. New regression
     test: `supabase/tests/r1_participant_first_insert_returning.test.sql`
     (`npm run test:sql:r1-first-insert`).
+- Fixed: `battle_team_score()`/`trip_battle_win_tally()` divided
+  `sum(score)` by `count(distinct participant_id)` as plain `bigint`
+  arithmetic, truncating a real fractional per-participant average before
+  it ever reached `battle_team_score`'s declared `numeric` return column
+  or `trip_battle_win_tally`'s own win/loss comparison (hypothesis C,
+  2026-09-05 review). Concretely: adults averaging 20/3 (6.667) vs. kids
+  averaging 30/5 (6.0) both truncated to 6 -- reported as a tied score,
+  and credited *both* teams with the evening's win in the season-long
+  tally instead of adults alone. Fixed in
+  `20260906110000_fix_battle_score_fractional_average.sql` by casting the
+  sum operand to `numeric` before dividing, in both functions.
+  `supabase/tests/battle_scoring_fractional_average.test.sql` (previously
+  a reproduction of the bug) now asserts the corrected behavior for both
+  functions.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see
