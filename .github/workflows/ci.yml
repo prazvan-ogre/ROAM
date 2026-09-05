@@ -122,11 +122,15 @@ jobs:
       # test:sql:r1 and test:sql:r1-first-insert predate this CI wiring
       # (2026-09-05 review, R1) and were never actually run in CI before
       # now -- an oversight from the batch that first wired the tests
-      # above in, not a deliberate omission.
+      # above in, not a deliberate omission. test:sql:content-isolation
+      # (trip_id-scoped content RLS, same review, landed alongside batch 2)
+      # had the same gap -- closed here rather than left for yet another
+      # batch to notice.
       - name: Run RLS regression tests
         run: |
           npm run test:sql:r1
           npm run test:sql:r1-first-insert
+          npm run test:sql:content-isolation
           npm run test:sql:batch2-activity
           npm run test:sql:batch2-lockdown
           npm run test:sql:batch2-battle-authz

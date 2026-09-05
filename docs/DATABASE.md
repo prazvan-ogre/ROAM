@@ -67,6 +67,11 @@ its content is drafted and inserted the same way Kassandra's was, an
 additive migration relying on the same column defaults rather than an
 explicit `verified: false`, so it's exactly as hidden pending review.
 
+On top of that gate, `questions`/`answer_options`/`extras`/`explore_links`
+reads are also scoped to the caller's own trip (`is_trip_member(trip_id)`)
+— see "Security model" point 11 for why that wasn't always true, and what
+it costs.
+
 ## Security model (RLS)
 
 **This section describes the model as of batch 2 (2026-09-05
@@ -136,11 +141,14 @@ fully-open grandfathered behavior instead of the matrix above — see
 "Legacy data" below; this is a deliberate, visible, temporary gap, not
 what a newly-created row gets.
 
-1. **Public-readable**: content tables, but only rows with
-   `verified = true and published = true` (see "Content integrity" above).
-   Anyone with the anon key can read every *published* question, extra,
-   and battle — the app has no login for this, so content has to be
-   fetched without one — but never draft/unreviewed content.
+1. **Public-readable, within your own trip**: content tables, but only
+   rows with `verified = true and published = true` (see "Content
+   integrity" above). Any trip member can read every *published*
+   question, extra, and battle on their own trip — the app has no login
+   for this, so content has to be fetched without one, but a real
+   (anonymous) auth session still scopes it to that trip — never
+   draft/unreviewed content, and never another trip's content. See point
+   11 below for the `trip_id` scoping specifically.
 2. **`participants`/`responses`/`battle_scores`/`extra_assignments`/
    `prize_votes`/`feedback`/`analytics_events` are scoped to Supabase
    Auth identity and trip membership**, not `using (true)`. A device
@@ -179,7 +187,12 @@ what a newly-created row gets.
    previously any anon-key caller could pass an arbitrary battle/trip id
    and read another family's result. The scoring formula itself
    (sum/average/win-tally) is unchanged; only the authorization wrapped
-   around it is new.
+   around it is new. A team's evening result is deliberately excluded
+   from `battle_scores` — and so from both functions — once it's more
+   than 15 minutes past the first individual answer for that battle; a
+   late answer still writes its own `responses` row (personal score) but
+   never joins the team result (`recordBattleAnswer`/
+   `getBattleWindowStatus` in `battle.ts`).
 6. **Public trip creation** (product owner request: anyone can spin up
    their own trip from `app/page.tsx`) does *not* go through a new
    anon-writable policy on `trips`. The only write path is
@@ -238,6 +251,50 @@ what a newly-created row gets.
     Auth admin API now (`updateUserById`) — it owns password hashing and
     phone uniqueness, not this app; `GET` never returns a PIN or password
     at all.
+11. **Content tables (`questions`, `answer_options`, `extras`,
+    `explore_links`) are `trip_id`-scoped in RLS**
+    (`20260906130000_content_trip_isolation.sql`) — `select` requires
+    `is_trip_member(trip_id)` (point 6 of the R1 migration,
+    `20260906090000_auth_ownership.sql`) on top of the
+    `verified and published` gate (point 1 above, "Content integrity").
+    This closed a real gap: those policies originally checked only
+    `verified`/`published`, so any trip's published content was readable
+    by anyone with the anon key, including a *different* trip's
+    participants. That was never a problem while ROAM was one private
+    pilot (Kassandra 2026) — content was never meant to be secret between
+    families on the *same* trip, so there was no "other trip" to isolate
+    from. `app/api/trips/create` (`docs/ARCHITECTURE.md` "Public trip
+    creation") changed the shape of the question, since it lets strangers
+    spin up unrelated trips on the same project — flagged in the
+    2026-09-05 architecture/security review's batch 2.
+    Initially deferred rather than fixed outright: Kassandra's pilot was
+    still live, and `is_trip_member(trip_id)` only recognizes
+    participants with a non-null `auth_user_id` — `getOrCreateAdultParticipant`
+    (`src/lib/participant.ts`) deliberately never backfills `auth_user_id`
+    onto a returning legacy (pre-R1) participant, only a brand-new insert
+    gets one — so gating content on it risked locking out Kassandra's own
+    legacy participants mid-trip the moment it picked up even one
+    newly-authenticated member. Verified safe against every current
+    content-reading call site first (`src/lib/discover.ts`, `battle.ts`,
+    `history.ts`, every `app/trip/[slug]/**/page.tsx`): each one only
+    fetches content once a participant already exists
+    (`profiles.length > 0`), which by construction already has an
+    `auth_user_id` — there is no live "read content before joining" flow
+    this could break. Shipped once the pilot ended.
+    **Known, accepted gap, same posture as R1 itself**: a trip with only
+    legacy (`auth_user_id is null`) participants — Kassandra included, for
+    anyone who joined before the R1 deploy and never re-joined afterward —
+    has no member who passes `is_trip_member`, so nobody, including its
+    own former participants, can read that trip's content via the anon
+    key anymore (e.g. a post-trip recap page). Backfilling `auth_user_id`
+    onto existing legacy rows would fix that, but it's a separate, bigger
+    identity decision (flagged, not made, in R1's own header) — matching
+    on `device_id`, a client-asserted string, to retroactively claim an
+    old row is exactly the mistake R1 was written to avoid, so it needs
+    its own review, not a piggyback on this migration.
+    **Not covered**: `battles` (title/day_number/is_final) stays
+    `using (true)` — lower sensitivity (no question/answer content), out
+    of this batch's reported scope, left for a follow-up if wanted.
 
 ### Admin bootstrap and credential rotation
 
@@ -363,6 +420,7 @@ batch describes, and neither is silently reclaimed or deleted:
 - `supabase/migrations/20260830110000_replace_admin_account.sql` — correction: the previous migration seeded the wrong admin phone number. Demotes `0721345678` back to `is_admin = false` and promotes `0721234567` (PIN `1234`) instead — exactly one admin account, same mechanism as above.
 - `supabase/migrations/20260830120000_creator_account_display_name.sql` — `creator_accounts.display_name` (nullable), so a trip's creator can be auto-joined to it as a participant right when they set up or log into their account (see "Security model" point 9 above).
 - `supabase/migrations/20260906090000_auth_ownership.sql` through `20260906120000_atomic_record_battle_answer.sql` — R1 (2026-09-05 review) batch 1: `participants.auth_user_id`, real ownership RLS on `participants`/`responses`/`battle_scores`, the `trips_public` view, `account_login_attempts`, and `record_battle_answer()`. See the CHANGELOG's own R1 entries for the full account.
+- `supabase/migrations/20260906130000_content_trip_isolation.sql` — `questions`/`answer_options`/`extras`/`explore_links` `select` policies now also require `is_trip_member(trip_id)`, closing the cross-trip content-readability gap raised in the 2026-09-05 architecture/security review's batch 2 (see "Security model" point 11 above for the full tradeoff, including the accepted gap for trips with only legacy/pre-R1 participants).
 - `supabase/migrations/20260907090000_batch2_trip_activity_rls.sql` — R1 continued (batch 2): tightens `extra_assignments`/`prize_votes`/`feedback`/`analytics_events` RLS from `using (true)` to trip-membership/self-ownership, the four tables R1's first pass explicitly deferred. New `can_access_trip()` helper.
 - `supabase/migrations/20260907091000_batch2_participant_lockdown.sql` — column-level `REVOKE`/`GRANT` on `participants` so `trip_id`/`device_id`/`auth_user_id`/`managed_by_participant_id`/`account_id` are immutable for anon/authenticated after insert; `account_id` must be null and `managed_by_participant_id` must point at the caller's own row at INSERT time.
 - `supabase/migrations/20260907092000_batch2_battle_aggregate_authz.sql` — adds a trip-membership authorization check to `battle_team_score()`/`trip_battle_win_tally()` (previously callable with any battle/trip id by anyone); the scoring formula itself is unchanged.
