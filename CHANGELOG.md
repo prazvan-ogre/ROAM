@@ -1000,6 +1000,36 @@
   between family members mid-battle) and was never the same bug, since
   it already re-reads the stored active profile fresh at its own
   `handleStart()` click time.
+- Fixed: `recordBattleAnswer` (`src/lib/battle.ts`) wrote the personal
+  `responses` row and the team `battle_scores` row as two separate,
+  sequential client-side inserts with no shared transaction -- a failure
+  on the second write left the first one already committed, with no way
+  to tell from the thrown error alone that the team never got credit
+  for it, and no clean retry path (`responses` has `unique (question_id,
+  participant_id)`) (hypothesis B, 2026-09-05 review; confirmed by
+  `tests/unit/battle-score-divergence.test.ts`). Fixed by moving both
+  writes into a single new `record_battle_answer()` Postgres function
+  (`20260906120000_atomic_record_battle_answer.sql`): a function body
+  runs inside the same transaction as the call that invoked it, so a
+  failure anywhere inside -- including the `battle_scores` insert --
+  rolls back the `responses` insert too. Also moved the 15-minute
+  result-window check into the same transaction, evaluated against the
+  database's own `now()` instead of a client-side `Date.now()` compared
+  against an earlier, separately-fetched value.
+  `getBattleWindowStatus()` itself is unchanged and stays in use for its
+  other purpose (`BattleFlow.tsx`'s "done" screen display). Since
+  `SECURITY DEFINER` (required to write both tables from one call)
+  bypasses the RLS ownership policies R1 put on `responses`/
+  `battle_scores`, the function re-checks the same
+  `participant_is_self_or_legacy` ownership rule explicitly before
+  writing anything -- new `supabase/tests/record_battle_answer_atomicity.test.sql`
+  (`npm run test:sql:record-battle-answer`) verifies the success path,
+  that ownership check, and the atomicity itself (a forced
+  `battle_scores` failure leaves no orphaned `responses` row).
+  `tests/unit/battle-score-divergence.test.ts` and its fake Supabase
+  client (`tests/unit/helpers/fakeSupabaseClient.ts`) were rewritten to
+  match: they now simulate the single RPC call instead of two separate
+  table inserts, and assert that a failed call commits neither write.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see

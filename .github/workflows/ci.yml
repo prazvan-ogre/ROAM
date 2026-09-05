@@ -98,18 +98,20 @@ jobs:
       # active-profile scoping in app/trip/[slug]/page.tsx fixed their
       # underlying bugs; both supabase/tests/*.test.sql files were
       # converted in the same batch as each fix to assert the now-correct
-      # behavior instead of reproducing the wrong one, so both belong
-      # here now, alongside the always-must-pass test:sql, not in a
-      # known-bug wrapper. If a future hypothesis needs one of those
-      # again, follow the pattern this replaced: assert the *exact*
-      # expected failure (exit code AND message), not just "any non-zero
-      # exit", so a real setup/migration/connection problem is never
-      # mistaken for the known bug.
+      # behavior instead of reproducing the wrong one. test:sql:record-battle-answer
+      # is new (hypothesis B/R3's fix, 20260906120000_atomic_record_battle_answer.sql)
+      # and was never a reproduction to begin with -- it goes straight in
+      # here as an ordinary regression test. If a future hypothesis needs
+      # a deliberately-red reproduction again, follow the pattern this
+      # replaced: assert the *exact* expected failure (exit code AND
+      # message), not just "any non-zero exit", so a real setup/
+      # migration/connection problem is never mistaken for the known bug.
       - name: Run battle scoring regression tests
         run: |
           npm run test:sql
           npm run test:sql:fractional
           npm run test:sql:completion
+          npm run test:sql:record-battle-answer
 
   unit-tests:
     runs-on: ubuntu-latest
