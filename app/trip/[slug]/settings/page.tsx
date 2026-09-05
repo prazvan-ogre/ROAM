@@ -4,11 +4,11 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Plus, MapPin, Calendar, Trophy, Check, Eye, EyeOff } from "lucide-react";
-import { getAllTrips, getTripsForAccount, type Trip } from "@/lib/trip";
+import type { Trip } from "@/lib/trip";
 import { addChildProfile, updateParticipant, deleteParticipant, type Participant } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
-import { getAccountDetails, getStoredAccountId, getStoredIsAdmin, updateAccountDetails } from "@/lib/creatorAccount";
+import { getAccountDetails, getStoredAccountId, getTripsForCurrentAccount, updateAccountDetails } from "@/lib/creatorAccount";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { PendingTripModal } from "@/components/PendingTripModal";
@@ -43,12 +43,16 @@ export default function SettingsPage() {
   // account, so this stays hidden for them.
   const hasAccount = getStoredAccountId() !== null;
   useEffect(() => {
-    const accountId = getStoredAccountId();
-    if (!accountId) return;
-    const admin = getStoredIsAdmin();
-    setIsAdmin(admin);
-    const list = admin ? getAllTrips() : getTripsForAccount(accountId);
-    list.then(setAccountTrips).catch(() => setAccountTrips([]));
+    if (!hasAccount) return;
+    getTripsForCurrentAccount()
+      .then(({ isAdmin, trips }) => {
+        setIsAdmin(isAdmin);
+        setAccountTrips(trips);
+      })
+      .catch(() => setAccountTrips([]));
+    // Only ever needs to run once per mount -- hasAccount doesn't change
+    // while this page is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Content (Discover/Battle) is drafted as a separate manual step after
@@ -495,7 +499,7 @@ function EditProfileForm({
 
   useEffect(() => {
     if (!showAccountFields || !accountId) return;
-    getAccountDetails(accountId)
+    getAccountDetails()
       .then((details) => setPhoneNumber(details.phoneNumber))
       .catch(() => undefined);
     // Only ever needs to run once per mount of this form.
@@ -509,7 +513,7 @@ function EditProfileForm({
     try {
       await onSave(profile.id, name.trim(), role, role === "child" ? Number(age) || null : null);
       if (showAccountFields && accountId) {
-        await updateAccountDetails(accountId, {
+        await updateAccountDetails({
           phoneNumber: phoneNumber.trim(),
           pin: pin.trim() ? pin.trim() : undefined,
         });

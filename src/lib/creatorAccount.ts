@@ -1,14 +1,19 @@
 import { getDeviceId } from "./device";
+import type { Trip } from "./trip";
 
+// R1: the actual authorization boundary for reading/updating this
+// account, and for deciding which trips it can see, is now the httpOnly
+// session cookie app/api/account/route.ts sets on login and verifies on
+// every request (src/lib/security/session.ts) -- the browser sends it
+// automatically, this module never reads or forwards it. What's left in
+// localStorage is display-only: "does this device look logged in" for
+// the UI to decide which screen to show, nothing a server route trusts
+// for authorization anymore. In particular there is no client-side
+// "is admin" flag at all now -- that's derived from creator_accounts on
+// the server (app/api/account/trips/route.ts), never from something the
+// client can set in devtools.
 const STORAGE_KEY = "roam_creator_account_id";
-const ADMIN_STORAGE_KEY = "roam_creator_account_is_admin";
 
-// Deliberately the same trust model as device_id (docs/DATABASE.md
-// "Security model"): the server verifies the phone+PIN once
-// (app/api/account/route.ts), then this id is trusted client-side for
-// every later "which trips are mine" read -- no session token, no
-// cookie. Good enough for a low-stakes creator history, not a place to
-// put anything sensitive.
 export function getStoredAccountId(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem(STORAGE_KEY);
@@ -19,24 +24,14 @@ export function setStoredAccountId(accountId: string): void {
   window.localStorage.setItem(STORAGE_KEY, accountId);
 }
 
+// Best-effort: also asks the server to drop the session cookie. A failed
+// request still clears the local "looks logged in" flag -- worst case,
+// the (still-valid) cookie quietly expires on its own after
+// SESSION_MAX_AGE_SECONDS.
 export function clearStoredAccountId(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(STORAGE_KEY);
-  window.localStorage.removeItem(ADMIN_STORAGE_KEY);
-}
-
-export function getStoredIsAdmin(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.localStorage.getItem(ADMIN_STORAGE_KEY) === "1";
-}
-
-function setStoredIsAdmin(isAdmin: boolean): void {
-  if (typeof window === "undefined") return;
-  if (isAdmin) {
-    window.localStorage.setItem(ADMIN_STORAGE_KEY, "1");
-  } else {
-    window.localStorage.removeItem(ADMIN_STORAGE_KEY);
-  }
+  fetch("/api/account", { method: "DELETE" }).catch(() => undefined);
 }
 
 export interface AuthenticateInput {
@@ -71,8 +66,10 @@ export async function authenticateCreatorAccount(input: AuthenticateInput): Prom
     throw new Error(body?.error ?? "Nu am putut verifica contul. Încearcă din nou.");
   }
   const accountId = body.accountId as string;
+  // Display-only from here -- the server also just set the real,
+  // httpOnly session cookie this account's identity now rests on
+  // (Set-Cookie on the same response, handled by the browser directly).
   setStoredAccountId(accountId);
-  setStoredIsAdmin(Boolean(body.isAdmin));
   return { accountId, isAdmin: Boolean(body.isAdmin), displayName: body.displayName ?? null };
 }
 
@@ -84,11 +81,14 @@ export interface AccountDetails {
 
 // Setări > Utilizatori (app/trip/[slug]/settings/page.tsx) reads this
 // back to show the account's current phone number when editing the
-// adult profile linked to it. Never returns the PIN -- it's stored as a
-// one-way hash (src/lib/security/pin.ts), so it can only ever be *set*,
-// never displayed back.
-export async function getAccountDetails(accountId: string): Promise<AccountDetails> {
-  const response = await fetch(`/api/account?accountId=${encodeURIComponent(accountId)}`);
+// adult profile linked to it. No accountId argument any more -- the
+// server derives the caller's own account from the session cookie
+// (app/api/account/route.ts), so there's nothing left for the client to
+// assert here. Never returns the PIN -- it's stored as a one-way hash
+// (src/lib/security/pin.ts), so it can only ever be *set*, never
+// displayed back.
+export async function getAccountDetails(): Promise<AccountDetails> {
+  const response = await fetch("/api/account");
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(body?.error ?? "Nu am putut încărca contul.");
@@ -101,15 +101,34 @@ export interface UpdateAccountInput {
   pin?: string;
 }
 
-export async function updateAccountDetails(accountId: string, input: UpdateAccountInput): Promise<AccountDetails> {
+export async function updateAccountDetails(input: UpdateAccountInput): Promise<AccountDetails> {
   const response = await fetch("/api/account", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ accountId, ...input }),
+    body: JSON.stringify(input),
   });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(body?.error ?? "Nu am putut salva modificările.");
   }
   return { phoneNumber: body.phoneNumber, displayName: body.displayName ?? null, isAdmin: Boolean(body.isAdmin) };
+}
+
+export interface AccountTrips {
+  isAdmin: boolean;
+  trips: Trip[];
+}
+
+// "Călătoriile mele" / Setări > Toate călătoriile (app/trips/page.tsx,
+// app/trip/[slug]/settings/page.tsx) -- both which trips are "mine" and
+// whether to show every trip on the platform are determined server-side
+// from the session cookie (app/api/account/trips/route.ts), never from
+// a client-supplied accountId or a client-set "is admin" flag.
+export async function getTripsForCurrentAccount(): Promise<AccountTrips> {
+  const response = await fetch("/api/account/trips");
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error ?? "Nu am putut încărca călătoriile.");
+  }
+  return { isAdmin: Boolean(body.isAdmin), trips: (body.trips ?? []) as Trip[] };
 }

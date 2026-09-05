@@ -25,6 +25,13 @@ type TableDef<Row, InsertRequired extends keyof Row> = {
   Relationships: [];
 };
 
+// A Postgres view (e.g. trips_public, 20260906091000_account_hardening.sql)
+// is select-only from the client -- no Insert/Update shape.
+type ViewDef<Row> = {
+  Row: Row;
+  Relationships: [];
+};
+
 export interface Database {
   public: {
     Tables: {
@@ -141,6 +148,14 @@ export interface Database {
           age: number | null;
           managed_by_participant_id: string | null;
           account_id: string | null;
+          // R1 (20260906090000_auth_ownership.sql): which Supabase Auth
+          // session (supabase.auth.signInAnonymously(), src/lib/device.ts)
+          // created this row -- null for rows created before that
+          // migration, deliberately never backfilled (see the migration's
+          // own comments: matching on device_id alone to claim a legacy
+          // row would be exactly the "trust a public/localStorage
+          // identifier" mistake R1 fixes).
+          auth_user_id: string | null;
           created_at: string;
           last_seen_at: string;
         },
@@ -239,8 +254,42 @@ export interface Database {
         },
         "phone_number" | "pin_hash"
       >;
+      // R1 (20260906091000_account_hardening.sql): service-role only (RLS
+      // enabled, zero policies) -- app/api/account/route.ts's login rate
+      // limiter, same "reachable only via the service-role key" pattern
+      // as creator_accounts itself.
+      account_login_attempts: TableDef<
+        {
+          phone_number: string;
+          failed_count: number;
+          first_failed_at: string;
+          locked_until: string | null;
+        },
+        "phone_number"
+      >;
     };
-    Views: Record<string, never>;
+    Views: {
+      // R1 (20260906091000_account_hardening.sql): the public-facing
+      // projection of `trips` -- excludes created_by_account_id/
+      // created_by_device_id, which anon/authenticated can no longer
+      // SELECT from the base table at all. Ordinary trip reads (join
+      // flow, Discover/Battle content lookups, etc.) should read this
+      // view, not the base table (src/lib/trip.ts).
+      trips_public: ViewDef<{
+        id: string;
+        slug: string;
+        name: string;
+        language: string;
+        start_date: string | null;
+        duration_days: number;
+        destination: string | null;
+        location_info: string | null;
+        content_status: TripContentStatus;
+        is_active: boolean;
+        is_demo: boolean;
+        created_at: string;
+      }>;
+    };
     Functions: {
       battle_team_score: {
         Args: { p_battle_id: string };

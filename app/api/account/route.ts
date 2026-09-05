@@ -1,11 +1,40 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hashPin, verifyPin } from "@/lib/security/pin";
+import {
+  createSessionToken,
+  verifySessionToken,
+  readSessionCookie,
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE_SECONDS,
+} from "@/lib/security/session";
+import { checkLoginLock, recordFailedLogin, resetLoginAttempts } from "@/lib/security/loginRateLimit";
 
 export const runtime = "nodejs";
 
 const PHONE_PATTERN = /^\+?[0-9 ()-]{7,20}$/;
 const PIN_PATTERN = /^\d{4,6}$/;
+
+function withSessionCookie(response: NextResponse, accountId: string): NextResponse {
+  response.cookies.set(SESSION_COOKIE_NAME, createSessionToken(accountId), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+  return response;
+}
+
+// R1: accountId is no longer trusted from client input on GET/PATCH/
+// DELETE -- it's derived from this httpOnly, HMAC-signed cookie, set
+// only by a successful POST (phone+PIN) below. A request with no
+// session, an expired one, or a forged cookie value all fail this the
+// same way (null), which is exactly the point: there is no client-
+// suppliable identifier that can stand in for it anymore.
+function requireSessionAccountId(request: Request): string | null {
+  return verifySessionToken(readSessionCookie(request))?.accountId ?? null;
+}
 
 export async function POST(request: Request) {
   try {
@@ -16,18 +45,19 @@ export async function POST(request: Request) {
   }
 }
 
-// Reads back an already-verified account's phone number for display in
-// Setări > Utilizatori (app/trip/[slug]/settings/page.tsx) -- the
-// account id is client-trusted the same way it already is everywhere
-// else once logged in (docs/DATABASE.md "Security model"), so no PIN
-// re-entry is required just to view/edit it. Never returns pin_hash --
+// Reads back the *caller's own, session-verified* account for display in
+// Setări > Utilizatori (app/trip/[slug]/settings/page.tsx) -- no more
+// accountId query param, no PIN re-entry: the httpOnly session cookie
+// set on login (POST below) is what's checked. Never returns pin_hash --
 // it's a one-way scrypt hash (src/lib/security/pin.ts) that can't be
 // turned back into the original PIN to show it, which is why editing a
 // PIN below is "set a new one", never "reveal the current one".
 export async function GET(request: Request) {
   try {
-    const accountId = new URL(request.url).searchParams.get("accountId");
-    if (!accountId) return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+    const accountId = requireSessionAccountId(request);
+    if (!accountId) {
+      return NextResponse.json({ error: "Sesiune expirată sau lipsă. Autentifică-te din nou." }, { status: 401 });
+    }
 
     const admin = createAdminClient();
     const { data, error } = await admin
@@ -49,11 +79,11 @@ export async function GET(request: Request) {
   }
 }
 
-// Updates phone number and/or PIN for an already-verified account --
-// same client-trusted accountId model as GET above, no current-PIN
-// confirmation required (consistent with the rest of this app's
-// accepted-risk posture, not a place to introduce a stricter one-off
-// rule). Either field is optional so the caller can send just one.
+// Updates phone number and/or PIN for the caller's own, session-verified
+// account -- no current-PIN confirmation required (consistent with the
+// rest of this app's accepted-risk posture, not a place to introduce a
+// stricter one-off rule). Either field is optional so the caller can
+// send just one.
 export async function PATCH(request: Request) {
   try {
     return await handleUpdateAccount(request);
@@ -63,7 +93,21 @@ export async function PATCH(request: Request) {
   }
 }
 
+// Logs out: clears the session cookie. There is nothing server-side to
+// invalidate (the token verifies itself, stateless) -- this only removes
+// the client's copy, same as any other cookie-based logout.
+export async function DELETE() {
+  const response = NextResponse.json({ ok: true });
+  response.cookies.delete(SESSION_COOKIE_NAME);
+  return response;
+}
+
 async function handleUpdateAccount(request: Request): Promise<Response> {
+  const accountId = requireSessionAccountId(request);
+  if (!accountId) {
+    return NextResponse.json({ error: "Sesiune expirată sau lipsă. Autentifică-te din nou." }, { status: 401 });
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -71,10 +115,7 @@ async function handleUpdateAccount(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
   }
 
-  const { accountId, phoneNumber, pin } = (body ?? {}) as Record<string, unknown>;
-  if (typeof accountId !== "string" || !accountId.trim()) {
-    return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
-  }
+  const { phoneNumber, pin } = (body ?? {}) as Record<string, unknown>;
 
   const update: { phone_number?: string; pin_hash?: string } = {};
 
@@ -144,6 +185,14 @@ async function handleAccount(request: Request): Promise<Response> {
   const isLinkingNewTrip =
     typeof linkTripSlug === "string" && linkTripSlug.trim() && typeof deviceId === "string" && deviceId.trim();
 
+  const lockStatus = await checkLoginLock(admin, normalizedPhone);
+  if (lockStatus.locked) {
+    return NextResponse.json(
+      { error: "Prea multe încercări greșite. Încearcă din nou peste câteva minute." },
+      { status: 429, headers: { "Retry-After": String(lockStatus.retryAfterSeconds ?? 900) } },
+    );
+  }
+
   const { data: existing, error: lookupError } = await admin
     .from("creator_accounts")
     .select("id, pin_hash, is_admin, display_name")
@@ -156,6 +205,7 @@ async function handleAccount(request: Request): Promise<Response> {
   let resultDisplayName: string | null;
   if (existing) {
     if (!verifyPin(pin, existing.pin_hash)) {
+      await recordFailedLogin(admin, normalizedPhone);
       return NextResponse.json({ error: "Număr de telefon sau PIN incorect." }, { status: 401 });
     }
     accountId = existing.id;
@@ -170,6 +220,7 @@ async function handleAccount(request: Request): Promise<Response> {
     // original behavior: an unrecognized phone/PIN just creates a new,
     // nameless account.
     if (isLinkingNewTrip && expectExisting === true) {
+      await recordFailedLogin(admin, normalizedPhone);
       return NextResponse.json(
         { error: "Nu am găsit un cont cu acest număr. Alege \"Nu am cont\" ca să creezi unul." },
         { status: 401 },
@@ -194,6 +245,8 @@ async function handleAccount(request: Request): Promise<Response> {
     resultDisplayName = created.display_name;
   }
 
+  await resetLoginAttempts(admin, normalizedPhone);
+
   // Linking is best-effort: only if this exact device created that exact
   // trip, and it isn't already tied to some other account. A failed or
   // skipped link never fails the whole login -- the account still works,
@@ -207,5 +260,8 @@ async function handleAccount(request: Request): Promise<Response> {
       .is("created_by_account_id", null);
   }
 
-  return NextResponse.json({ accountId, isAdmin, displayName: resultDisplayName });
+  return withSessionCookie(
+    NextResponse.json({ accountId, isAdmin, displayName: resultDisplayName }),
+    accountId,
+  );
 }

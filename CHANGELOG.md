@@ -876,10 +876,69 @@
   instead of the regular one on the last day -- previously it stayed
   stuck on 0-0 all evening since it only ever asked for a regular battle
   that structurally can't exist that day.
+- R1 (2026-09-05 architecture/security review, `claude/r1-auth-ownership`):
+  replaces client-asserted `device_id`/`accountId` as the trust boundary
+  for participant/creator-account data with real, server-verified
+  identity.
+  - Every device now signs in to Supabase Auth anonymously
+    (`supabase.auth.signInAnonymously()`, `src/lib/device.ts`) before
+    creating its first participant -- still no form, no email, no
+    password, so child participation stays exactly as registration-free
+    as before. The new nullable `participants.auth_user_id`
+    (`20260906090000_auth_ownership.sql`) is what RLS now checks; it is
+    deliberately **not backfilled** onto participants created before this
+    migration -- claiming an old row via `device_id` (a plain
+    client-asserted string, not a credential) would be exactly the kind
+    of public/localStorage-identifier trust this migration removes. A
+    pre-migration ("legacy") row keeps today's fully-open read/write
+    behavior until a separate, explicit decision re-establishes its
+    ownership; this is a deliberate, temporary, and visible gap, not a
+    silent regression -- see the migration's own comments and the PR
+    description for the full grandfathering rationale.
+  - `participants`/`responses`/`battle_scores` RLS now scopes reads to a
+    trip's own members (or a legacy row) and writes to the caller's own
+    participant (or a legacy row) -- previously all three were `using
+    (true)`, readable/writable by any anon-key request.
+    `extra_assignments`, `prize_votes`, `feedback` and `analytics_events`
+    are unchanged this batch (still `using (true)`), left for a
+    follow-up.
+  - "Călătoriile mele" creator accounts (`app/api/account`) get a real,
+    server-verified session instead: a small HMAC-signed, httpOnly cookie
+    (`src/lib/security/session.ts`) issued on successful phone+PIN login,
+    verified on every GET/PATCH -- a client-supplied `accountId` is no
+    longer read at all. Login attempts are now rate-limited
+    (`account_login_attempts`, `src/lib/security/loginRateLimit.ts`): 5
+    failed attempts per phone number locks that number out for 15
+    minutes.
+  - "Which trips can this account see" (all of them, if admin; only its
+    own otherwise) is now decided server-side
+    (`app/api/account/trips/route.ts`, looking up
+    `creator_accounts.is_admin` itself) instead of trusting a client-set
+    `isAdmin` flag that anyone could set in devtools.
+  - Public trip reads (`src/lib/trip.ts`) now go through a `trips_public`
+    view (`20260906091000_account_hardening.sql`) that excludes
+    `created_by_account_id`/`created_by_device_id` -- `anon`/
+    `authenticated` no longer have `SELECT` on the base `trips` table at
+    all.
+  - Verified with a new local-only RLS harness
+    (`supabase/tests/r1_auth_ownership_rls.test.sql`, `npm run
+    test:sql:r1`) covering: no session, the legitimate owner, another
+    family on the same trip, a family on a different trip entirely,
+    forged/unrecognized identifiers, and direct Supabase-role access
+    (not just through Next route code) -- see the PR description for
+    the full verification report, remaining limits, and rollout steps.
 
 ### Known limitations
-- No authentication — participation is anonymous/device-based (see
-  `docs/DATABASE.md` "Security model").
+- Participation is still registration-free and device-based (see
+  `docs/DATABASE.md` "Security model") -- R1 backs this with a real
+  anonymous Supabase Auth session per device rather than a bare
+  client-asserted `device_id`, but there is still no name/password
+  account a participant profile belongs to.
+- Participant/response/battle-score RLS still fully grandfathers every
+  participant row created before R1 (`auth_user_id is null`) to today's
+  open read/write behavior -- see the R1 entry above. `extra_assignments`,
+  `prize_votes`, `feedback` and `analytics_events` are also still fully
+  public (`using (true)`), not yet tightened to trip membership.
 - All 7 days of seed content are drafted/supplied but left
   `verified = false, published = false` pending a human review pass (see
   `seed.sql` header for the publish-flip SQL).
@@ -902,10 +961,7 @@
   still exhaust the daily cap. Content drafting for a new trip is a
   manual step (see the entry above) rather than a live API call, so
   there is no generation call left to verify end-to-end here.
-- "Călătoriile mele" (`app/api/account`) has no rate limiting on login
-  attempts, so a 4-digit PIN is brute-forceable against a known phone
-  number given enough requests -- acceptable for now since the only
-  thing at stake is a spot in someone's trip list (every trip is public
-  regardless), not content access. Phone numbers are also never
-  verified (no OTP) -- anyone can claim any number as long as they set
-  the PIN first.
+- "Călătoriile mele" (`app/api/account`) now rate-limits failed login
+  attempts (R1, see above), but phone numbers are still never verified
+  (no OTP) -- anyone can claim any number as long as they set the PIN
+  first before the real owner does.

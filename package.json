@@ -11,7 +11,11 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:sql": "psql -v ON_ERROR_STOP=1 -f supabase/tests/battle_scoring.test.sql"
+    "test:sql": "psql -v ON_ERROR_STOP=1 -f supabase/tests/battle_scoring.test.sql",
+    "test:sql:fractional": "psql -v ON_ERROR_STOP=1 -f supabase/tests/battle_scoring_fractional_average.test.sql",
+    "test:sql:completion": "psql -v ON_ERROR_STOP=1 -f supabase/tests/profile_completion_signal.test.sql",
+    "test:sql:r1": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r1_auth_ownership_rls.test.sql",
+    "test": "vitest run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
@@ -22,14 +26,17 @@
     "swr": "^2.5.1"
   },
   "devDependencies": {
+    "@testing-library/react": "^14.3.1",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.19",
     "eslint": "^8.57.0",
     "eslint-config-next": "14.2.35",
+    "jsdom": "^24.1.3",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.4",
-    "typescript": "^5.5.2"
+    "typescript": "^5.5.2",
+    "vitest": "^1.6.1"
   }
 }

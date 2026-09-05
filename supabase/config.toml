@@ -16,7 +16,14 @@ enabled = true
 port = 54323
 
 [auth]
-enabled = false
+enabled = true
+# Every device gets a real, verifiable Supabase Auth session
+# (supabase.auth.signInAnonymously(), src/lib/device.ts) instead of a
+# bare client-asserted device_id string -- the trust primitive RLS now
+# checks (participants.auth_user_id) instead of trusting a value the
+# client can set to anything. No form, no email, no password: this is
+# what keeps child participation registration-free.
+enable_anonymous_sign_ins = true
 
 [storage]
 enabled = false
