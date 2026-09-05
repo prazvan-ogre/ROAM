@@ -1052,17 +1052,135 @@
   reproduction of the bug) now asserts the corrected behavior, plus a
   second case for the best-effort failure path.
 
+- R1 batch 2 (2026-09-05 architecture/security review, R1 continued,
+  `claude/roam-batch-2-auth-permissions`): closes the gaps batch 1
+  explicitly deferred, and replaces the one piece of batch 1 that was
+  still a hand-rolled mechanism rather than the provider's own.
+  - `extra_assignments`/`prize_votes`/`feedback`/`analytics_events` RLS
+    (`20260907090000_batch2_trip_activity_rls.sql`): replaces `using
+    (true)` with the same trip-membership/self-ownership scoping R1 put
+    on `participants`/`responses`/`battle_scores`, via a new
+    `can_access_trip()` helper. `extra_assignments`/`prize_votes` SELECT
+    stays trip-wide (the Extra load-balancer and the prize tally both
+    need to see beyond one participant's own rows), just no longer
+    global; `feedback`/`analytics_events` INSERT now requires real trip
+    membership. Same legacy-row grandfathering as R1: a trip with no
+    non-legacy member at all keeps today's open behavior for these four
+    tables too.
+  - `participants` ownership/identity columns are now immutable after
+    insert for anon/authenticated (`20260907091000_batch2_participant_
+    lockdown.sql`): `trip_id`, `device_id`, `auth_user_id`,
+    `managed_by_participant_id`, `account_id` are locked down with
+    Postgres column-level `GRANT`s on `UPDATE` (not just another RLS
+    clause) -- previously a session that owned (or legacy-owned) any
+    participant row could reassign it to a different trip/device/auth
+    identity, or self-grant membership in an arbitrary "Călătoriile
+    mele" account via a direct anon-key call, since the existing RLS
+    policy only checked row ownership, never which columns were being
+    set. `account_id` must also be null at INSERT, and
+    `managed_by_participant_id` (if set) must point at a participant the
+    inserting session already owns.
+    `supabase/tests/batch2_participant_lockdown.test.sql` caught a real
+    bug in an early draft of this same migration: an unqualified
+    `managed_by_participant_id` inside the ownership check's subquery
+    resolved to the subquery's own `mgr` alias (both `participants` and
+    `mgr` have a column of that name), silently becoming a
+    self-referential check that could never pass for a real manager --
+    manual testing alone hadn't exercised that path.
+  - `battle_team_score()`/`trip_battle_win_tally()` now require the
+    caller to be a member of the trip the battle/id belongs to
+    (`20260907092000_batch2_battle_aggregate_authz.sql`) -- both were
+    `SECURITY DEFINER` with no authorization check at all, so any
+    anon-key caller could pass an arbitrary battle/trip id and read
+    another family's Parents-vs-Kids result. The scoring formula itself
+    is unchanged, verified against
+    `supabase/tests/batch2_battle_aggregate_authz.test.sql`.
+  - "Călătoriile mele" creator accounts now sit on a real Supabase Auth
+    session (`20260907093000_batch2_creator_account_auth.sql`,
+    `src/lib/security/session.ts`), replacing R1's own hand-rolled
+    HMAC-signed cookie -- the PIN doubles as that Supabase Auth user's
+    password (verified via `signInWithPassword`/the admin API, no live
+    SMS OTP -- `admin.createUser({ phone, password, phone_confirm: true
+    })` skips confirmation entirely), and login issues a real access +
+    refresh token pair as httpOnly cookies, verified server-side
+    (`admin.auth.getUser(token)`) on every later request. This is a
+    *separate* Supabase Auth session from a device's own anonymous
+    participant session -- both coexist in the same browser because the
+    creator-account session never touches the browser's own supabase-js
+    client instance at all. A pre-batch-2 account (`pin_hash` set,
+    `auth_user_id` still null) is lazily migrated onto this the next
+    time its correct PIN is presented, never backfilled in bulk.
+    `ACCOUNT_SESSION_SECRET` is no longer used (removed from
+    `.env.example`).
+  - `participants.account_id` is now set only by the server
+    (`src/lib/security/participantLink.ts`), after verifying *both* the
+    creator account's own session and the calling device's own
+    anonymous session (its Supabase Auth access token, sent as an
+    `Authorization: Bearer` header from `src/lib/creatorAccount.ts`) --
+    previously the browser's own anon-key client set this directly from
+    a value in a JSON response body, with nothing to stop a direct
+    Supabase call from claiming membership in an arbitrary account.
+    `getOrCreateAdultParticipant` (`src/lib/participant.ts`) no longer
+    takes an `accountId` parameter at all; the auto-join+link on
+    trip-creation login (`app/api/account/route.ts`,
+    `app/api/account/link-trip/route.ts`) happens entirely server-side
+    now, with the service role.
+  - New IP-keyed rate limit (`ip_rate_limits`,
+    `20260907094000_batch2_ip_rate_limits.sql`,
+    `src/lib/security/ipRateLimit.ts`) on new-trip creation and new
+    creator-account creation, alongside the existing per-device/
+    per-phone checks -- neither identity-creation path had a limit that
+    didn't reset the moment a client cleared `localStorage`/sent a fresh
+    `device_id`; new-account creation specifically had no limit at all
+    before this.
+  - Admin bootstrap: documents (does not execute -- no live database
+    access from this environment) rotating the existing seeded admin
+    account's PIN, which has been committed to this repo's git history
+    and to `docs/DATABASE.md` in plain text since batch 1's predecessor
+    migrations, and retires the pattern of seeding a fixed admin
+    phone/PIN in a migration going forward -- see `docs/DATABASE.md`
+    "Admin bootstrap and credential rotation".
+  - `docs/DATABASE.md`'s "Security model" section, stale since before R1
+    batch 1 (it still said "there is no Supabase Auth" through all of
+    batch 1), is rewritten to describe the current identity model, a
+    full rights matrix (owner/trip member/other-trip participant/
+    child-profile manager/admin/anon, per data type), the legacy-data
+    decision, and rollout/rollback steps.
+  - Verified with three new SQL regression test files run against a
+    local scratch Postgres 16 (not reachable from this sandbox against
+    the real Supabase project), each with two-plus synthetic families:
+    `supabase/tests/batch2_trip_activity_rls.test.sql`,
+    `batch2_participant_lockdown.test.sql`,
+    `batch2_battle_aggregate_authz.test.sql` (`npm run
+    test:sql:batch2-activity`/`test:sql:batch2-lockdown`/
+    `test:sql:batch2-battle-authz`) -- all now wired into CI alongside
+    R1's own `test:sql:r1`/`test:sql:r1-first-insert`, which had never
+    actually been run in CI before this batch (an oversight from the
+    pass that first wired the other SQL tests in, not deliberate).
+    `tests/unit/api-account-ownership.test.ts` and
+    `tests/unit/trips-page-link-on-existing-login.test.tsx` were
+    rewritten for the new session/linking model; both pass.
+  - **Deliberately not fixed this batch** (see the PR description for
+    the full rationale): a legacy (pre-R1) participant with no creator
+    account behind it has no safe self-service way to reclaim its own
+    row -- doing so via its bare participant id (visible to other trip
+    members through ordinary API responses) would be exactly the
+    impersonation risk this batch closes elsewhere. This is a real,
+    still-open product decision, not an oversight.
+
 ### Known limitations
 - Participation is still registration-free and device-based (see
   `docs/DATABASE.md` "Security model") -- R1 backs this with a real
   anonymous Supabase Auth session per device rather than a bare
   client-asserted `device_id`, but there is still no name/password
   account a participant profile belongs to.
-- Participant/response/battle-score RLS still fully grandfathers every
-  participant row created before R1 (`auth_user_id is null`) to today's
-  open read/write behavior -- see the R1 entry above. `extra_assignments`,
-  `prize_votes`, `feedback` and `analytics_events` are also still fully
-  public (`using (true)`), not yet tightened to trip membership.
+- Participant/response/battle-score/extra-assignment/prize-vote/feedback/
+  analytics-event RLS still fully grandfathers every participant row
+  created before R1 (`auth_user_id is null`) to the old, fully-open
+  read/write behavior -- see the R1 and batch-2 entries above, and
+  `docs/DATABASE.md` "Legacy data" for the specific, still-open product
+  decision on whether/how a legacy participant with no creator account
+  can ever safely reclaim its own row.
 - All 7 days of seed content are drafted/supplied but left
   `verified = false, published = false` pending a human review pass (see
   `seed.sql` header for the publish-flip SQL).
@@ -1079,13 +1197,19 @@
   your Supabase project before trusting them for the pilot.
 - Public trip creation (`app/api/trips/create`) has no real bot
   protection (no CAPTCHA) and no payment mechanism yet — both explicitly
-  deferred by the product owner to a later phase. Its only defenses
-  against spam are a hidden honeypot field, a per-device 24h limit, and
-  a global daily cap; a determined attacker with many device ids could
-  still exhaust the daily cap. Content drafting for a new trip is a
-  manual step (see the entry above) rather than a live API call, so
-  there is no generation call left to verify end-to-end here.
-- "Călătoriile mele" (`app/api/account`) now rate-limits failed login
-  attempts (R1, see above), but phone numbers are still never verified
-  (no OTP) -- anyone can claim any number as long as they set the PIN
-  first before the real owner does.
+  deferred by the product owner to a later phase. Its defenses against
+  spam are a hidden honeypot field, a per-device 24h limit, an IP-keyed
+  daily cap (batch 2, see above), and a global daily cap; a determined
+  attacker with many device ids *and* many IPs could still exhaust the
+  daily cap. Content drafting for a new trip is a manual step (see the
+  entry above) rather than a live API call, so there is no generation
+  call left to verify end-to-end here.
+- "Călătoriile mele" (`app/api/account`) rate-limits failed login
+  attempts and new-account creation (R1 + batch 2, see above), but phone
+  numbers are still never verified (no OTP) -- anyone can claim any
+  number as long as they set the PIN first before the real owner does.
+  Batch 2's Supabase-Auth-backed sessions require an operational Auth
+  settings change (phone provider enabled, minimum password length
+  lowered to 4) on the hosted project before they work at all -- see
+  `docs/DATABASE.md` "Rollout order and rollback"; not applied from this
+  environment.

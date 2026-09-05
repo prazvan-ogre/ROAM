@@ -247,12 +247,21 @@ export interface Database {
         {
           id: string;
           phone_number: string;
-          pin_hash: string;
+          // Batch 2 (20260907093000_batch2_creator_account_auth.sql):
+          // nullable now -- a freshly created account never writes one at
+          // all (Supabase Auth owns the password entirely); only a
+          // pre-batch-2 row keeps it, until its one-time lazy migration
+          // (app/api/account/route.ts) clears it for good.
+          pin_hash: string | null;
+          // Which Supabase Auth user (phone + password) this account's
+          // real, provider-verified session resolves to -- null only for
+          // a not-yet-migrated pre-batch-2 row (see pin_hash above).
+          auth_user_id: string | null;
           is_admin: boolean;
           display_name: string | null;
           created_at: string;
         },
-        "phone_number" | "pin_hash"
+        "phone_number"
       >;
       // R1 (20260906091000_account_hardening.sql): service-role only (RLS
       // enabled, zero policies) -- app/api/account/route.ts's login rate
@@ -266,6 +275,20 @@ export interface Database {
           locked_until: string | null;
         },
         "phone_number"
+      >;
+      // Batch 2 (20260907094000_batch2_ip_rate_limits.sql): service-role
+      // only, same pattern as account_login_attempts -- an IP-keyed
+      // rate limit for identity-creation endpoints (src/lib/security/
+      // ipRateLimit.ts), never a replacement for the per-phone/per-device
+      // checks that already exist.
+      ip_rate_limits: TableDef<
+        {
+          ip_address: string;
+          action: string;
+          attempt_count: number;
+          window_start: string;
+        },
+        "ip_address" | "action"
       >;
     };
     Views: {
