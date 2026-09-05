@@ -630,6 +630,252 @@
   route is needed for the read side). New migration
   `20260830090000_creator_accounts.sql`. `/` also links to `/trips`
   directly, for someone returning without having just created anything.
+- Admin view on `/trips`: a `creator_accounts.is_admin` flag (new
+  migration `20260830100000_admin_account.sql`, seeded for phone
+  `0721345678` / PIN `1234`) makes that one account, once logged in
+  through the same phone+PIN flow, see every trip and every pending
+  request on the platform (`getAllTrips()` in `src/lib/trip.ts`) instead
+  of only the trips linked to it. No new data exposure -- `trips` was
+  already fully public -- this only changes which rows the client
+  chooses to render for that account.
+- Fixed: the seeded admin phone number was wrong. New migration
+  `20260830110000_replace_admin_account.sql` demotes `0721345678` back
+  to a normal account and promotes `0721234567` (PIN `1234`) as the sole
+  admin instead.
+- New "Toate călătoriile" sub-tab on Setări (`app/trip/[slug]/settings/
+  page.tsx`), positioned first, before Configurare: shows every trip
+  available to that device's account (their own trips, or every trip on
+  the platform for the admin account) plus "Creează o călătorie nouă",
+  the same list `/trips` shows — reachable without leaving the trip
+  you're in. Hidden entirely for the common case (a participant who only
+  ever joined by device id and never created a "Călătoriile mele"
+  account). The trip whose Setări you're currently viewing is marked
+  with a checkmark and a highlighted border in that list.
+- Tapping a not-yet-ready trip in a trips list (`/trips`, or the "Toate
+  călătoriile" tab above) no longer navigates anywhere: it shows the
+  "Pregătim {name}..." message in a modal (new `src/components/
+  PendingTripModal.tsx`) over the current screen instead, and "OK" just
+  closes it -- there's nothing to navigate to yet, so staying put is
+  simpler than a dedicated pending screen.
+- After creating a trip, `/trips?link=<slug>`'s account step (Ai deja
+  cont?/phone+PIN, or "Sari peste") now lands inside that trip's Setări
+  (defaulting to the "Toate călătoriile" tab) instead of on the
+  standalone `/trips` list page. Setări itself no longer blocks entirely
+  on a not-yet-ready trip: Configurare/Utilizatori show the "Pregătim
+  {name}..." notice inline instead of their normal content, while Toate
+  călătoriile (and the tab bar/bottom nav around it) keeps working, so
+  the person who just created a trip lands somewhere useful rather than
+  a dead end with no content yet. The plain "Călătoriile mele" login (no
+  `link` param) is unaffected, still shows the list on `/trips`.
+- Extended the above: the plain "Călătoriile mele" login also redirects
+  into a trip's Setări now, instead of showing the list on `/trips` --
+  the first `ready` trip in the account's list, or the most recent one
+  if none are ready yet. `/trips`'s own list only renders for the one
+  case with nowhere else to send you: an account with zero trips.
+  Setări also no longer hard-blocks with "Trebuie să te alături
+  călătoriei mai întâi" when this device hasn't joined a ready trip it
+  got redirected into (e.g. an admin/creator account that never
+  personally joined that particular trip) -- Configurare/Utilizatori
+  show a "not joined yet, alătură-te" notice instead, while Toate
+  călătoriile (the default tab in that case) keeps working. The
+  original hard block still applies to the one case with no better
+  option: arriving at a ready, unjoined trip's Setări with no account
+  at all (e.g. a bare shared link).
+- Tapping a not-yet-ready trip (`content_status` `pending`/`generating`/
+  `failed`) from `/trips` now opens that trip's Setări instead of its
+  Home page, showing the same "Pregătim {name}..." message as the Home
+  page's existing pending state (`app/trip/[slug]/page.tsx`) but with
+  the bottom nav still visible, so an admin or trip creator stays inside
+  the app instead of hitting a dead end and having to go back. Settings'
+  own load short-circuits on a non-`ready` trip before the "did this
+  device join yet" check, since neither profiles nor prize status mean
+  anything until content exists.
+- A trip's creator is now auto-joined as its first participant. Right
+  after creating a trip, `app/trips/page.tsx` first asks "Ai deja cont?":
+  choosing "Nu" also asks for a name (mandatory, alongside phone+PIN, new
+  migration `20260830120000_creator_account_display_name.sql` adding
+  `creator_accounts.display_name`); choosing "Da" only asks for the
+  existing phone+PIN and reuses the name already on file. Either way,
+  once the account is set up or verified, the client immediately calls
+  the same `getOrCreateAdultParticipant()` the onboarding wizard uses, so
+  the creator shows up as a participant on their own trip without going
+  through the wizard separately once its content is ready. "Da, am cont"
+  with a phone/PIN that doesn't match now returns a real login error
+  instead of silently creating a second, blank account (that branch's UI
+  has no name field to fall back on) — the plain `/trips` login (not
+  right after creating a trip) is unaffected either way.
+- Global profile menu (new `src/components/ProfileMenu.tsx`, mounted
+  once in a new `app/trip/[slug]/layout.tsx` instead of per page):
+  floats top-right on every trip-scoped screen (Home, Discover, Battle,
+  Catchup, Final, Leaderboard, Întrebări, Setări), showing the active
+  participant's initials avatar (+ name on desktop, avatar only on
+  mobile). Replaces the old ActiveProfileSwitcher that only lived on
+  Home's own header. Tapping it opens a compact dropdown: "Schimbă
+  profilul" (only shown when this device has a child profile on this
+  trip too) reopens the same adult/child switcher Home used to have
+  inline; "Creează cont" jumps straight to the name+phone+PIN form on
+  `/trips?link=<slug>` -- the existing "Călătoriile mele" flow, skipping
+  its "Ai deja cont?" chooser and pre-filling the name field with this
+  profile's name (still editable) since we already know who's asking --
+  so a participant (not just a trip's creator) can link an account to
+  find this trip again later. Closes on outside click or Escape. Renders
+  nothing until this device has actually joined the trip (no profile to
+  show yet).
+- Setări > Utilizatori: editing the adult profile linked to this
+  device's "Călătoriile mele" account now also shows that account's
+  phone number and PIN, both editable. Phone number is pre-filled with
+  the real value (new `GET /api/account`); PIN is a "set a new one"
+  password field (eye-icon toggle to reveal what you're typing) that
+  starts blank and, left blank, keeps the current PIN unchanged -- it
+  can never be pre-filled with the actual current PIN, which is stored
+  as a one-way hash and was never recoverable in the first place. Saving
+  updates the account via a new `PATCH /api/account`, same
+  client-trusted-accountId model as the rest of "Călătoriile mele" (no
+  re-entering the current PIN required); a phone number already used by
+  another account surfaces a clear error instead of a generic one.
+- Catch-up (`app/trip/[slug]/catchup/page.tsx`) no longer asks "Cine
+  recuperează?" first -- it resolves the answering profile the same way
+  the global `ProfileMenu` does (stored active profile for this trip,
+  falling back to this device's first one) and goes straight to the
+  pending questions. To answer as someone else, switch the active
+  profile top-right first (`ProfileMenu`'s "Schimbă profilul").
+- Extended the same change to Discover (Dimineață/Prânz,
+  `app/trip/[slug]/discover/[slot]/page.tsx`) and Battle
+  (`src/components/BattleFlow.tsx`, both the daily and Final Battle):
+  neither asks "Cine răspunde?" anymore before the first question --
+  both resolve the active profile the same way (stored active profile,
+  falling back to this device's first one) and go straight in. Battle
+  still keeps its picker for the deliberate "Alt profil răspunde" button
+  after finishing a pass, since it's designed for everyone on the device
+  to answer in turn -- only the upfront ask before the *first* person's
+  turn is gone.
+- Fixed: the "Ai întrebări de recuperat" banner on Home
+  (`app/trip/[slug]/page.tsx`) checked *any* profile on the device for
+  pending catch-up questions, but tapping it now always sends in the
+  active profile only (matching catch-up's own new auto-resolved
+  behavior above) -- so it could promise catch-up questions that weren't
+  actually there for whoever it was about to send in (e.g. a child has
+  pending ones but the active profile is the parent, who has none).
+  Now checks the same active profile catch-up itself resolves to.
+- Performance: `loadBattleContent` (`src/lib/battle.ts`) fired 1 query for
+  a battle's questions plus 2 more *per question* (answer_options,
+  explore_links) -- an N+1 pattern that scaled linearly with question
+  count and was worst on `getTripHistory` (`src/lib/history.ts`), which
+  calls it once per past battle. Now batches both follow-up queries once
+  across all of a battle's question IDs (`.in("question_id", [...])`, run
+  in parallel via `Promise.all`) and groups the results back per question
+  in memory -- 3 total queries per battle regardless of question count,
+  same output shape.
+- Deduplicated the `SLOT_LABEL`/`EXTRA_TYPE_LABEL` display-label maps
+  that had been copy-pasted (with the same Romanian strings) across
+  `app/trip/[slug]/page.tsx` (as `COUNTDOWN_SLOT_LABEL`, including the
+  Battle label), `app/trip/[slug]/discover/[slot]/page.tsx`,
+  `app/trip/[slug]/catchup/page.tsx`, `app/trip/[slug]/questions/page.tsx`,
+  and `src/components/BattleFlow.tsx`. Both now live once in a new
+  `src/lib/constants.ts` and are imported everywhere they're used, so a
+  label only needs to change in one place.
+- Added an automated regression suite for `battle_team_score()` and
+  `trip_battle_win_tally()` (`supabase/tests/battle_scoring.test.sql`,
+  run via the new `npm run test:sql`): both RPCs had real bugs ship
+  before (per-row averaging instead of per-participant, and the
+  cumulative tally leaking an in-progress evening's score before its
+  15-minute reveal window closed -- see the `20260827190000`/
+  `20260827200000` migrations), caught only by manual "verified on a
+  scratch Postgres" notes at the time. The suite reproduces both
+  historical bugs plus the tie-counts-for-both-teams rule as fixture
+  data and assertions inside a rolled-back transaction (no data left
+  behind), and now runs on every PR in CI against a throwaway
+  `postgres:16` service container with all migrations applied first
+  (new `battle-scoring-tests` job in `.github/workflows/ci.yml`).
+- Scor (`app/trip/[slug]/leaderboard/page.tsx`) and Întrebări
+  (`app/trip/[slug]/questions/page.tsx`) no longer poll every 30 seconds
+  to catch a new answer or a battle result becoming revealed -- both now
+  subscribe to Supabase Realtime (`postgres_changes` on `responses` and
+  `battle_scores` inserts) and refetch the instant a relevant row
+  appears, same as the existing tab-refocus refetch. A 2-minute interval
+  stays as a fallback in case the websocket drops without either page
+  noticing. New migration `20260831090000_realtime_publication.sql`
+  adds both tables to the `supabase_realtime` publication that Realtime
+  reads from -- without it, Postgres never emits the change events for
+  the subscriptions to receive, silently making them a no-op.
+- Added `swr` and a shared `useTrip`/`useProfiles` (`src/lib/hooks.ts`)
+  caching layer for the trip row and this device's profile list, keyed
+  on `["trip", slug]`/`["profiles", tripId]` so every consumer shares
+  one cache entry instead of firing its own request. `ProfileMenu`
+  (mounted once per trip in `app/trip/[slug]/layout.tsx`, alongside
+  every single trip page) is migrated to it first: it was independently
+  re-fetching the exact same trip+profiles data every page already
+  fetches for itself, a guaranteed duplicate request on every page load
+  with no possible cache hit before this.
+- Migrated all 8 individual trip pages (Home, Discover, Battle, Final
+  Battle, Catch-up, Întrebări, Scor, Setări) to the same `useTrip`/
+  `useProfiles` hooks, completing the follow-up flagged above: navigating
+  between them (TripNav, or Home <-> a flow screen) now reads the trip
+  and this device's profiles from cache instead of re-fetching both on
+  every single page mount, on top of the initial per-page duplicate
+  fetch against `ProfileMenu` already fixed. Setări and Home also switch
+  their post-mutation refetch (after adding/editing/deleting a profile,
+  or finishing the join wizard) from a private `loadProfiles()`/
+  `setProfiles()` pair to the shared cache's own `mutate()`, so a profile
+  change made on one of those pages now shows up in `ProfileMenu` too
+  without waiting for its next full remount -- previously `ProfileMenu`
+  only ever fetched once per trip and had no way to learn about a
+  profile add/edit/delete happening elsewhere on the same visit.
+- Migration `20260901090000_enum_types.sql`: converts every "enum-like"
+  `text` + `check (col in (...))` column (question `kind`/`slot`/
+  `question_type`, participant `role`, extra `extra_type`/`audience`,
+  extra_assignment `status`, battle_scores `team`, feedback
+  `anticipated_next`/`would_use_again`, trip `content_status`) into a
+  real Postgres enum type. Purely a storage/type-system change -- every
+  existing value already satisfied its check constraint, so nothing is
+  altered or lost. This is what makes architecture audit item 4
+  (generated Supabase types) actually safe: `supabase gen types` reads
+  the column's real Postgres type, so a plain `text` column with a check
+  constraint has no way to come out as anything but `string`, silently
+  widening every `Record<QuestionSlot, ...>`-shaped usage across the app
+  the moment `src/lib/supabase/types.ts` is regenerated. A real enum
+  generates as the exact literal union instead, matching this file's
+  hand-written types exactly. Verified end-to-end on a scratch Postgres:
+  all prior migrations plus this one from empty, `seed.sql` (needed one
+  fix alongside this -- its `extras.extra_type` values come from a
+  `values (...) as e(...)` derived table, which fixes their type as
+  `text` rather than an unknown literal, so those 21 references now read
+  `e.extra_type::extra_type_enum` explicitly), and the full
+  `battle_scoring.test.sql` suite, all unchanged.
+- Fixed: Setări > Utilizatori showed the device's logged-in "Călătoriile
+  mele" account phone/PIN fields under *any* adult profile being
+  edited, with no check that the account actually belonged to that
+  profile -- just "this device has some account, and this happens to be
+  an adult". A device with more than one adult participant (e.g. an
+  admin account plus an unrelated participant profile used for testing)
+  showed the wrong account's phone number under the wrong profile.
+  Migration `20260901100000_participant_account_link.sql` adds a
+  nullable `participants.account_id`, set by `getOrCreateAdultParticipant`
+  when an authenticated account auto-joins a trip as its first adult
+  (`app/trips/page.tsx`, right after login/account creation) -- the only
+  place a participant and an account are ever linked. `EditProfileForm`
+  now only shows the account fields when `profile.account_id` matches
+  the device's logged-in account, not for every adult profile on the
+  device. Existing participants predating this column stay unlinked
+  (correctly -- there's no way to know retroactively which one, if any,
+  an old account belongs to), so they simply won't show account fields
+  until the account holder re-triggers the auto-join (e.g. logging in
+  again with `?link=<slug>`).
+- Fixed: Final Battle is supposed to replace that evening's regular
+  Battle on the trip's last day (product owner spec -- already true of
+  the seed content, which never creates a regular battle for the last
+  day), but nothing in the code actually enforced it, only content
+  authoring convention. Home (`app/trip/[slug]/page.tsx`) never fetched
+  the regular Battle on the last day (it happened to always come back
+  empty, but now doesn't even ask) and hides that row entirely instead
+  of showing a redundant, permanently-unavailable "Battle" line next to
+  the Final Battle card. `/battle` (`app/trip/[slug]/battle/page.tsx`)
+  now redirects straight to `/final` on the last day instead of trying
+  to load a regular battle. Scor's "Scor zilnic"
+  (`app/trip/[slug]/leaderboard/page.tsx`) fetches the Final Battle
+  instead of the regular one on the last day -- previously it stayed
+  stuck on 0-0 all evening since it only ever asked for a regular battle
+  that structurally can't exist that day.
 
 ### Known limitations
 - No authentication — participation is anonymous/device-based (see

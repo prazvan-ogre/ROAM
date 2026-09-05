@@ -166,6 +166,44 @@ Row Level Security is the actual access boundary:
    posture as `participants`/`device_id`: fine while nothing sensitive
    rides on it, real auth (e.g. Supabase Auth's phone/OTP flow) is the
    upgrade path if that changes.
+8. **`creator_accounts.is_admin` gives one account an unfiltered view of
+   `/trips`** — same login (phone + PIN) and the same client-trusted flag
+   model as point 7, just one boolean further: `app/api/account/route.ts`
+   returns `isAdmin` alongside the account id, `src/lib/creatorAccount.ts`
+   stores it in `localStorage`, and `app/trips/page.tsx` calls
+   `getAllTrips()` instead of filtering by `created_by_account_id` when
+   it's set — so that one account sees every trip (and every pending
+   request) on the platform, not just its own. Still no new access to
+   anything not already public: `trips` was already fully readable by
+   anon, this only changes which rows the *client* chooses to render.
+9. **`creator_accounts.display_name` lets trip creation auto-join the
+   creator as a participant** — right after creating a trip,
+   `app/trips/page.tsx` now asks "Ai deja cont?" before the phone+PIN
+   form: choosing "Nu" additionally requires a name (enforced in
+   `app/api/account/route.ts`, only when creating a brand-new account as
+   part of linking a freshly-created trip — the plain `/trips` login
+   untouched, never requires one); choosing "Da" reuses the name already
+   on file. Either way, once the account call returns a `displayName`,
+   the client calls the existing `getOrCreateAdultParticipant(tripId,
+   displayName)` (`src/lib/participant.ts`) to create that device's
+   adult profile on the new trip immediately — the same call the
+   onboarding wizard makes, just skipped ahead of time so the creator
+   doesn't join with the same name a second time later. Best-effort: a
+   failure here doesn't block getting into "Călătoriile mele", it just
+   means they'll go through the onboarding wizard normally once the
+   trip's content is ready.
+10. **Editing the linked adult's profile in Setări > Utilizatori can also
+    edit that device's account** (phone number and/or PIN) — new `GET`/
+    `PATCH` handlers on `app/api/account/route.ts`, same client-trusted
+    accountId model as everywhere else here (no current-PIN re-entry
+    required). `GET` never returns `pin_hash` — it's a one-way scrypt
+    hash (`src/lib/security/pin.ts`), so the PIN field in that form is
+    always a blank "set a new one" input, never a display of the current
+    value, no matter how it's toggled visible. Only shown when editing
+    the participant whose `role` is `adult` and this device has an
+    account at all (`getStoredAccountId()`); a phone number collision
+    with another account surfaces the same unique-constraint error as
+    account creation does.
 
 ## Migrations
 
@@ -183,6 +221,9 @@ Row Level Security is the actual access boundary:
 - `supabase/migrations/20260827200000_fix_trip_tally_reveal_leak.sql` — second bug fix for `trip_battle_win_tally()`, found while verifying the daily score against production: it counted every battle with any `battle_scores` rows at all, with no check on whether that evening's own 15-minute reveal window (`getBattleWindowStatus()` in `src/lib/battle.ts`) had closed — so the cumulative "Scor total" tally already counted tonight's in-progress (possibly one-answer-old) outcome as a win, even though "Scor zilnic" on the same page correctly stays hidden for those 15 minutes. Fixed by excluding a has-individual-scoring battle from the tally until `now() >= first individual answer + 15 minutes`, exactly matching the app's own reveal rule; legacy (pre-individual-scoring) battles never had a reveal window and stay counted unconditionally.
 - `supabase/migrations/20260828100000_public_trip_creation.sql` — `trips.created_by_device_id` and `trips.content_status` (`pending`/`generating`/`ready`/`failed`, default `ready` so existing trips are unaffected), plus indexes on `created_at` and `(created_by_device_id, created_at)`. Backs the public trip-creation flow (`app/page.tsx` → `app/api/trips/create`, see "Security model" point 6 above) — no new RLS policies, since that route writes through the service-role key like every other content write.
 - `supabase/migrations/20260830090000_creator_accounts.sql` — the `creator_accounts` table (phone number + PIN hash, RLS enabled with zero policies — reachable only via the service-role key) and `trips.created_by_account_id`, so a trip's creator can see their history from any device (`app/trips/page.tsx` → `app/api/trips/create` and `app/api/account`, see "Security model" point 7 above).
+- `supabase/migrations/20260830100000_admin_account.sql` — `creator_accounts.is_admin` (default `false`) and a seeded admin row (phone `0721345678`, PIN `1234`) with it set `true`, so that account sees every trip/request on `/trips` instead of only its own (see "Security model" point 8 above).
+- `supabase/migrations/20260830110000_replace_admin_account.sql` — correction: the previous migration seeded the wrong admin phone number. Demotes `0721345678` back to `is_admin = false` and promotes `0721234567` (PIN `1234`) instead — exactly one admin account, same mechanism as above.
+- `supabase/migrations/20260830120000_creator_account_display_name.sql` — `creator_accounts.display_name` (nullable), so a trip's creator can be auto-joined to it as a participant right when they set up or log into their account (see "Security model" point 9 above).
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

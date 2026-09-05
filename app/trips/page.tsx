@@ -1,11 +1,17 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, LogOut, Plus } from "lucide-react";
-import { getTripsForAccount, type Trip } from "@/lib/trip";
-import { authenticateCreatorAccount, clearStoredAccountId, getStoredAccountId } from "@/lib/creatorAccount";
+import { getAllTrips, getTripBySlug, getTripsForAccount } from "@/lib/trip";
+import { getOrCreateAdultParticipant } from "@/lib/participant";
+import {
+  authenticateCreatorAccount,
+  clearStoredAccountId,
+  getStoredAccountId,
+  getStoredIsAdmin,
+} from "@/lib/creatorAccount";
 
 // This page has no dynamic route segment, so Next would otherwise try to
 // statically prerender it at build time -- which eagerly loads the
@@ -17,13 +23,7 @@ import { authenticateCreatorAccount, clearStoredAccountId, getStoredAccountId } 
 export const dynamic = "force-dynamic";
 
 type Step = "loading" | "auth" | "list";
-
-const STATUS_LABEL: Record<Trip["content_status"], string> = {
-  ready: "Gata",
-  pending: "În pregătire",
-  generating: "În pregătire",
-  failed: "Eșuat",
-};
+type AccountChoice = "unknown" | "existing" | "new";
 
 // useSearchParams() requires a Suspense boundary in the app router --
 // without it, this page can't be prerendered even with force-dynamic.
@@ -42,21 +42,46 @@ export default function TripsPage() {
 }
 
 function TripsPageInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const linkSlug = searchParams.get("link");
+  // Set by ProfileMenu's "Creează cont" (src/components/ProfileMenu.tsx)
+  // -- we already know who's asking, so skip the "Ai deja cont?" chooser
+  // straight to the name+phone+PIN form, name pre-filled (still
+  // editable) instead of asked twice.
+  const prefilledName = searchParams.get("name");
 
   const [step, setStep] = useState<Step>("loading");
-  const [trips, setTrips] = useState<Trip[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [accountChoice, setAccountChoice] = useState<AccountChoice>(prefilledName ? "new" : "unknown");
+  const [displayName, setDisplayName] = useState(prefilledName ?? "");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [pin, setPin] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authenticating, setAuthenticating] = useState(false);
 
-  const loadTrips = useCallback(async (accountId: string) => {
-    const list = await getTripsForAccount(accountId);
-    setTrips(list);
-    setStep("list");
-  }, []);
+  // Logging into "Călătoriile mele" (with or without having just created
+  // a trip) lands inside a trip's Setări > Toate călătoriile instead of
+  // showing the list on this standalone page -- product owner request.
+  // The list ordered by created_at desc (src/lib/trip.ts), so [0] is the
+  // most recent; prefer one that's actually ready to look at. The list
+  // itself only gets shown here (below) for the one case with nowhere
+  // else to send you: an account with zero trips yet.
+  const loadTrips = useCallback(
+    async (accountId: string) => {
+      const admin = getStoredIsAdmin();
+      const list = admin ? await getAllTrips() : await getTripsForAccount(accountId);
+      setIsAdmin(admin);
+
+      if (list.length === 0) {
+        setStep("list");
+        return;
+      }
+      const target = list.find((t) => t.content_status === "ready") ?? list[0];
+      router.push(`/trip/${target.slug}/settings`);
+    },
+    [router],
+  );
 
   useEffect(() => {
     const accountId = getStoredAccountId();
@@ -73,12 +98,40 @@ function TripsPageInner() {
     setAuthError(null);
     setAuthenticating(true);
     try {
-      const accountId = await authenticateCreatorAccount({
+      const result = await authenticateCreatorAccount({
         phoneNumber,
         pin,
         linkTripSlug: linkSlug ?? undefined,
+        displayName: accountChoice === "new" ? displayName : undefined,
+        expectExisting: linkSlug ? accountChoice === "existing" : undefined,
       });
-      await loadTrips(accountId);
+
+      // Product owner request: whoever creates a trip should become its
+      // first participant automatically instead of separately joining
+      // later through the onboarding wizard with the same name. Requires
+      // a name -- either just given (new account) or already on file
+      // (returning account, src/lib/creatorAccount.ts) -- so this is a
+      // no-op for an older account that never set one. Best-effort: a
+      // failure here shouldn't block getting into "Călătoriile mele".
+      if (linkSlug && result.displayName) {
+        try {
+          const trip = await getTripBySlug(linkSlug);
+          if (trip) await getOrCreateAdultParticipant(trip.id, result.displayName, result.accountId);
+        } catch (joinErr) {
+          console.error("Auto-join after account creation failed", joinErr);
+        }
+      }
+
+      // Right after creating a trip, land inside it (Setări > Toate
+      // călătoriile) instead of on this standalone page -- product owner
+      // request. The plain "Călătoriile mele" login (no linkSlug) still
+      // lands here, showing the list on this page as before.
+      if (linkSlug) {
+        router.push(`/trip/${linkSlug}/settings`);
+        return;
+      }
+
+      await loadTrips(result.accountId);
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Nu am putut verifica contul. Încearcă din nou.");
     } finally {
@@ -88,7 +141,9 @@ function TripsPageInner() {
 
   function handleLogOut() {
     clearStoredAccountId();
-    setTrips([]);
+    setIsAdmin(false);
+    setAccountChoice("unknown");
+    setDisplayName("");
     setPhoneNumber("");
     setPin("");
     setStep("auth");
@@ -103,6 +158,8 @@ function TripsPageInner() {
   }
 
   if (step === "auth") {
+    const showChooser = Boolean(linkSlug) && accountChoice === "unknown";
+
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-8 px-5 py-14">
         <div>
@@ -112,62 +169,113 @@ function TripsPageInner() {
           </h1>
           <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
             {linkSlug
-              ? "Adaugă un număr de telefon și un PIN ca să-ți găsești călătoria mai târziu, de pe orice telefon."
+              ? "Cu un cont, devii automat participant în călătorie și o găsești mai târziu de pe orice telefon."
               : "Introdu numărul de telefon și PIN-ul cu care ai creat călătoriile, ca să le vezi aici."}
           </p>
         </div>
 
-        <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
-          <div>
-            <label htmlFor="phoneNumber" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
-              Număr de telefon
-            </label>
-            <input
-              id="phoneNumber"
-              type="tel"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="07xx xxx xxx"
-              required
-              className="w-full rounded-2xl border border-border bg-card px-5 py-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
-            />
-          </div>
-          <div>
-            <label htmlFor="pin" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
-              PIN (4-6 cifre)
-            </label>
-            <input
-              id="pin"
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]{4,6}"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="••••"
-              required
-              className="w-full rounded-2xl border border-border bg-card px-5 py-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
-            />
-          </div>
-
-          {authError && <p className="text-[13px] text-destructive">{authError}</p>}
-
-          <button
-            type="submit"
-            disabled={authenticating}
-            className="mt-2 flex items-center justify-center gap-2 rounded-2xl bg-primary py-[16px] text-[16px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:opacity-60"
-          >
-            {authenticating ? <Loader2 size={18} className="animate-spin" /> : linkSlug ? "Salvează" : "Intră"}
-          </button>
-
-          {linkSlug && (
+        {showChooser ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-[15px] font-medium text-foreground">Ai deja un cont?</p>
+            <button
+              onClick={() => setAccountChoice("existing")}
+              className="rounded-2xl bg-primary py-[16px] text-[16px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98]"
+            >
+              Da, am cont
+            </button>
+            <button
+              onClick={() => setAccountChoice("new")}
+              className="rounded-2xl border border-border bg-card py-[16px] text-[16px] font-semibold text-foreground transition-all active:scale-[0.98]"
+            >
+              Nu, e prima dată
+            </button>
             <Link
-              href={`/trip/${linkSlug}`}
+              href={`/trip/${linkSlug}/settings`}
               className="text-center text-[13px] font-medium text-muted-foreground underline"
             >
               Sari peste
             </Link>
-          )}
-        </form>
+          </div>
+        ) : (
+          <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
+            {linkSlug && (
+              <button
+                type="button"
+                onClick={() => setAccountChoice("unknown")}
+                className="self-start text-[13px] font-medium text-muted-foreground underline"
+              >
+                ‹ Înapoi
+              </button>
+            )}
+
+            {accountChoice === "new" && (
+              <div>
+                <label htmlFor="displayName" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                  Numele tău
+                </label>
+                <input
+                  id="displayName"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="ex. Andrei"
+                  required
+                  maxLength={60}
+                  className="w-full rounded-2xl border border-border bg-card px-5 py-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
+                />
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="phoneNumber" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                Număr de telefon
+              </label>
+              <input
+                id="phoneNumber"
+                type="tel"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                placeholder="07xx xxx xxx"
+                required
+                className="w-full rounded-2xl border border-border bg-card px-5 py-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
+              />
+            </div>
+            <div>
+              <label htmlFor="pin" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+                PIN (4-6 cifre)
+              </label>
+              <input
+                id="pin"
+                type="password"
+                inputMode="numeric"
+                pattern="[0-9]{4,6}"
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                placeholder="••••"
+                required
+                className="w-full rounded-2xl border border-border bg-card px-5 py-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
+              />
+            </div>
+
+            {authError && <p className="text-[13px] text-destructive">{authError}</p>}
+
+            <button
+              type="submit"
+              disabled={authenticating}
+              className="mt-2 flex items-center justify-center gap-2 rounded-2xl bg-primary py-[16px] text-[16px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:opacity-60"
+            >
+              {authenticating ? <Loader2 size={18} className="animate-spin" /> : linkSlug ? "Salvează" : "Intră"}
+            </button>
+
+            {linkSlug && (
+              <Link
+                href={`/trip/${linkSlug}/settings`}
+                className="text-center text-[13px] font-medium text-muted-foreground underline"
+              >
+                Sari peste
+              </Link>
+            )}
+          </form>
+        )}
       </main>
     );
   }
@@ -175,7 +283,16 @@ function TripsPageInner() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-6 px-5 pb-20 pt-14">
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] font-bold tracking-tight text-foreground">Călătoriile mele</h1>
+        <div>
+          <h1 className="text-[28px] font-bold tracking-tight text-foreground">
+            {isAdmin ? "Toate călătoriile" : "Călătoriile mele"}
+          </h1>
+          {isAdmin && (
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              Cont admin -- toate solicitările și călătoriile de pe platformă.
+            </p>
+          )}
+        </div>
         <button
           onClick={handleLogOut}
           className="flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground"
@@ -185,37 +302,9 @@ function TripsPageInner() {
         </button>
       </div>
 
-      {trips.length === 0 ? (
-        <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {trips.map((trip) => (
-            <Link
-              key={trip.id}
-              href={`/trip/${trip.slug}`}
-              className="flex items-center justify-between rounded-2xl border border-border bg-card px-5 py-4 transition-all active:scale-[0.99]"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-[16px] font-semibold text-foreground">{trip.name}</p>
-                <p className="text-[13px] text-muted-foreground">
-                  {trip.start_date} · {trip.duration_days} zile
-                </p>
-              </div>
-              <span
-                className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
-                  trip.content_status === "ready"
-                    ? "bg-accent text-primary"
-                    : trip.content_status === "failed"
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-secondary text-muted-foreground"
-                }`}
-              >
-                {STATUS_LABEL[trip.content_status]}
-              </span>
-            </Link>
-          ))}
-        </div>
-      )}
+      {/* loadTrips() above redirects into a trip's Setări whenever the
+          account has at least one -- this list only ever renders empty. */}
+      <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
 
       <Link
         href="/"

@@ -4,13 +4,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Moon, Check, Clock, Trophy, History } from "lucide-react";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import {
-  listProfilesForDevice,
-  getStoredActiveProfileId,
-  setStoredActiveProfileId,
-  type Participant,
-} from "@/lib/participant";
+import { currentTripDay } from "@/lib/trip";
+import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import { TripNav } from "@/components/TripNav";
 import { OnboardingWizard } from "@/components/OnboardingWizard";
 import { Centered } from "@/components/ui";
@@ -18,6 +13,8 @@ import { supabase } from "@/lib/supabase/client";
 import { getDailyBattle, getFinalBattle } from "@/lib/battle";
 import { getCatchUpQuestions } from "@/lib/discover";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
+import { SLOT_LABEL } from "@/lib/constants";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
 interface SlotStatus {
   questionId: string | null;
@@ -34,34 +31,16 @@ const EMPTY_BATTLE_STATUS: BattleStatus = { available: false, completed: false }
 
 export default function TripHomePage() {
   const { slug } = useParams<{ slug: string }>();
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError, mutate: mutateProfiles } = useProfiles(trip?.id);
 
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [statusesLoading, setStatusesLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [morningStatus, setMorningStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [lunchStatus, setLunchStatus] = useState<SlotStatus>(EMPTY_STATUS);
   const [battleStatus, setBattleStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [finalStatus, setFinalStatus] = useState<BattleStatus>(EMPTY_BATTLE_STATUS);
   const [hasCatchUp, setHasCatchUp] = useState(false);
-
-  const loadProfiles = useCallback(async (tripId: string) => {
-    const list = await listProfilesForDevice(tripId);
-    setProfiles(list);
-    if (list.length > 0) {
-      const stored = getStoredActiveProfileId(tripId);
-      const resolved = list.find((p) => p.id === stored) ?? list[0];
-      setActiveProfileId(resolved.id);
-    }
-    return list;
-  }, []);
-
-  function handleChangeActiveProfile(participantId: string) {
-    if (!trip) return;
-    setStoredActiveProfileId(trip.id, participantId);
-    setActiveProfileId(participantId);
-  }
 
   const loadSlotStatus = useCallback(
     async (tripId: string, day: number, profileIds: string[]) => {
@@ -107,8 +86,12 @@ export default function TripHomePage() {
 
   const loadBattleStatus = useCallback(
     async (tripId: string, day: number, isLastDay: boolean, profileIds: string[]) => {
+      // Final Battle replaces that evening's regular Battle on the
+      // trip's last day (product owner spec), not a second, additional
+      // thing to play -- so the daily battle is never even fetched then,
+      // regardless of whether content happens to exist for that day.
       const [daily, final] = await Promise.all([
-        getDailyBattle(tripId, day),
+        isLastDay ? Promise.resolve(null) : getDailyBattle(tripId, day),
         isLastDay ? getFinalBattle(tripId) : Promise.resolve(null),
       ]);
 
@@ -144,41 +127,46 @@ export default function TripHomePage() {
   // onboarding wizard right after a participant is created -- a returning
   // participant who joined earlier and missed some has no other way back
   // to them once the day rolls over. This surfaces that gap as a banner
-  // linking to /catchup, checked per profile since each has its own
-  // pending list.
+  // linking to /catchup -- checked for the active profile only (the same
+  // one /catchup itself now auto-resolves to, no more "Cine recuperează?"
+  // picker there), not "any profile on this device", so the banner never
+  // promises catch-up questions that aren't actually there for whoever
+  // it's about to send in.
   const loadCatchUpStatus = useCallback(async (tripId: string, day: number, list: Participant[]) => {
-    const perProfile = await Promise.all(
-      list.map((p) => getCatchUpQuestions(tripId, day, p.id)),
-    );
-    setHasCatchUp(perProfile.some((pending) => pending.length > 0));
+    if (list.length === 0) {
+      setHasCatchUp(false);
+      return;
+    }
+    const stored = getStoredActiveProfileId(tripId);
+    const activeProfile = list.find((p) => p.id === stored) ?? list[0];
+    const pending = await getCatchUpQuestions(tripId, day, activeProfile.id);
+    setHasCatchUp(pending.length > 0);
   }, []);
 
   useEffect(() => {
+    if (!trip || !profiles) return;
+    if (profiles.length === 0) {
+      setStatusesLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     async function load() {
-      setLoading(true);
+      setStatusesLoading(true);
       setLoadError(false);
       try {
-        const t = await getTripBySlug(slug);
-        if (cancelled) return;
-        setTrip(t);
-        if (!t) return;
-        const list = await loadProfiles(t.id);
-        if (cancelled) return;
-        if (list.length > 0) {
-          const day = currentTripDay(t);
-          const profileIds = list.map((p) => p.id);
-          await Promise.all([
-            loadSlotStatus(t.id, day, profileIds),
-            loadBattleStatus(t.id, day, day >= t.duration_days, profileIds),
-            loadCatchUpStatus(t.id, day, list),
-          ]);
-        }
+        const day = currentTripDay(trip!);
+        const profileIds = profiles!.map((p) => p.id);
+        await Promise.all([
+          loadSlotStatus(trip!.id, day, profileIds),
+          loadBattleStatus(trip!.id, day, day >= trip!.duration_days, profileIds),
+          loadCatchUpStatus(trip!.id, day, profiles!),
+        ]);
       } catch {
         if (!cancelled) setLoadError(true);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setStatusesLoading(false);
       }
     }
 
@@ -186,11 +174,12 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug, loadProfiles, loadSlotStatus, loadBattleStatus, loadCatchUpStatus]);
+  }, [trip, profiles, loadSlotStatus, loadBattleStatus, loadCatchUpStatus]);
 
   async function handleWizardComplete() {
     if (!trip) return;
-    const list = await loadProfiles(trip.id);
+    const list = await mutateProfiles();
+    if (!list || list.length === 0) return;
     const day = currentTripDay(trip);
     const profileIds = list.map((p) => p.id);
     await Promise.all([
@@ -200,7 +189,18 @@ export default function TripHomePage() {
     ]);
   }
 
-  if (loading) {
+  if (tripError || profilesError) {
+    return (
+      <Centered>
+        <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
+        <button onClick={() => window.location.reload()} className="mt-4 underline">
+          Încearcă din nou
+        </button>
+      </Centered>
+    );
+  }
+
+  if (trip === undefined) {
     return <Centered>Se încarcă...</Centered>;
   }
 
@@ -245,6 +245,10 @@ export default function TripHomePage() {
     );
   }
 
+  if (!profiles || statusesLoading) {
+    return <Centered>Se încarcă...</Centered>;
+  }
+
   if (profiles.length === 0) {
     return <OnboardingWizard trip={trip} onComplete={handleWizardComplete} />;
   }
@@ -262,18 +266,7 @@ export default function TripHomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-8 px-5 pb-32 pt-14">
       <header>
-        <div className="flex items-start justify-between gap-3">
-          <h1 className="mb-2 text-[34px] font-semibold leading-[1.1] tracking-tight text-foreground">
-            {trip.name}
-          </h1>
-          {profiles.length > 1 && (
-            <ActiveProfileSwitcher
-              profiles={profiles}
-              activeId={activeProfileId}
-              onChange={handleChangeActiveProfile}
-            />
-          )}
-        </div>
+        <h1 className="mb-2 text-[34px] font-semibold leading-[1.1] tracking-tight text-foreground">{trip.name}</h1>
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
             <span className="text-[15px] text-muted-foreground">
@@ -343,8 +336,13 @@ export default function TripHomePage() {
             status={lunchStatus}
             href={`/trip/${slug}/discover/lunch`}
             scheduledSlot="lunch"
+            isLast={day >= trip.duration_days}
           />
-          <BattleChallengeRow status={battleStatus} slug={slug} isLast />
+          {/* Final Battle replaces that evening's regular Battle on the
+              last day (product owner spec) -- its own card right below
+              already covers "tonight's battle" then, so this row would
+              just be a redundant, always-unavailable duplicate. */}
+          {day < trip.duration_days && <BattleChallengeRow status={battleStatus} slug={slug} isLast />}
         </div>
       </section>
 
@@ -379,56 +377,6 @@ export default function TripHomePage() {
   );
 }
 
-function ActiveProfileSwitcher({
-  profiles,
-  activeId,
-  onChange,
-}: {
-  profiles: Participant[];
-  activeId: string | null;
-  onChange: (participantId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const active = profiles.find((p) => p.id === activeId) ?? profiles[0];
-
-  return (
-    <div className="relative shrink-0 pt-1">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-full bg-secondary py-1.5 pl-1.5 pr-3 transition-transform active:scale-[0.97]"
-      >
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-[12px] font-semibold text-primary-foreground">
-          {active.display_name.charAt(0).toUpperCase()}
-        </span>
-        <span className="max-w-[80px] truncate text-[13px] font-medium text-foreground">{active.display_name}</span>
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-[calc(100%+6px)] z-20 w-48 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_4px_20px_rgba(0,0,0,0.12)]">
-            {profiles.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => {
-                  onChange(p.id);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center justify-between px-4 py-3 text-left text-[14px] ${
-                  p.id === active.id ? "font-semibold text-primary" : "text-foreground"
-                }`}
-              >
-                <span className="truncate">{p.display_name}</span>
-                {p.id === active.id && <Check size={14} className="shrink-0" />}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 function ProgressDots({ current, total }: { current: number; total: number }) {
   return (
     <div className="flex items-center gap-1.5">
@@ -443,12 +391,6 @@ function ProgressDots({ current, total }: { current: number; total: number }) {
     </div>
   );
 }
-
-const COUNTDOWN_SLOT_LABEL: Record<string, string> = {
-  morning: "Dimineață",
-  lunch: "Prânz",
-  battle: "Battle",
-};
 
 function NextChallengeCountdown({ compact }: { compact?: boolean }) {
   const [now, setNow] = useState(() => new Date());
@@ -470,7 +412,7 @@ function NextChallengeCountdown({ compact }: { compact?: boolean }) {
       <div className="flex flex-col items-end gap-0.5">
         <div className="flex items-center gap-1">
           <Clock size={11} className="text-muted-foreground" />
-          <span className="text-[11px] text-muted-foreground">{COUNTDOWN_SLOT_LABEL[next.slot]}</span>
+          <span className="text-[11px] text-muted-foreground">{SLOT_LABEL[next.slot]}</span>
         </div>
         <span className="font-mono text-[17px] font-semibold leading-none tracking-[0.03em] text-foreground">
           {pad(hours)}:{pad(minutes)}:{pad(seconds)}
@@ -482,7 +424,7 @@ function NextChallengeCountdown({ compact }: { compact?: boolean }) {
   return (
     <div className="text-center">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-        Următorul challenge: {COUNTDOWN_SLOT_LABEL[next.slot]}
+        Următorul challenge: {SLOT_LABEL[next.slot]}
       </p>
       <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
         {pad(hours)}:{pad(minutes)}:{pad(seconds)}
@@ -497,12 +439,14 @@ function ChallengeRow({
   status,
   href,
   scheduledSlot,
+  isLast,
 }: {
   icon: ReactNode;
   title: string;
   status: SlotStatus;
   href: string;
   scheduledSlot: "morning" | "lunch";
+  isLast?: boolean;
 }) {
   const availability = getSlotAvailability(scheduledSlot);
 
@@ -524,7 +468,7 @@ function ChallengeRow({
   }
 
   return (
-    <div className="flex items-center gap-3 border-b border-secondary py-4">
+    <div className={`flex items-center gap-3 py-4 ${!isLast ? "border-b border-secondary" : ""}`}>
       <div
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
           status.completed || !status.questionId ? "bg-secondary" : "bg-accent"

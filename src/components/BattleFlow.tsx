@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Moon, Check, X, ExternalLink } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
@@ -8,20 +8,13 @@ import type { BattleContent, BattleWindowStatus } from "@/lib/battle";
 import { recordBattleAnswer, getBattleWindowStatus, getBattleResult } from "@/lib/battle";
 import { getOrAssignExtra, type AnswerOption, type Extra, type Response } from "@/lib/discover";
 import { trackEvent } from "@/lib/analytics";
-import type { Participant } from "@/lib/participant";
+import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import type { BattleTeam } from "@/lib/supabase/types";
 import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Btn, FlowHeader, OptionButton } from "@/components/ui";
+import { EXTRA_TYPE_LABEL } from "@/lib/constants";
 
 type Step = "intro" | "select-profile" | "closed" | "question" | "reveal" | "done";
-
-const EXTRA_TYPE_LABEL: Record<string, string> = {
-  know: "ȘTIAI CĂ",
-  think: "GÂNDEȘTE-TE",
-  connect: "CONEXIUNE",
-  ask: "ÎNTREABĂ",
-  explore: "EXPLOREAZĂ",
-};
 
 // Product owner spec: every participant answers individually now
 // (select their own profile, then work through this evening's Battle
@@ -67,7 +60,15 @@ export function BattleFlow({
 
   async function handleStart() {
     await trackEvent(tripId, "battle_opened", undefined, { battle_id: content.battle.id });
-    setStep("select-profile");
+    // Product owner request: use the profile picked top-right (the
+    // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
+    // asking "Cine răspunde?" here -- same resolution it uses (stored
+    // active profile, falling back to this device's first one). The
+    // picker itself stays for "Alt profil răspunde" below, since Battle
+    // deliberately passes the phone between everyone on the device.
+    const stored = getStoredActiveProfileId(tripId);
+    const resolved = profiles.find((p) => p.id === stored) ?? profiles[0];
+    await handleSelectProfile(resolved);
   }
 
   async function handleSelectProfile(profile: Participant) {
@@ -109,15 +110,6 @@ export function BattleFlow({
     setExtra(null);
     setStep("question");
   }
-
-  // Skip the "Cine răspunde?" screen when there's only one profile on
-  // this device (same as Discover, spec section 8).
-  useEffect(() => {
-    if (step === "select-profile" && profiles.length === 1) {
-      handleSelectProfile(profiles[0]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, profiles]);
 
   async function handleSubmit() {
     if (!activeProfile || !current || !selectedOption) return;

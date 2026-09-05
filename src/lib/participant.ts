@@ -21,9 +21,16 @@ export async function listProfilesForDevice(tripId: string): Promise<Participant
   return data ?? [];
 }
 
+// accountId links this participant to the "Călătoriile mele" account it
+// belongs to (only passed by the post-login auto-join in app/trips/
+// page.tsx) -- Setări > Utilizatori reads it back to show that account's
+// phone/PIN fields only under the profile that actually owns them,
+// instead of under any adult profile just because *some* account is
+// logged into this device (see 20260901100000_participant_account_link.sql).
 export async function getOrCreateAdultParticipant(
   tripId: string,
   displayName: string,
+  accountId?: string,
 ): Promise<Participant> {
   const deviceId = getDeviceId();
 
@@ -38,11 +45,16 @@ export async function getOrCreateAdultParticipant(
   if (selectError) throw selectError;
 
   if (existing) {
-    await supabase
+    const update: { last_seen_at: string; account_id?: string } = { last_seen_at: new Date().toISOString() };
+    if (accountId) update.account_id = accountId;
+    const { data: updated, error: updateError } = await supabase
       .from("participants")
-      .update({ last_seen_at: new Date().toISOString() })
-      .eq("id", existing.id);
-    return existing;
+      .update(update)
+      .eq("id", existing.id)
+      .select()
+      .single();
+    if (updateError) throw updateError;
+    return updated;
   }
 
   const { data: created, error: insertError } = await supabase
@@ -52,6 +64,7 @@ export async function getOrCreateAdultParticipant(
       device_id: deviceId,
       display_name: displayName,
       role: "adult" as ParticipantRole,
+      account_id: accountId ?? null,
     })
     .select()
     .single();

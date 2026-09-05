@@ -1,26 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Plus, MapPin, Calendar, Trophy } from "lucide-react";
-import { getTripBySlug, type Trip } from "@/lib/trip";
-import {
-  listProfilesForDevice,
-  addChildProfile,
-  updateParticipant,
-  deleteParticipant,
-  type Participant,
-} from "@/lib/participant";
+import { Plus, MapPin, Calendar, Trophy, Check, Eye, EyeOff } from "lucide-react";
+import { getAllTrips, getTripsForAccount, type Trip } from "@/lib/trip";
+import { addChildProfile, updateParticipant, deleteParticipant, type Participant } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
+import { getAccountDetails, getStoredAccountId, getStoredIsAdmin, updateAccountDetails } from "@/lib/creatorAccount";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
+import { PendingTripModal } from "@/components/PendingTripModal";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Step = "loading" | "error" | "not-joined" | "ready";
-type Tab = "config" | "users" | "info";
+type Tab = "trips" | "config" | "users" | "info";
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "trips", label: "Toate călătoriile" },
   { id: "config", label: "Configurare" },
   { id: "users", label: "Utilizatori" },
   { id: "info", label: "Info" },
@@ -28,74 +25,86 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function SettingsPage() {
   const { slug } = useParams<{ slug: string }>();
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError, mutate: mutateProfiles } = useProfiles(trip?.id);
 
-  const [step, setStep] = useState<Step>("loading");
   const [tab, setTab] = useState<Tab>("users");
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
   const [showAddChild, setShowAddChild] = useState(false);
   const [childName, setChildName] = useState("");
   const [childAge, setChildAge] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
+  const [accountTrips, setAccountTrips] = useState<Trip[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const loadProfiles = useCallback(async (tripId: string) => {
-    const list = await listProfilesForDevice(tripId);
-    setProfiles(list);
-    return list;
+  // "Toate călătoriile" tab is only shown to whoever is logged into
+  // "Călătoriile mele" on this device (app/trips/page.tsx) -- most
+  // participants just join a trip by device id and never create that
+  // account, so this stays hidden for them.
+  const hasAccount = getStoredAccountId() !== null;
+  useEffect(() => {
+    const accountId = getStoredAccountId();
+    if (!accountId) return;
+    const admin = getStoredIsAdmin();
+    setIsAdmin(admin);
+    const list = admin ? getAllTrips() : getTripsForAccount(accountId);
+    list.then(setAccountTrips).catch(() => setAccountTrips([]));
   }, []);
 
+  // Content (Discover/Battle) is drafted as a separate manual step after
+  // a publicly-created trip's row exists (see app/trip/[slug]/page.tsx)
+  // -- prize status is meaningless before that. Keyed on trip id/status
+  // alone (not profiles), so adding/editing a child on this same page
+  // doesn't needlessly refetch it.
   useEffect(() => {
-    let cancelled = false;
+    if (!trip || trip.content_status !== "ready") return;
+    getPrizeStatus(trip.id).then(setPrizeStatus).catch(() => undefined);
+  }, [trip]);
 
-    async function load() {
-      try {
-        const t = await getTripBySlug(slug);
-        if (cancelled || !t) return;
-        setTrip(t);
-
-        const [list] = await Promise.all([loadProfiles(t.id), getPrizeStatus(t.id).then(setPrizeStatus)]);
-        if (cancelled) return;
-        setStep(list.length === 0 ? "not-joined" : "ready");
-      } catch {
-        if (!cancelled) setStep("error");
-      }
-    }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [slug, loadProfiles]);
+  // Defaults the tab strip once per trip -- to Toate călătoriile when
+  // this device has an account but hasn't joined this particular trip
+  // (or it isn't ready yet), otherwise Utilizatori. Re-evaluated on every
+  // trip switch (the "trips" tab's own dropdown-like list) since this
+  // component instance persists across a router.push between two
+  // /trip/*/settings routes, but guarded by a ref so it doesn't also
+  // re-fire and clobber the user's own tab choice every time `profiles`
+  // revalidates in the background (e.g. right after adding a child here).
+  const defaultedForTripId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!trip || !profiles) return;
+    if (defaultedForTripId.current === trip.id) return;
+    defaultedForTripId.current = trip.id;
+    const joined = profiles.length > 0;
+    setTab(hasAccount && (trip.content_status !== "ready" || !joined) ? "trips" : "users");
+  }, [trip, profiles, hasAccount]);
 
   async function handleAddChild(e: FormEvent) {
     e.preventDefault();
-    if (!trip || !childName.trim()) return;
+    if (!trip || !childName.trim() || !profiles) return;
     const adult = profiles.find((p) => p.role === "adult");
     if (!adult) return;
     await addChildProfile(trip.id, childName.trim(), childAge ? Number(childAge) : null, adult.id);
     setChildName("");
     setChildAge("");
     setShowAddChild(false);
-    await loadProfiles(trip.id);
+    await mutateProfiles();
   }
 
   async function handleSaveEdit(id: string, displayName: string, role: ParticipantRole, age: number | null) {
     if (!trip) return;
     await updateParticipant(id, displayName, role, age);
     setEditingId(null);
-    await loadProfiles(trip.id);
+    await mutateProfiles();
   }
 
   async function handleDelete(id: string) {
     if (!trip) return;
     if (!window.confirm("Sigur ștergi acest profil?")) return;
     await deleteParticipant(id);
-    await loadProfiles(trip.id);
+    await mutateProfiles();
   }
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError) {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -105,7 +114,17 @@ export default function SettingsPage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  // No account and never joined this trip on this device -- the one
+  // case with nowhere else useful to send someone (arriving here from a
+  // direct/shared link, e.g.), so this stays a full block instead of a
+  // tab strip with nothing behind any of its tabs.
+  if (trip.content_status === "ready" && profiles.length === 0 && !hasAccount) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>
@@ -115,13 +134,12 @@ export default function SettingsPage() {
       </Centered>
     );
   }
-
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-2 px-5 pb-32 pt-14">
       <h1 className="mb-4 text-[28px] font-semibold tracking-tight text-foreground">Setări</h1>
 
       <div className="mb-6 flex rounded-xl bg-secondary p-1">
-        {TABS.map((t) => (
+        {TABS.filter((t) => t.id !== "trips" || hasAccount).map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -134,31 +152,165 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {tab === "config" && trip && <ConfigSection trip={trip} prizeStatus={prizeStatus} />}
+      {tab === "trips" && <TripsSection trips={accountTrips} isAdmin={isAdmin} currentSlug={slug} />}
 
-      {tab === "users" && (
-        <UsersSection
-          profiles={profiles}
-          editingId={editingId}
-          onStartEdit={setEditingId}
-          onCancelEdit={() => setEditingId(null)}
-          onSaveEdit={handleSaveEdit}
-          onDelete={handleDelete}
-          showAddChild={showAddChild}
-          onShowAddChild={() => setShowAddChild(true)}
-          onCancelAddChild={() => setShowAddChild(false)}
-          childName={childName}
-          onChildNameChange={setChildName}
-          childAge={childAge}
-          onChildAgeChange={setChildAge}
-          onAddChild={handleAddChild}
-        />
+      {tab === "config" && trip && (
+        trip.content_status !== "ready" ? (
+          <TripPendingNotice tripName={trip.name} />
+        ) : profiles.length === 0 ? (
+          <NotJoinedNotice slug={slug} />
+        ) : (
+          <ConfigSection trip={trip} prizeStatus={prizeStatus} />
+        )
+      )}
+
+      {tab === "users" && trip && (
+        trip.content_status !== "ready" ? (
+          <TripPendingNotice tripName={trip.name} />
+        ) : profiles.length === 0 ? (
+          <NotJoinedNotice slug={slug} />
+        ) : (
+          <UsersSection
+            profiles={profiles}
+            editingId={editingId}
+            onStartEdit={setEditingId}
+            onCancelEdit={() => setEditingId(null)}
+            onSaveEdit={handleSaveEdit}
+            onDelete={handleDelete}
+            showAddChild={showAddChild}
+            onShowAddChild={() => setShowAddChild(true)}
+            onCancelAddChild={() => setShowAddChild(false)}
+            childName={childName}
+            onChildNameChange={setChildName}
+            childAge={childAge}
+            onChildAgeChange={setChildAge}
+            onAddChild={handleAddChild}
+          />
+        )
       )}
 
       {tab === "info" && <InfoSection />}
 
       <TripNav slug={slug} />
     </main>
+  );
+}
+
+const TRIP_STATUS_LABEL: Record<Trip["content_status"], string> = {
+  ready: "Gata",
+  pending: "În pregătire",
+  generating: "În pregătire",
+  failed: "Eșuat",
+};
+
+// Configurare/Utilizatori have nothing meaningful to show before a
+// trip's Discover/Battle content exists (see the load effect above) --
+// shown inline instead of blocking the whole page, so Toate călătoriile
+// stays reachable.
+function TripPendingNotice({ tripName }: { tripName: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card px-5 py-8 text-center">
+      <p className="text-[15px] font-semibold text-foreground">Pregătim {tripName}...</p>
+      <p className="mx-auto mt-2 max-w-xs text-[14px] text-muted-foreground">
+        Întrebările și provocările pentru această călătorie sunt în lucru. Revino mai târziu.
+      </p>
+    </div>
+  );
+}
+
+// Shown instead of Configurare/Utilizatori when this device hasn't
+// joined a ready trip -- e.g. an admin/creator-account holder auto-
+// redirected here from /trips (app/trips/page.tsx) without ever having
+// personally joined that particular trip as a participant.
+function NotJoinedNotice({ slug }: { slug: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card px-5 py-8 text-center">
+      <p className="text-[15px] font-semibold text-foreground">Nu ești încă participant la această călătorie.</p>
+      <Link href={`/trip/${slug}`} className="mt-3 inline-block text-[14px] font-medium text-primary underline">
+        Alătură-te acum
+      </Link>
+    </div>
+  );
+}
+
+function TripsSection({
+  trips,
+  isAdmin,
+  currentSlug,
+}: {
+  trips: Trip[];
+  isAdmin: boolean;
+  currentSlug: string;
+}) {
+  const [pendingTrip, setPendingTrip] = useState<Trip | null>(null);
+
+  return (
+    <div className="flex flex-col gap-3">
+      {isAdmin && (
+        <p className="text-[13px] text-muted-foreground">
+          Cont admin -- toate solicitările și călătoriile de pe platformă.
+        </p>
+      )}
+
+      {trips.length === 0 ? (
+        <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
+      ) : (
+        trips.map((t) => {
+          const isCurrent = t.slug === currentSlug;
+          const cardClass = `flex w-full items-center justify-between rounded-2xl border px-5 py-4 text-left transition-all active:scale-[0.99] ${
+            isCurrent ? "border-primary bg-primary/5" : "border-border bg-card"
+          }`;
+          const cardContent = (
+            <>
+              <div className="flex min-w-0 items-center gap-2.5">
+                {isCurrent && (
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <Check size={13} strokeWidth={3} />
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-[16px] font-semibold text-foreground">{t.name}</p>
+                  <p className="text-[13px] text-muted-foreground">
+                    {t.start_date} · {t.duration_days} zile
+                  </p>
+                </div>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-3 py-1 text-[12px] font-medium ${
+                  t.content_status === "ready"
+                    ? "bg-accent text-primary"
+                    : t.content_status === "failed"
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-secondary text-muted-foreground"
+                }`}
+              >
+                {TRIP_STATUS_LABEL[t.content_status]}
+              </span>
+            </>
+          );
+
+          return t.content_status === "ready" ? (
+            <Link key={t.id} href={`/trip/${t.slug}`} className={cardClass}>
+              {cardContent}
+            </Link>
+          ) : (
+            <button key={t.id} onClick={() => setPendingTrip(t)} className={cardClass}>
+              {cardContent}
+            </button>
+          );
+        })
+      )}
+
+      <Link
+        href="/"
+        className="mt-2 flex items-center justify-center gap-2 rounded-2xl border border-border bg-card py-[14px] text-[15px] font-semibold text-foreground transition-all active:scale-[0.98]"
+      >
+        <Plus size={16} />
+        Creează o călătorie nouă
+      </Link>
+
+      {pendingTrip && <PendingTripModal tripName={pendingTrip.name} onClose={() => setPendingTrip(null)} />}
+    </div>
   );
 }
 
@@ -326,14 +478,44 @@ function EditProfileForm({
   const [age, setAge] = useState(profile.age?.toString() ?? "");
   const [error, setError] = useState<string | null>(null);
 
+  // Only the specific adult profile this device's "Călătoriile mele"
+  // account actually created (profile.account_id, set by
+  // getOrCreateAdultParticipant's caller in app/trips/page.tsx) gets
+  // phone/PIN fields here -- not just any adult profile on a device
+  // that happens to have some account logged in (a device can have more
+  // than one adult profile, e.g. an admin account plus an unrelated
+  // participant profile used for testing). accountId is read once (not
+  // re-checked on every render) since it doesn't change while this form
+  // is open.
+  const [accountId] = useState(() => getStoredAccountId());
+  const showAccountFields = Boolean(accountId) && profile.account_id === accountId;
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [pin, setPin] = useState("");
+  const [showPin, setShowPin] = useState(false);
+
+  useEffect(() => {
+    if (!showAccountFields || !accountId) return;
+    getAccountDetails(accountId)
+      .then((details) => setPhoneNumber(details.phoneNumber))
+      .catch(() => undefined);
+    // Only ever needs to run once per mount of this form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     setError(null);
     try {
       await onSave(profile.id, name.trim(), role, role === "child" ? Number(age) || null : null);
-    } catch {
-      setError("Nu s-a putut salva. Încearcă din nou.");
+      if (showAccountFields && accountId) {
+        await updateAccountDetails(accountId, {
+          phoneNumber: phoneNumber.trim(),
+          pin: pin.trim() ? pin.trim() : undefined,
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Nu s-a putut salva. Încearcă din nou.");
     }
   }
 
@@ -374,6 +556,42 @@ function EditProfileForm({
           value={age}
           onChange={(e) => setAge(e.target.value)}
         />
+      )}
+
+      {showAccountFields && (
+        <>
+          <div className="mt-1 border-t border-secondary pt-3">
+            <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
+              Contul &quot;Călătoriile mele&quot;
+            </p>
+          </div>
+          <input
+            className="rounded-xl border border-border bg-background px-4 py-3 text-[15px] text-foreground outline-none transition-colors focus:border-primary"
+            placeholder="Număr de telefon"
+            type="tel"
+            value={phoneNumber}
+            onChange={(e) => setPhoneNumber(e.target.value)}
+          />
+          <div className="relative">
+            <input
+              className="w-full rounded-xl border border-border bg-background px-4 py-3 pr-11 text-[15px] text-foreground outline-none transition-colors focus:border-primary"
+              placeholder="PIN nou (lasă gol ca să-l păstrezi)"
+              type={showPin ? "text" : "password"}
+              inputMode="numeric"
+              pattern="[0-9]{4,6}"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPin((v) => !v)}
+              aria-label={showPin ? "Ascunde PIN-ul" : "Arată PIN-ul"}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            >
+              {showPin ? <EyeOff size={17} /> : <Eye size={17} />}
+            </button>
+          </div>
+        </>
       )}
 
       {error && <p className="text-[13px] text-destructive">{error}</p>}

@@ -1,7 +1,12 @@
 // Hand-written types matching supabase/migrations. Regenerate with
 // `supabase gen types typescript --linked > src/lib/supabase/types.ts`
-// once the project is linked, and keep this file's shape as the source of
-// truth in the meantime.
+// and keep this file's shape as the source of truth in the meantime.
+//
+// Safe to regenerate as of 20260901090000_enum_types.sql: every
+// "enum-like" column below (QuestionSlot, BattleTeam, ParticipantRole,
+// etc.) is now a real Postgres enum, not a text column with a check
+// constraint, so `supabase gen types` produces the same literal unions
+// as here instead of widening them to plain `string`.
 
 export type ParticipantRole = "adult" | "child";
 export type QuestionKind = "discover" | "battle";
@@ -135,6 +140,7 @@ export interface Database {
           role: ParticipantRole;
           age: number | null;
           managed_by_participant_id: string | null;
+          account_id: string | null;
           created_at: string;
           last_seen_at: string;
         },
@@ -227,6 +233,8 @@ export interface Database {
           id: string;
           phone_number: string;
           pin_hash: string;
+          is_admin: boolean;
+          display_name: string | null;
           created_at: string;
         },
         "phone_number" | "pin_hash"

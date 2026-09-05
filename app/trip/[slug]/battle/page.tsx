@@ -3,49 +3,48 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, type Participant } from "@/lib/participant";
+import { currentTripDay } from "@/lib/trip";
 import { getDailyBattle, type BattleContent } from "@/lib/battle";
 import { BattleFlow } from "@/components/BattleFlow";
 import { Centered } from "@/components/ui";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Step = "loading" | "error" | "not-joined" | "unavailable" | "play";
+type ContentStep = "loading" | "error" | "unavailable" | "ready";
 
 export default function DailyBattlePage() {
   const { slug } = useParams<{ slug: string }>();
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError } = useProfiles(trip?.id);
 
-  const [step, setStep] = useState<Step>("loading");
-  const [trip, setTrip] = useState<Trip | null>(null);
+  const [contentStep, setContentStep] = useState<ContentStep>("loading");
   const [content, setContent] = useState<BattleContent | null>(null);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
 
   useEffect(() => {
+    if (!trip || !profiles || profiles.length === 0) return;
+
     let cancelled = false;
 
     async function load() {
       try {
-        const t = await getTripBySlug(slug);
-        if (cancelled || !t) return;
-        setTrip(t);
-
-        const list = await listProfilesForDevice(t.id);
-        if (cancelled) return;
-        if (list.length === 0) {
-          setStep("not-joined");
+        // Final Battle replaces that evening's regular Battle on the
+        // trip's last day (product owner spec) -- never even fetched
+        // then, regardless of whether content happens to exist for that
+        // day; "unavailable" below points to /final instead.
+        const day = currentTripDay(trip!);
+        if (day >= trip!.duration_days) {
+          setContentStep("unavailable");
           return;
         }
-        setProfiles(list);
-
-        const battle = await getDailyBattle(t.id, currentTripDay(t));
+        const battle = await getDailyBattle(trip!.id, day);
         if (cancelled) return;
         if (!battle || battle.questions.length === 0) {
-          setStep("unavailable");
+          setContentStep("unavailable");
           return;
         }
         setContent(battle);
-        setStep("play");
+        setContentStep("ready");
       } catch {
-        if (!cancelled) setStep("error");
+        if (!cancelled) setContentStep("error");
       }
     }
 
@@ -53,10 +52,9 @@ export default function DailyBattlePage() {
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+  }, [trip, profiles]);
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError || contentStep === "error") {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -66,7 +64,13 @@ export default function DailyBattlePage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  if (profiles.length === 0) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>
@@ -76,17 +80,20 @@ export default function DailyBattlePage() {
       </Centered>
     );
   }
-  if (step === "unavailable") {
+
+  if (contentStep === "unavailable") {
+    const isLastDay = currentTripDay(trip) >= trip.duration_days;
     return (
       <Centered>
-        <p>Battle-ul de azi nu e încă disponibil.</p>
-        <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
-          Înapoi acasă
+        <p>{isLastDay ? "În ultima zi joci Battle-ul Final." : "Battle-ul de azi nu e încă disponibil."}</p>
+        <Link href={isLastDay ? `/trip/${slug}/final` : `/trip/${slug}`} className="mt-4 inline-block underline">
+          {isLastDay ? "Hai la finală" : "Înapoi acasă"}
         </Link>
       </Centered>
     );
   }
-  if (!trip || !content) return <Centered>Se încarcă...</Centered>;
+
+  if (!content) return <Centered>Se încarcă...</Centered>;
 
   return <BattleFlow content={content} tripId={trip.id} slug={slug} isFinal={false} profiles={profiles} />;
 }

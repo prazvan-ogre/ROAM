@@ -16,6 +16,108 @@ export async function POST(request: Request) {
   }
 }
 
+// Reads back an already-verified account's phone number for display in
+// Setări > Utilizatori (app/trip/[slug]/settings/page.tsx) -- the
+// account id is client-trusted the same way it already is everywhere
+// else once logged in (docs/DATABASE.md "Security model"), so no PIN
+// re-entry is required just to view/edit it. Never returns pin_hash --
+// it's a one-way scrypt hash (src/lib/security/pin.ts) that can't be
+// turned back into the original PIN to show it, which is why editing a
+// PIN below is "set a new one", never "reveal the current one".
+export async function GET(request: Request) {
+  try {
+    const accountId = new URL(request.url).searchParams.get("accountId");
+    if (!accountId) return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("creator_accounts")
+      .select("phone_number, display_name, is_admin")
+      .eq("id", accountId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return NextResponse.json({ error: "Contul nu a fost găsit." }, { status: 404 });
+
+    return NextResponse.json({
+      phoneNumber: data.phone_number,
+      displayName: data.display_name,
+      isAdmin: data.is_admin,
+    });
+  } catch (err) {
+    console.error("Account lookup failed", err);
+    return NextResponse.json({ error: "Nu am putut încărca contul. Încearcă din nou." }, { status: 500 });
+  }
+}
+
+// Updates phone number and/or PIN for an already-verified account --
+// same client-trusted accountId model as GET above, no current-PIN
+// confirmation required (consistent with the rest of this app's
+// accepted-risk posture, not a place to introduce a stricter one-off
+// rule). Either field is optional so the caller can send just one.
+export async function PATCH(request: Request) {
+  try {
+    return await handleUpdateAccount(request);
+  } catch (err) {
+    console.error("Account update failed", err);
+    return NextResponse.json({ error: "Nu am putut salva modificările. Încearcă din nou." }, { status: 500 });
+  }
+}
+
+async function handleUpdateAccount(request: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+  }
+
+  const { accountId, phoneNumber, pin } = (body ?? {}) as Record<string, unknown>;
+  if (typeof accountId !== "string" || !accountId.trim()) {
+    return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+  }
+
+  const update: { phone_number?: string; pin_hash?: string } = {};
+
+  if (phoneNumber !== undefined) {
+    if (typeof phoneNumber !== "string" || !PHONE_PATTERN.test(phoneNumber.trim())) {
+      return NextResponse.json({ error: "Introdu un număr de telefon valid." }, { status: 400 });
+    }
+    update.phone_number = phoneNumber.trim();
+  }
+  if (pin !== undefined) {
+    if (typeof pin !== "string" || !PIN_PATTERN.test(pin)) {
+      return NextResponse.json({ error: "PIN-ul trebuie să aibă 4-6 cifre." }, { status: 400 });
+    }
+    update.pin_hash = hashPin(pin);
+  }
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: "Nimic de salvat." }, { status: 400 });
+  }
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("creator_accounts")
+    .update(update)
+    .eq("id", accountId)
+    .select("phone_number, display_name, is_admin")
+    .maybeSingle();
+
+  if (error) {
+    // Unique violation on phone_number.
+    if (error.code === "23505") {
+      return NextResponse.json({ error: "Acest număr de telefon este deja folosit de alt cont." }, { status: 409 });
+    }
+    throw error;
+  }
+  if (!data) return NextResponse.json({ error: "Contul nu a fost găsit." }, { status: 404 });
+
+  return NextResponse.json({
+    phoneNumber: data.phone_number,
+    displayName: data.display_name,
+    isAdmin: data.is_admin,
+  });
+}
+
 async function handleAccount(request: Request): Promise<Response> {
   let body: unknown;
   try {
@@ -24,7 +126,10 @@ async function handleAccount(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
   }
 
-  const { phoneNumber, pin, deviceId, linkTripSlug } = (body ?? {}) as Record<string, unknown>;
+  const { phoneNumber, pin, deviceId, linkTripSlug, displayName, expectExisting } = (body ?? {}) as Record<
+    string,
+    unknown
+  >;
 
   if (typeof phoneNumber !== "string" || !PHONE_PATTERN.test(phoneNumber.trim())) {
     return NextResponse.json({ error: "Introdu un număr de telefon valid." }, { status: 400 });
@@ -35,42 +140,72 @@ async function handleAccount(request: Request): Promise<Response> {
 
   const admin = createAdminClient();
   const normalizedPhone = phoneNumber.trim();
+  const normalizedName = typeof displayName === "string" ? displayName.trim() : "";
+  const isLinkingNewTrip =
+    typeof linkTripSlug === "string" && linkTripSlug.trim() && typeof deviceId === "string" && deviceId.trim();
 
   const { data: existing, error: lookupError } = await admin
     .from("creator_accounts")
-    .select("id, pin_hash")
+    .select("id, pin_hash, is_admin, display_name")
     .eq("phone_number", normalizedPhone)
     .maybeSingle();
   if (lookupError) throw lookupError;
 
   let accountId: string;
+  let isAdmin: boolean;
+  let resultDisplayName: string | null;
   if (existing) {
     if (!verifyPin(pin, existing.pin_hash)) {
       return NextResponse.json({ error: "Număr de telefon sau PIN incorect." }, { status: 401 });
     }
     accountId = existing.id;
+    isAdmin = existing.is_admin;
+    resultDisplayName = existing.display_name;
   } else {
+    // Right after creating a trip (app/trips/page.tsx asks "Ai deja
+    // cont?" first): claiming to already have one but no matching row
+    // exists is a wrong phone/PIN, not a signal to silently create a
+    // blank account -- the UI shown for that branch has no name field to
+    // fall back on. The plain /trips login (no linkTripSlug) keeps its
+    // original behavior: an unrecognized phone/PIN just creates a new,
+    // nameless account.
+    if (isLinkingNewTrip && expectExisting === true) {
+      return NextResponse.json(
+        { error: "Nu am găsit un cont cu acest număr. Alege \"Nu am cont\" ca să creezi unul." },
+        { status: 401 },
+      );
+    }
+    if (isLinkingNewTrip && !normalizedName) {
+      return NextResponse.json({ error: "Introdu un nume." }, { status: 400 });
+    }
+
     const { data: created, error: insertError } = await admin
       .from("creator_accounts")
-      .insert({ phone_number: normalizedPhone, pin_hash: hashPin(pin) })
-      .select("id")
+      .insert({
+        phone_number: normalizedPhone,
+        pin_hash: hashPin(pin),
+        display_name: normalizedName || null,
+      })
+      .select("id, is_admin, display_name")
       .single();
     if (insertError) throw insertError;
     accountId = created.id;
+    isAdmin = created.is_admin;
+    resultDisplayName = created.display_name;
   }
 
   // Linking is best-effort: only if this exact device created that exact
   // trip, and it isn't already tied to some other account. A failed or
   // skipped link never fails the whole login -- the account still works,
   // this trip just doesn't show up in its history.
-  if (typeof linkTripSlug === "string" && linkTripSlug.trim() && typeof deviceId === "string" && deviceId.trim()) {
+  if (isLinkingNewTrip) {
     await admin
       .from("trips")
       .update({ created_by_account_id: accountId })
-      .eq("slug", linkTripSlug.trim())
-      .eq("created_by_device_id", deviceId.trim())
+      .eq("slug", (linkTripSlug as string).trim())
+      .eq("created_by_device_id", (deviceId as string).trim())
       .is("created_by_account_id", null);
   }
 
-  return NextResponse.json({ accountId });
+  return NextResponse.json({ accountId, isAdmin, displayName: resultDisplayName });
 }

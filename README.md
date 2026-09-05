@@ -64,7 +64,27 @@ npm run dev        # local dev server
 npm run lint        # ESLint
 npm run typecheck   # tsc --noEmit
 npm run build        # production build
+npm run test:sql     # battle scoring regression tests (needs a Postgres
+                      # connection with all migrations applied -- see below)
 ```
+
+### Battle scoring tests
+
+`supabase/tests/battle_scoring.test.sql` is a regression suite for
+`battle_team_score()`/`trip_battle_win_tally()` (the two RPCs behind
+Battle results and the season-long Parents-vs-Kids tally) -- these have
+had real bugs before (see the `2026082719/20` migrations), so they're
+covered by more than manual QA. It runs against any Postgres database
+that already has every migration applied, inserts fixture rows, and
+rolls the whole transaction back at the end, so it never touches real
+trip data:
+
+```bash
+PGDATABASE=roam_test PGUSER=postgres PGHOST=localhost npm run test:sql
+```
+
+CI runs this automatically against a throwaway `postgres:16` service
+container on every PR (see `.github/workflows/ci.yml`).
 
 ## Deploying
 

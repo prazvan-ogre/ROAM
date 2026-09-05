@@ -10,14 +10,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:sql": "psql -v ON_ERROR_STOP=1 -f supabase/tests/battle_scoring.test.sql"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "lucide-react": "^0.446.0",
     "next": "14.2.35",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "swr": "^2.5.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

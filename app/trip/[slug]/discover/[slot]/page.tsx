@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Check, X, ExternalLink } from "lucide-react";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, type Participant } from "@/lib/participant";
+import { currentTripDay } from "@/lib/trip";
+import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import {
   getDiscoverQuestion,
   getMyResponse,
@@ -20,35 +20,21 @@ import { trackEvent } from "@/lib/analytics";
 import type { QuestionSlot } from "@/lib/supabase/types";
 import { getSlotAvailability, type SlotAvailability } from "@/lib/schedule";
 import { Btn, FlowHeader, OptionButton, Centered } from "@/components/ui";
+import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Step =
-  | "loading"
-  | "select-profile"
-  | "question"
-  | "reveal"
-  | "unavailable"
-  | "closed"
-  | "not-joined"
-  | "error";
+type Step = "loading" | "question" | "reveal" | "unavailable" | "closed" | "error";
 
-const SLOT_LABEL: Record<QuestionSlot, string> = { morning: "Dimineață", lunch: "Prânz" };
 const SLOT_ICON: Record<QuestionSlot, typeof Sun> = { morning: Sun, lunch: Utensils };
-const EXTRA_TYPE_LABEL: Record<string, string> = {
-  know: "ȘTIAI CĂ",
-  think: "GÂNDEȘTE-TE",
-  connect: "CONEXIUNE",
-  ask: "ÎNTREABĂ",
-  explore: "EXPLOREAZĂ",
-};
 
 export default function DiscoverPage() {
   const { slug, slot } = useParams<{ slug: string; slot: string }>();
   const router = useRouter();
   const discoverSlot = slot as QuestionSlot;
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError } = useProfiles(trip?.id);
 
   const [step, setStep] = useState<Step>("loading");
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
   const [activeProfile, setActiveProfile] = useState<Participant | null>(null);
   const [content, setContent] = useState<DiscoverQuestion | null>(null);
   const [selectedOption, setSelectedOption] = useState<AnswerOption | null>(null);
@@ -59,50 +45,41 @@ export default function DiscoverPage() {
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
   useEffect(() => {
+    if (!trip || !profiles || profiles.length === 0) return;
+
     let cancelled = false;
 
     async function load() {
       try {
-        const t = await getTripBySlug(slug);
-        if (cancelled || !t) return;
-        setTrip(t);
-
-        const list = await listProfilesForDevice(t.id);
-        if (cancelled) return;
-        if (list.length === 0) {
-          setStep("not-joined");
-          return;
-        }
-        setProfiles(list);
-
-        const c = await getDiscoverQuestion(t.id, currentTripDay(t), discoverSlot);
+        const c = await getDiscoverQuestion(trip!.id, currentTripDay(trip!), discoverSlot);
         if (cancelled) return;
         if (!c) {
           setStep("unavailable");
           return;
         }
         setContent(c);
-        await trackEvent(t.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
-        setStep("select-profile");
+        await trackEvent(trip!.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
+
+        // Product owner request: use the profile picked top-right (the
+        // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
+        // asking "Cine răspunde?" here -- same resolution it uses (stored
+        // active profile, falling back to this device's first one).
+        const stored = getStoredActiveProfileId(trip!.id);
+        const resolved = profiles!.find((p) => p.id === stored) ?? profiles![0];
+        await selectProfile(resolved, c);
       } catch {
         if (!cancelled) setStep("error");
       }
     }
 
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [slug, discoverSlot]);
-
-  const handleSelectProfile = useCallback(
-    async (profile: Participant) => {
-      if (!trip || !content) return;
+    async function selectProfile(profile: Participant, c: DiscoverQuestion) {
       setActiveProfile(profile);
-      const existing = await getMyResponse(profile.id, content.question.id);
+      const existing = await getMyResponse(profile.id, c.question.id);
+      if (cancelled) return;
       if (existing) {
         setMyResponse(existing);
-        const assignedExtra = await getOrAssignExtra(profile.id, profile.role, content.question.id);
+        const assignedExtra = await getOrAssignExtra(profile.id, profile.role, c.question.id);
+        if (cancelled) return;
         setExtra(assignedExtra);
         setStep("reveal");
         return;
@@ -117,17 +94,13 @@ export default function DiscoverPage() {
       } else {
         setStep("question");
       }
-    },
-    [trip, content, discoverSlot],
-  );
-
-  // Skip the "Cine răspunde?" screen when there's only one profile on
-  // this device (spec section 8, Screen 1).
-  useEffect(() => {
-    if (step === "select-profile" && profiles.length === 1) {
-      handleSelectProfile(profiles[0]);
     }
-  }, [step, profiles, handleSelectProfile]);
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [trip, profiles, discoverSlot]);
 
   async function handleSubmitAnswer() {
     if (!trip || !content || !activeProfile || !selectedOption) return;
@@ -164,8 +137,7 @@ export default function DiscoverPage() {
     router.push(`/trip/${slug}`);
   }
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError || step === "error") {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -175,7 +147,13 @@ export default function DiscoverPage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  if (profiles.length === 0) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>
@@ -185,6 +163,8 @@ export default function DiscoverPage() {
       </Centered>
     );
   }
+
+  if (step === "loading") return <Centered>Se încarcă...</Centered>;
   if (step === "unavailable") {
     return (
       <Centered>
@@ -210,42 +190,7 @@ export default function DiscoverPage() {
     );
   }
 
-  if (step === "select-profile" && profiles.length === 1) {
-    // The effect above auto-advances past this in a single-profile trip;
-    // avoid flashing the picker for a screen no one will see.
-    return <Centered>Se încarcă...</Centered>;
-  }
-
   const SlotIcon = SLOT_ICON[discoverSlot] ?? Sun;
-
-  if (step === "select-profile") {
-    return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
-        <FlowHeader label={SLOT_LABEL[discoverSlot]} icon={<SlotIcon size={15} />} onClose={goHome} />
-        <h1 className="mb-2 text-[26px] font-semibold tracking-tight text-foreground">Cine răspunde?</h1>
-        <p className="mb-8 text-[15px] text-muted-foreground">Alege profilul tău.</p>
-        <div className="flex flex-col gap-2">
-          {profiles.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => handleSelectProfile(p)}
-              className="flex items-center gap-4 rounded-2xl border border-border bg-card px-4 py-4 text-left shadow-[0_1px_4px_rgba(0,0,0,0.04)] transition-all active:scale-[0.99] hover:border-primary/40"
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent">
-                <span className="text-[15px] font-semibold text-primary">{p.display_name[0]}</span>
-              </div>
-              <div>
-                <p className="text-[15px] font-medium text-foreground">{p.display_name}</p>
-                <p className="text-[13px] text-muted-foreground">
-                  {p.role === "adult" ? "Adult" : p.age ? `Copil · ${p.age} ani` : "Copil"}
-                </p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </main>
-    );
-  }
 
   if (!content) return <Centered>Se încarcă...</Centered>;
 

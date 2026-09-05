@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, X, History, ExternalLink } from "lucide-react";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, type Participant } from "@/lib/participant";
+import { currentTripDay, type Trip } from "@/lib/trip";
+import { getStoredActiveProfileId, type Participant } from "@/lib/participant";
 import {
   getCatchUpQuestions,
   submitResponse,
@@ -16,17 +16,10 @@ import {
   type Response,
 } from "@/lib/discover";
 import { Btn, FlowHeader, Centered } from "@/components/ui";
+import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Step = "loading" | "error" | "not-joined" | "select-profile" | "empty" | "question" | "reveal" | "done";
-
-const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
-const EXTRA_TYPE_LABEL: Record<string, string> = {
-  know: "ȘTIAI CĂ",
-  think: "GÂNDEȘTE-TE",
-  connect: "CONEXIUNE",
-  ask: "ÎNTREABĂ",
-  explore: "EXPLOREAZĂ",
-};
+type Step = "loading" | "error" | "empty" | "question" | "reveal" | "done";
 
 // Reachable any time from the Dashboard, unlike the wizard's own catch-up
 // step which only ever runs once, right when a participant is first
@@ -48,9 +41,10 @@ export default function CatchUpPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
 
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError } = useProfiles(trip?.id);
+
   const [step, setStep] = useState<Step>("loading");
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
   const [activeProfile, setActiveProfile] = useState<Participant | null>(null);
   const [questions, setQuestions] = useState<CatchUpQuestion[]>([]);
   const [index, setIndex] = useState(0);
@@ -59,51 +53,41 @@ export default function CatchUpPage() {
   const [extra, setExtra] = useState<Extra | null>(null);
 
   useEffect(() => {
+    if (!trip || !profiles || profiles.length === 0) return;
+
     let cancelled = false;
 
     async function load() {
       try {
-        const t = await getTripBySlug(slug);
-        if (cancelled || !t) return;
-        setTrip(t);
-
-        const list = await listProfilesForDevice(t.id);
-        if (cancelled) return;
-        if (list.length === 0) {
-          setStep("not-joined");
-          return;
-        }
-        setProfiles(list);
-        setStep("select-profile");
+        // Product owner request: use the profile picked top-right (the
+        // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
+        // asking again here -- same resolution it uses (stored active
+        // profile, falling back to the first one).
+        const stored = getStoredActiveProfileId(trip!.id);
+        const resolved = profiles!.find((p) => p.id === stored) ?? profiles![0];
+        await selectProfile(resolved, trip!);
       } catch {
         if (!cancelled) setStep("error");
       }
+    }
+
+    async function selectProfile(profile: Participant, t: Trip) {
+      setActiveProfile(profile);
+      const pending = await getCatchUpQuestions(t.id, currentTripDay(t), profile.id);
+      if (cancelled) return;
+      setQuestions(pending);
+      setIndex(0);
+      setSelected(null);
+      setResponse(null);
+      setExtra(null);
+      setStep(pending.length === 0 ? "empty" : "question");
     }
 
     load();
     return () => {
       cancelled = true;
     };
-  }, [slug]);
-
-  const handleSelectProfile = useCallback(async (profile: Participant, t: Trip) => {
-    setActiveProfile(profile);
-    const pending = await getCatchUpQuestions(t.id, currentTripDay(t), profile.id);
-    setQuestions(pending);
-    setIndex(0);
-    setSelected(null);
-    setResponse(null);
-    setExtra(null);
-    setStep(pending.length === 0 ? "empty" : "question");
-  }, []);
-
-  // Skip the picker when there's only one profile on this device, same as
-  // the Discover/Battle flows.
-  useEffect(() => {
-    if (step === "select-profile" && profiles.length === 1 && trip) {
-      handleSelectProfile(profiles[0], trip);
-    }
-  }, [step, profiles, trip, handleSelectProfile]);
+  }, [trip, profiles]);
 
   async function handleSubmit() {
     if (!activeProfile || !selected) return;
@@ -134,8 +118,7 @@ export default function CatchUpPage() {
     router.push(`/trip/${slug}`);
   }
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError || step === "error") {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -145,7 +128,13 @@ export default function CatchUpPage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  if (profiles.length === 0) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>
@@ -156,35 +145,7 @@ export default function CatchUpPage() {
     );
   }
 
-  if (step === "select-profile") {
-    if (profiles.length === 1) return <Centered>Se încarcă...</Centered>;
-    return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
-        <FlowHeader label="De recuperat" icon={<History size={15} />} onClose={goHome} />
-        <h1 className="mb-2 text-[26px] font-semibold tracking-tight text-foreground">Cine recuperează?</h1>
-        <p className="mb-8 text-[15px] text-muted-foreground">Alege profilul tău.</p>
-        <div className="flex flex-col gap-2">
-          {profiles.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => trip && handleSelectProfile(p, trip)}
-              className="flex items-center gap-4 rounded-2xl border border-border bg-card px-4 py-4 text-left shadow-[0_1px_4px_rgba(0,0,0,0.04)] transition-all active:scale-[0.99] hover:border-primary/40"
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent">
-                <span className="text-[15px] font-semibold text-primary">{p.display_name[0]}</span>
-              </div>
-              <div>
-                <p className="text-[15px] font-medium text-foreground">{p.display_name}</p>
-                <p className="text-[13px] text-muted-foreground">
-                  {p.role === "adult" ? "Adult" : p.age ? `Copil · ${p.age} ani` : "Copil"}
-                </p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </main>
-    );
-  }
+  if (step === "loading") return <Centered>Se încarcă...</Centered>;
 
   if (step === "empty") {
     return (
@@ -211,7 +172,7 @@ export default function CatchUpPage() {
   const current = questions[index];
   if (!current) return <Centered>Se încarcă...</Centered>;
   const progressLabel = `Ziua ${current.question.day_number} · ${
-    SLOT_LABEL[current.question.slot ?? ""] ?? "Battle"
+    SLOT_LABEL[current.question.slot ?? "battle"]
   } · ${index + 1}/${questions.length}`;
 
   if (step === "question") {

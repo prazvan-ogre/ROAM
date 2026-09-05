@@ -3,15 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice } from "@/lib/participant";
-import { getDailyBattle, getBattleWindowStatus, getBattleResult, getTripBattleWinTally } from "@/lib/battle";
+import { currentTripDay } from "@/lib/trip";
+import { getDailyBattle, getFinalBattle, getBattleWindowStatus, getBattleResult, getTripBattleWinTally } from "@/lib/battle";
 import { getParticipantLeaderboard, type LeaderboardEntry } from "@/lib/discover";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
+import { supabase } from "@/lib/supabase/client";
+import { useTrip, useProfiles } from "@/lib/hooks";
 import type { BattleTeam } from "@/lib/supabase/types";
 
-type Step = "loading" | "error" | "not-joined" | "ready";
+type Step = "loading" | "error" | "ready";
 type Tab = "total" | "today";
 
 const EMPTY_SCORE: Record<BattleTeam, number> = { adults: 0, kids: 0 };
@@ -19,9 +20,10 @@ const RANK_MEDAL: Record<number, string> = { 0: "🥇", 1: "🥈", 2: "🥉" };
 
 export default function LeaderboardPage() {
   const { slug } = useParams<{ slug: string }>();
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError } = useProfiles(trip?.id);
 
   const [step, setStep] = useState<Step>("loading");
-  const [trip, setTrip] = useState<Trip | null>(null);
   const [day, setDay] = useState(1);
   const [tab, setTab] = useState<Tab>("total");
   const [dailyScore, setDailyScore] = useState<Record<BattleTeam, number>>(EMPTY_SCORE);
@@ -30,31 +32,26 @@ export default function LeaderboardPage() {
   const [todayRanking, setTodayRanking] = useState<LeaderboardEntry[]>([]);
 
   const load = useCallback(async () => {
+    if (!trip || !profiles || profiles.length === 0) return;
     try {
-      const t = await getTripBySlug(slug);
-      if (!t) return;
-      setTrip(t);
-
-      const list = await listProfilesForDevice(t.id);
-      if (list.length === 0) {
-        setStep("not-joined");
-        return;
-      }
-
-      const d = currentTripDay(t);
+      const d = currentTripDay(trip);
       setDay(d);
+
+      // Final Battle replaces that evening's regular Battle on the
+      // trip's last day (product owner spec), so "Scor zilnic" reflects
+      // its result then instead of a regular battle that's never played.
+      const daily = d >= trip.duration_days ? await getFinalBattle(trip.id) : await getDailyBattle(trip.id, d);
 
       // The evening's result stays hidden for 15 minutes after the
       // first individual answer (product owner spec), so nobody can peek
       // at a partial score here while others are still answering.
-      const daily = await getDailyBattle(t.id, d);
       const dailyVisible = daily ? (await getBattleWindowStatus(daily.battle.id)).visible : false;
 
       const [dailyResult, tripWinTally, total, today] = await Promise.all([
         daily && dailyVisible ? getBattleResult(daily.battle.id) : Promise.resolve(EMPTY_SCORE),
-        getTripBattleWinTally(t.id),
-        getParticipantLeaderboard(t.id),
-        getParticipantLeaderboard(t.id, d),
+        getTripBattleWinTally(trip.id),
+        getParticipantLeaderboard(trip.id),
+        getParticipantLeaderboard(trip.id, d),
       ]);
       setDailyScore(dailyResult);
       setTripScore(tripWinTally);
@@ -67,30 +64,38 @@ export default function LeaderboardPage() {
       console.error("Leaderboard load failed", err);
       setStep("error");
     }
-  }, [slug]);
+  }, [trip, profiles]);
 
   useEffect(() => {
     load();
 
     // The evening's score can flip from hidden to revealed (the 15-minute
     // window in getBattleWindowStatus) while someone is just sitting on
-    // this screen -- without a refresh, "Scor zilnic" would stay frozen at
-    // 0-0 from whenever the page happened to load, even long after the
-    // real result became available. Re-fetch periodically, and immediately
-    // when the tab regains focus (e.g. coming back from another app).
-    const interval = setInterval(load, 30_000);
+    // this screen, and any answer anywhere moves the rankings -- without a
+    // refresh, this page would stay frozen at whatever it looked like when
+    // it happened to load. Re-fetch on every new `responses`/`battle_scores`
+    // row (Realtime, see 20260831090000_realtime_publication.sql) instead
+    // of a fixed poll, plus immediately when the tab regains focus and on
+    // a slow fallback interval in case the socket drops without Postgres
+    // Changes noticing.
+    const channel = supabase
+      .channel(`leaderboard:${slug}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "responses" }, load)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "battle_scores" }, load)
+      .subscribe();
+    const fallback = setInterval(load, 120_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") load();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      clearInterval(interval);
+      supabase.removeChannel(channel);
+      clearInterval(fallback);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [load]);
+  }, [load, slug]);
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError || step === "error") {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -100,7 +105,13 @@ export default function LeaderboardPage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  if (profiles.length === 0) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>
@@ -110,6 +121,8 @@ export default function LeaderboardPage() {
       </Centered>
     );
   }
+
+  if (step === "loading") return <Centered>Se încarcă...</Centered>;
 
   const isTotal = tab === "total";
   const teamScore = isTotal ? tripScore : dailyScore;

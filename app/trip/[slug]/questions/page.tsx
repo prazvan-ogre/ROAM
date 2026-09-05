@@ -4,8 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronDown, Sun, Utensils, Moon, ExternalLink } from "lucide-react";
-import { getTripBySlug, currentTripDay, type Trip } from "@/lib/trip";
-import { listProfilesForDevice, type Participant } from "@/lib/participant";
+import { currentTripDay } from "@/lib/trip";
 import {
   getTripHistory,
   type TripHistory,
@@ -14,48 +13,33 @@ import {
 } from "@/lib/history";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
+import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
+import { supabase } from "@/lib/supabase/client";
+import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Step = "loading" | "error" | "not-joined" | "ready";
+type Step = "loading" | "error" | "ready";
 
-const SLOT_LABEL: Record<string, string> = { morning: "Dimineață", lunch: "Prânz" };
 const SLOT_ICON: Record<string, typeof Sun> = { morning: Sun, lunch: Utensils };
-const EXTRA_TYPE_LABEL: Record<string, string> = {
-  know: "ȘTIAI CĂ",
-  think: "GÂNDEȘTE-TE",
-  connect: "CONEXIUNE",
-  ask: "ÎNTREABĂ",
-  explore: "EXPLOREAZĂ",
-};
 const FINAL_TAB = "final";
 
 export default function QuestionsPage() {
   const { slug } = useParams<{ slug: string }>();
+  const { data: trip, error: tripError } = useTrip(slug);
+  const { data: profiles, error: profilesError } = useProfiles(trip?.id);
 
   const [step, setStep] = useState<Step>("loading");
-  const [trip, setTrip] = useState<Trip | null>(null);
-  const [profiles, setProfiles] = useState<Participant[]>([]);
   const [history, setHistory] = useState<TripHistory | null>(null);
   const [selectedTab, setSelectedTab] = useState<number | typeof FINAL_TAB | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!trip || !profiles || profiles.length === 0) return;
+
     let cancelled = false;
 
     async function load() {
       try {
-        const t = await getTripBySlug(slug);
-        if (cancelled || !t) return;
-        setTrip(t);
-
-        const list = await listProfilesForDevice(t.id);
-        if (cancelled) return;
-        if (list.length === 0) {
-          setStep("not-joined");
-          return;
-        }
-        setProfiles(list);
-
-        const h = await getTripHistory(t.id, currentTripDay(t), list.map((p) => p.id));
+        const h = await getTripHistory(trip!.id, currentTripDay(trip!), profiles!.map((p) => p.id));
         if (cancelled) return;
         setHistory(h);
         setStep("ready");
@@ -68,19 +52,28 @@ export default function QuestionsPage() {
 
     // Same staleness bug as the Scor page (leaderboard/page.tsx): a Battle
     // played, or a question answered, after this page's first fetch never
-    // showed up until a manual reload. Re-fetch periodically, and
-    // immediately when the tab regains focus.
-    const interval = setInterval(load, 30_000);
+    // showed up until a manual reload. Re-fetch on every new
+    // `responses`/`battle_scores` row (Realtime, see
+    // 20260831090000_realtime_publication.sql) instead of a fixed poll,
+    // plus immediately when the tab regains focus and on a slow fallback
+    // interval in case the socket drops without Postgres Changes noticing.
+    const channel = supabase
+      .channel(`questions:${slug}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "responses" }, load)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "battle_scores" }, load)
+      .subscribe();
+    const fallback = setInterval(load, 120_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") load();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      supabase.removeChannel(channel);
+      clearInterval(fallback);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [slug]);
+  }, [trip, profiles, slug]);
 
   const days = useMemo(() => {
     if (!history) return [];
@@ -118,8 +111,7 @@ export default function QuestionsPage() {
     });
   }
 
-  if (step === "loading") return <Centered>Se încarcă...</Centered>;
-  if (step === "error") {
+  if (tripError || profilesError || step === "error") {
     return (
       <Centered>
         <p>Nu am putut încărca datele. Verifică-ți conexiunea.</p>
@@ -129,7 +121,13 @@ export default function QuestionsPage() {
       </Centered>
     );
   }
-  if (step === "not-joined") {
+
+  // !trip covers both "still fetching" and "slug doesn't resolve to a
+  // trip" the same way the pre-SWR version did (it never distinguished
+  // the two, silently staying on the loading screen for a bad slug).
+  if (!trip || !profiles) return <Centered>Se încarcă...</Centered>;
+
+  if (profiles.length === 0) {
     return (
       <Centered>
         <p>Trebuie să te alături călătoriei mai întâi.</p>
@@ -139,6 +137,8 @@ export default function QuestionsPage() {
       </Centered>
     );
   }
+
+  if (step === "loading") return <Centered>Se încarcă...</Centered>;
 
   if (!history || (days.length === 0 && !hasFinal)) {
     return (
@@ -239,7 +239,7 @@ function DiscoverRow({
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {SLOT_LABEL[item.question.slot ?? ""] ?? ""}
+            {(SLOT_LABEL as Record<string, string>)[item.question.slot ?? ""] ?? ""}
           </p>
           <p className="mt-0.5 text-[15px] font-medium leading-snug text-foreground">{item.question.prompt}</p>
         </div>
