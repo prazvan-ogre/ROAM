@@ -41,7 +41,7 @@ Everything else maps 1:1 to the spec's entity list.
 | `extras` | Bonus content tied to one question (`question_id`) -- Discover or Battle alike, product owner request -- typed (`extra_type`: know/think/connect/ask/explore) and scoped by `audience` (all/adult/child). Also carries `sources`/`verified`/`published`. |
 | `explore_links` | External "rabbit hole" links, attached to a question and/or an extra. |
 
-### Activity (participant-generated, anon-writable, mostly anon-readable)
+### Activity (participant-generated, written under the caller's own verified identity, scoped to trip membership — see "Security model" below)
 
 | Table | Purpose |
 |---|---|
@@ -69,141 +69,279 @@ explicit `verified: false`, so it's exactly as hidden pending review.
 
 ## Security model (RLS)
 
-There is **no Supabase Auth** — the app uses only the `anon` key, and the
-`service_role` key never reaches the client (it's a CI/admin-only secret).
-Row Level Security is the actual access boundary:
+**This section describes the model as of batch 2 (2026-09-05
+architecture/security review, R1 continued). It was not kept in sync
+with batch 1 (R1's first pass) at the time — do not trust a "there is no
+Supabase Auth" claim anywhere else in this repo's history; the
+CHANGELOG's own R1 entries are the accurate record of what changed and
+when.**
+
+Every device — participant *and* creator account alike — now has a real,
+provider-verified Supabase Auth session. `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+is still the only key the browser ever holds; `SUPABASE_SERVICE_ROLE_KEY`
+never reaches the client. Row Level Security, scoped by `auth.uid()`
+(not a client-asserted `device_id`/`accountId`/`isAdmin` flag), is the
+actual access boundary.
+
+### Identity model
+
+```
+identitate (Supabase Auth session)
+  │
+  ├─ anonymous session (src/lib/device.ts, signInAnonymously())
+  │    one per device/browser, established before that device's first
+  │    participant is created. No form, no email, no password — this is
+  │    what keeps child/invitee participation registration-free.
+  │    → participants.auth_user_id
+  │         → participants row (one per profile: adult or child)
+  │              → trip membership (participants.trip_id)
+  │                   → responses / battle_scores / extra_assignments /
+  │                     prize_votes / feedback / analytics_events rows,
+  │                     all scoped to "this participant" or "this trip's
+  │                     members"
+  │
+  └─ creator-account session (src/lib/security/session.ts)
+       phone + PIN, verified against a real Supabase Auth user (password
+       = the PIN) — a SEPARATE Supabase Auth identity from the device's
+       own anonymous one above; the two coexist in the same browser
+       because the creator-account session is never handed to the
+       browser's own supabase-js client at all (see that file's header).
+       → creator_accounts.auth_user_id
+            → creator_accounts row (phone_number, is_admin, display_name)
+                 → trips.created_by_account_id (which trips this
+                   account can list/manage via app/api/account/trips)
+                 → participants.account_id (this account's own adult
+                   profile on a given trip, server-linked only — see
+                   "Rights matrix" below)
+```
+
+### Rights matrix
+
+| Data | Owner (creator account) | Participant, same trip | Participant, other trip | Child-profile manager | Admin | Anon / no session |
+|---|---|---|---|---|---|---|
+| Published content (`questions`/`extras`/`answer_options`/`explore_links`) | read | read | read | read | read | read |
+| `trips_public` (name, destination, dates, status — no ownership columns) | read | read | read | read | read | read |
+| `trips` base row (incl. `created_by_*`) | read/update own, via `/api/account/*` only | — | — | — | read/update all, via `/api/account/*` only | — |
+| `creator_accounts` (own row: phone, PIN/password, display name) | read/update own, via `/api/account` only | — | — | — | read/update own, via `/api/account` only | — |
+| `participants` profile fields (`display_name`/`role`/`age`) | edit any participant on trips it owns (Setări > Utilizatori) | edit own or any on the same trip (Setări > Utilizatori is trip-scoped, not account-scoped) | — | edit the children it manages | no special right beyond its own participation | — |
+| `participants` identity fields (`trip_id`/`device_id`/`auth_user_id`/`managed_by_participant_id`/`account_id`) | immutable for every role except `service_role` (column-level `REVOKE`) | immutable | immutable | immutable | immutable | — |
+| `responses` / `battle_scores` | — (not a creator-account concept) | read within trip; write only as self | — | write on behalf of a managed child (same `auth_user_id` as the device) | — | — |
+| `extra_assignments` / `prize_votes` | — | read within trip (needed for load-balancing/tallying); write only as self | — | same as any participant | — | — |
+| `feedback` / `analytics_events` | — | write only as self, within trip; never read back | — | same as any participant | — | — |
+| `battle_team_score()` / `trip_battle_win_tally()` (aggregate RPCs) | — | callable for trips it's a member of | rejected (`42501`) | same as any participant | — | — |
+
+"Same trip" access for a still-**legacy** participant (a row created
+before the relevant migration, `auth_user_id is null`) keeps its old,
+fully-open grandfathered behavior instead of the matrix above — see
+"Legacy data" below; this is a deliberate, visible, temporary gap, not
+what a newly-created row gets.
 
 1. **Public-readable**: content tables, but only rows with
    `verified = true and published = true` (see "Content integrity" above).
    Anyone with the anon key can read every *published* question, extra,
-   and battle — the app has no login, so content has to be fetched
-   without one — but never draft/unreviewed content.
-2. **Anon-writable, and anon-readable where the product needs state to
-   survive a refresh**: `responses` and `extra_assignments` allow
-   `select` (in addition to `insert`) so a device can reload and see its
-   own prior answers/assigned Extra without losing progress (spec section
-   29). `feedback` and `analytics_events` stay insert-only — nothing
-   reads them back (the client tracks "already gave feedback" itself, in
-   `localStorage`, rather than round-tripping a personal survey response).
-3. **Protected**: `SUPABASE_SERVICE_ROLE_KEY` is required to write content
-   or to run migrations. It lives only in Vercel's server-side env vars
-   and GitHub Actions secrets, never in `NEXT_PUBLIC_*` vars.
-4. **`battle_scores` is publicly readable, unlike the other activity
-   tables** — deliberately. Every participant now answers Battle
-   questions individually (product owner spec), each one recorded as
-   both a `responses` row (personal score) and a `battle_scores` row
-   (team score); every device needs to show the running "PĂRINȚI 2 —
-   COPII 1" tally without waiting on a fresh aggregate call. Two
-   `SECURITY DEFINER` functions exist for this: `battle_team_score(battle_id)`
-   (one battle's resolved team score — the average of its members'
-   points, or the original raw sum for a battle played before this
-   feature, see the migration) and `trip_battle_win_tally(trip_id)` (the
-   season-long tally of evenings won). A team's evening result is
-   deliberately excluded from `battle_scores` — and so from both
-   functions — once it's more than 15 minutes past the first individual
-   answer for that battle; a late answer still writes its own
-   `responses` row (personal score) but never joins the team result
-   (`recordBattleAnswer`/`getBattleWindowStatus` in `battle.ts`).
-   Note: because `responses`/`extra_assignments`/`participants` are
-   select-able by anyone (point 2 and point 5), and `participants` is
-   itself public, a device that already knows another participant's id
-   could technically look up their answers or assigned Extra directly via
-   the API — the UI never offers this, and it's the same accepted-risk
-   tradeoff as point 5 below, not a new one.
-5. **`participants` is the one deliberate exception**: it's both publicly
-   readable (needed to show "who's playing" / names on a leaderboard) and
-   publicly *updatable* (`using (true)`). Because there's no auth, RLS
-   cannot verify a device "owns" a given row — `device_id` is a
-   client-asserted string, not a credential. **Accepted risk**: this means
-   any device could, in theory, edit another participant's display name.
-   This is acceptable because the pilot is a private, invite-only trip
-   with a small, trusted group, not a public/adversarial audience. If ROAM
-   grows beyond that trust model, the fix is to add Supabase Auth
-   (anonymous sign-in still avoids a login screen, but gives RLS a real
-   `auth.uid()` to scope `using (device_id = auth.jwt() ->> 'device_id')`).
-6. **Public trip creation is the first real move beyond that trust model**
-   (product owner request: anyone can spin up their own trip from
-   `app/page.tsx`, not just the private Kassandra pilot) — and it does
-   *not* go through a new anon-writable policy on `trips`. The only
-   write path is `app/api/trips/create`, a server route holding the
-   service-role key; the anon key still cannot insert a trip, a question,
-   or anything else content-related directly. That route is itself the
-   attack surface now (reachable by anyone, scripted or not), so it
-   enforces its own limits before doing anything: a hidden honeypot
-   field, at most one new trip per device per 24h
-   (`trips.created_by_device_id`), and a global daily cap across all
-   devices as a circuit breaker (`trips.created_at`-based, both indexed)
-   — keeping a spammer from flooding the manual content-review queue
-   below, not (any longer) bounding a per-call API cost. `trips.
-   content_status` (`pending` → `ready`, `generating`/`failed` reserved
-   for a human to set by hand if useful) tracks whether that trip's
-   Discover/Battle content has actually been drafted and published yet —
-   see "Content integrity" above and `docs/ARCHITECTURE.md` "Public trip
-   creation" for that manual step. The Home page
-   (`app/trip/[slug]/page.tsx`) shows a "still being put together" state
-   instead of an empty dashboard while it isn't `ready`. None of this is
-   real bot/abuse protection (no CAPTCHA) or payment — both are
+   and battle — the app has no login for this, so content has to be
+   fetched without one — but never draft/unreviewed content.
+2. **`participants`/`responses`/`battle_scores`/`extra_assignments`/
+   `prize_votes`/`feedback`/`analytics_events` are scoped to Supabase
+   Auth identity and trip membership**, not `using (true)`. A device
+   signs in anonymously (`supabase.auth.signInAnonymously()`,
+   `src/lib/device.ts`) before creating its first participant;
+   `participants.auth_user_id` records which session created a given
+   row, and `is_trip_member(trip_id)`/`participant_is_self_or_legacy(id)`
+   (`SECURITY DEFINER` helpers) are what every policy on these tables
+   actually checks. Reads that need to see beyond "my own row" (the
+   Extra load-balancer counting assignments across a trip, the prize-vote
+   tally, `battle_team_score()`/`trip_battle_win_tally()`) are scoped to
+   trip membership, never to every row in the table. `feedback`/
+   `analytics_events` stay insert-only — nothing reads them back (the
+   client tracks "already gave feedback" itself, in `localStorage`).
+3. **`participants` identity columns are immutable for anon/authenticated
+   after insert** — `trip_id`, `device_id`, `auth_user_id`,
+   `managed_by_participant_id`, `account_id` can only ever be set once,
+   at INSERT, under the inserting session's own verified identity
+   (`auth_user_id = auth.uid()`, `account_id` must be null,
+   `managed_by_participant_id` must point at a participant the same
+   session already owns) — enforced with Postgres column-level `GRANT`s
+   on `UPDATE`, not just another RLS clause, so a direct anon-key call
+   can't reassign a row to a different trip, a different device, or a
+   different "Călătoriile mele" account no matter what the row's own
+   ownership check says. `display_name`/`role`/`age`/`last_seen_at`
+   remain freely editable by whoever owns (or manages) the row.
+4. **Protected**: `SUPABASE_SERVICE_ROLE_KEY` is required to write content,
+   set `participants.account_id`, or run migrations. It lives only in
+   Vercel's server-side env vars and GitHub Actions secrets, never in
+   `NEXT_PUBLIC_*` vars.
+5. **`battle_team_score(battle_id)`/`trip_battle_win_tally(trip_id)`**
+   are the aggregate read path for the "PĂRINȚI 2 — COPII 1" tally
+   (`SECURITY DEFINER`, since `battle_scores` itself has no
+   whole-table-readable policy). Both now require the caller to actually
+   be a member of that trip (or the trip is still fully legacy) —
+   previously any anon-key caller could pass an arbitrary battle/trip id
+   and read another family's result. The scoring formula itself
+   (sum/average/win-tally) is unchanged; only the authorization wrapped
+   around it is new.
+6. **Public trip creation** (product owner request: anyone can spin up
+   their own trip from `app/page.tsx`) does *not* go through a new
+   anon-writable policy on `trips`. The only write path is
+   `app/api/trips/create`, a server route holding the service-role key.
+   That route enforces its own limits before doing anything: a hidden
+   honeypot field, at most one new trip per device per 24h
+   (`trips.created_by_device_id` — a plain client-asserted string, reset
+   by clearing localStorage), a global daily circuit breaker, **and** an
+   IP-keyed daily cap (`ip_rate_limits`, `src/lib/security/ipRateLimit.ts`)
+   that doesn't reset that way. `trips.content_status` (`pending` →
+   `ready`) tracks whether that trip's Discover/Battle content has
+   actually been drafted and published yet — see "Content integrity"
+   above and `docs/ARCHITECTURE.md` "Public trip creation". None of this
+   is real bot/abuse protection (no CAPTCHA) or payment — both are
    explicitly deferred to a later phase, per the product owner.
-7. **`creator_accounts` (phone number + PIN) exists so a trip's creator
-   can find their history again from a different device** — deliberately
-   not real authentication: no OTP, no session token/cookie. The table
-   itself has zero RLS policies at all (not even public read), so a
-   phone number or `pin_hash` is never reachable via the anon key —
-   the only door in is `app/api/account/route.ts` (service-role key),
-   which hashes/verifies the PIN server-side (`src/lib/security/pin.ts`,
-   `node:crypto` scrypt, no new dependency) and hands back an opaque
-   account id. From then on that id is trusted client-side exactly like
-   `device_id` already is — stored in `localStorage`
-   (`src/lib/creatorAccount.ts`), read back to filter `trips` (already
-   publicly readable) by `created_by_account_id` on `/trips`. Linking a
-   freshly-created trip to an account additionally checks that the
-   request's `device_id` matches that trip's own
-   `created_by_device_id`, so a stranger can't associate someone else's
-   trip (found by guessing/sharing its slug) into their own history by
-   just creating an account — a cheap, not airtight, check appropriate
-   to how little is actually at stake (a spot in a trip list, not
-   content access — every trip is public either way). Same accepted-risk
-   posture as `participants`/`device_id`: fine while nothing sensitive
-   rides on it, real auth (e.g. Supabase Auth's phone/OTP flow) is the
-   upgrade path if that changes.
-8. **`creator_accounts.is_admin` gives one account an unfiltered view of
-   `/trips`** — same login (phone + PIN) and the same client-trusted flag
-   model as point 7, just one boolean further: `app/api/account/route.ts`
-   returns `isAdmin` alongside the account id, `src/lib/creatorAccount.ts`
-   stores it in `localStorage`, and `app/trips/page.tsx` calls
-   `getAllTrips()` instead of filtering by `created_by_account_id` when
-   it's set — so that one account sees every trip (and every pending
-   request) on the platform, not just its own. Still no new access to
-   anything not already public: `trips` was already fully readable by
-   anon, this only changes which rows the *client* chooses to render.
-9. **`creator_accounts.display_name` lets trip creation auto-join the
-   creator as a participant** — right after creating a trip,
-   `app/trips/page.tsx` now asks "Ai deja cont?" before the phone+PIN
-   form: choosing "Nu" additionally requires a name (enforced in
-   `app/api/account/route.ts`, only when creating a brand-new account as
-   part of linking a freshly-created trip — the plain `/trips` login
-   untouched, never requires one); choosing "Da" reuses the name already
-   on file. Either way, once the account call returns a `displayName`,
-   the client calls the existing `getOrCreateAdultParticipant(tripId,
-   displayName)` (`src/lib/participant.ts`) to create that device's
-   adult profile on the new trip immediately — the same call the
-   onboarding wizard makes, just skipped ahead of time so the creator
-   doesn't join with the same name a second time later. Best-effort: a
-   failure here doesn't block getting into "Călătoriile mele", it just
-   means they'll go through the onboarding wizard normally once the
-   trip's content is ready.
+7. **"Călătoriile mele" (`creator_accounts`, phone + PIN) is now backed by
+   a real Supabase Auth user per account** (`src/lib/security/session.ts`)
+   — the PIN doubles as that user's password, verified by
+   `signInWithPassword`/the Supabase Auth admin API, never by this app's
+   own credential check (a pre-batch-2 account is lazily, one-time
+   migrated onto this the next time its correct PIN is presented — see
+   "Legacy data" below). Login issues a real access + refresh token pair,
+   stored as httpOnly cookies (`roam_account_access`/
+   `roam_account_refresh`) and verified server-side
+   (`admin.auth.getUser(token)`) on every later request — not a
+   client-supplied account id, and not a hand-rolled signed cookie. This
+   is a *separate* Supabase Auth session from a device's own anonymous
+   participant session; both coexist in the same browser because the
+   creator-account session never touches the browser's own supabase-js
+   client instance. `creator_accounts` itself keeps zero RLS policies for
+   anon/authenticated (reachable only via the service-role key, from
+   `app/api/account/*`, after that session check) — same as before.
+8. **`creator_accounts.is_admin` is derived and checked entirely
+   server-side** — `app/api/account/trips/route.ts` looks it up itself
+   from the verified session; there is no client-set "is admin" flag
+   anywhere, in `localStorage` or otherwise. Still no new access to
+   anything not already public: `trips_public` was already fully
+   readable by anon; this only changes which rows an *admin's own,
+   verified* request can list unfiltered.
+9. **`participants.account_id` (which "Călătoriile mele" account a
+   participant belongs to) is set only by the server**, after verifying
+   *both* the creator account's own session and the calling device's own
+   anonymous session (its Supabase Auth access token, sent as an
+   `Authorization: Bearer` header — see
+   `src/lib/security/participantLink.ts`, called from
+   `app/api/account/route.ts` and `app/api/account/link-trip/route.ts`).
+   Previously the browser's own anon-key client set this directly from a
+   value in a JSON response body — nothing stopped a direct Supabase call
+   from claiming membership in an arbitrary account. It's now also
+   column-locked at the database layer (see point 3).
 10. **Editing the linked adult's profile in Setări > Utilizatori can also
-    edit that device's account** (phone number and/or PIN) — new `GET`/
-    `PATCH` handlers on `app/api/account/route.ts`, same client-trusted
-    accountId model as everywhere else here (no current-PIN re-entry
-    required). `GET` never returns `pin_hash` — it's a one-way scrypt
-    hash (`src/lib/security/pin.ts`), so the PIN field in that form is
-    always a blank "set a new one" input, never a display of the current
-    value, no matter how it's toggled visible. Only shown when editing
-    the participant whose `role` is `adult` and this device has an
-    account at all (`getStoredAccountId()`); a phone number collision
-    with another account surfaces the same unique-constraint error as
-    account creation does.
+    edit that device's account** (phone number and/or PIN) — `GET`/
+    `PATCH` on `app/api/account/route.ts`, gated by the same verified
+    session as everywhere else here (no current-PIN re-entry required).
+    A phone-number change and a PIN change both go through the Supabase
+    Auth admin API now (`updateUserById`) — it owns password hashing and
+    phone uniqueness, not this app; `GET` never returns a PIN or password
+    at all.
+
+### Admin bootstrap and credential rotation
+
+`creator_accounts.is_admin` was seeded by two already-applied migrations
+(`20260830100000_admin_account.sql`, `20260830110000_replace_admin_account.sql`)
+with a **fixed, hardcoded phone number and PIN, both committed to this
+repository's git history and to this file**. That is a real, currently
+live credential leak for whichever account still holds `is_admin = true`
+— anyone with read access to this repo (or its history) can attempt that
+exact phone+PIN pair, and now, after this batch, use it to obtain a real
+Supabase Auth session for that account, not just the old client-trusted
+flag. **Rotating it is an operational step this batch documents but does
+not execute** (no live database access from this environment; see the PR
+description):
+
+1. Confirm which account currently holds `is_admin = true` (the intent
+   was phone `0721234567`, per the migration above — verify against the
+   live `creator_accounts` table, since a promote/demote pair like this
+   can silently diverge from what's actually seeded if it's ever re-run
+   against a different environment).
+2. Set a new, unique PIN for that account **through the app's own login +
+   PATCH flow** (or, if that account is not usable, directly via the
+   Supabase Auth admin API — `admin.auth.admin.updateUserById(authUserId,
+   { password: newPin })` — followed by clearing `creator_accounts.
+   pin_hash` if still set) — never by editing `pin_hash` by hand; it's no
+   longer consulted once `auth_user_id` is set.
+3. Going forward, **do not add another migration that seeds a fixed
+   admin phone/PIN** — this is exactly the pattern being retired. Promote
+   a new admin by running a one-off, operator-executed `update
+   creator_accounts set is_admin = true where phone_number = '<real,
+   privately-known number>'` against the live project (Supabase SQL
+   editor or `psql`), never a migration file committed to this repo. A
+   migration is source code — permanently public to anyone with repo
+   access — and is the wrong place for a credential or for naming which
+   real person holds elevated access.
+
+### Legacy data (pre-R1 participants, pre-batch-2 accounts)
+
+Two categories of already-existing data predate the identity model this
+batch describes, and neither is silently reclaimed or deleted:
+
+- **Legacy participants** (`auth_user_id is null`, created before
+  20260906090000_auth_ownership.sql): kept exactly as open (readable/
+  writable by anyone) as they were before that migration — see that
+  file's own header for the full grandfathering rationale, unchanged by
+  this batch. **The only safe way to re-establish a specific legacy
+  row's ownership is a server-verified credential the row's real owner
+  already holds** — concretely, a trip's own creator logging into
+  "Călătoriile mele" re-links their own adult participant row via
+  `participants.account_id`/the participant-link flow (point 9 above),
+  because that login is independently verified server-side (a real
+  phone+PIN check, now backed by Supabase Auth). **There is deliberately
+  no self-service "claim my old profile" for anyone else** (an invited
+  family member, a child) — participants.id is exposed to other members
+  of the same trip via ordinary API responses (needed to render a
+  leaderboard/history), so accepting a bare participant id as proof of
+  ownership would let one family member impersonate another. Since
+  participation is meant to stay registration-free for exactly that
+  group, there is no credential available to check instead. **This is
+  the product decision still open**: either accept that a legacy,
+  non-creator participant's row stays permanently open (until the trip
+  itself ends), or introduce some new, lightweight verification for that
+  case specifically (a per-device continuation token issued at first
+  join and never exposed to other participants, say) — out of scope for
+  this batch to decide unilaterally.
+- **Legacy creator accounts** (`pin_hash` set, `auth_user_id` still null,
+  created before this batch): lazily migrated onto a real Supabase Auth
+  user the next time the correct PIN is presented at login
+  (`app/api/account/route.ts`) — this is safe because it's gated by the
+  same credential check (the PIN) the account already relied on, not by
+  a bare id. No bulk backfill runs across existing rows; an account that
+  never logs in again simply never migrates (harmless — it already
+  wasn't reachable without its PIN).
+
+### Rollout order and rollback
+
+1. Apply this batch's migrations (`supabase db push`) — additive only,
+   safe on a database with existing pilot data (no row is deleted, no
+   existing `participants`/`creator_accounts` row is force-migrated).
+2. **Before deploying the application code**, update the hosted Supabase
+   project's Auth settings (dashboard or Management API, not a
+   migration): enable the phone provider, and lower
+   `minimum_password_length` to 4 (to match the existing 4-6 digit PIN
+   policy) — every `signInWithPassword`/`admin.auth.admin.createUser`
+   call in `app/api/account/route.ts` fails until this is done. This
+   cannot be applied from this environment.
+3. Deploy the application code. The very first login against each
+   pre-existing creator account lazily migrates it (see "Legacy data"
+   above) — no separate migration step needed for that.
+4. Rotate the seeded admin account's PIN (see "Admin bootstrap" above)
+   promptly after step 3 — every hour it stays on the known, committed
+   PIN is a live credential exposure window on production.
+5. **Rollback**: the migrations themselves are safe to leave applied
+   even if the application code is rolled back to a pre-batch-2 version
+   (the old code never reads `creator_accounts.auth_user_id`/
+   `ip_rate_limits`, and the tightened RLS on
+   `extra_assignments`/`prize_votes`/`feedback`/`analytics_events`/
+   `participants` only removes access the old client-trusted model never
+   needed in the first place — it does not remove any column or
+   endpoint). Rolling back the *application* code alone, without a
+   corresponding DB rollback, would however leave creator-account login
+   broken (old code expects the removed `ACCOUNT_SESSION_SECRET`-signed
+   cookie flow) — a same-version rollback of both together is the safe
+   unit, not either alone.
 
 ## Migrations
 
@@ -224,6 +362,12 @@ Row Level Security is the actual access boundary:
 - `supabase/migrations/20260830100000_admin_account.sql` — `creator_accounts.is_admin` (default `false`) and a seeded admin row (phone `0721345678`, PIN `1234`) with it set `true`, so that account sees every trip/request on `/trips` instead of only its own (see "Security model" point 8 above).
 - `supabase/migrations/20260830110000_replace_admin_account.sql` — correction: the previous migration seeded the wrong admin phone number. Demotes `0721345678` back to `is_admin = false` and promotes `0721234567` (PIN `1234`) instead — exactly one admin account, same mechanism as above.
 - `supabase/migrations/20260830120000_creator_account_display_name.sql` — `creator_accounts.display_name` (nullable), so a trip's creator can be auto-joined to it as a participant right when they set up or log into their account (see "Security model" point 9 above).
+- `supabase/migrations/20260906090000_auth_ownership.sql` through `20260906120000_atomic_record_battle_answer.sql` — R1 (2026-09-05 review) batch 1: `participants.auth_user_id`, real ownership RLS on `participants`/`responses`/`battle_scores`, the `trips_public` view, `account_login_attempts`, and `record_battle_answer()`. See the CHANGELOG's own R1 entries for the full account.
+- `supabase/migrations/20260907090000_batch2_trip_activity_rls.sql` — R1 continued (batch 2): tightens `extra_assignments`/`prize_votes`/`feedback`/`analytics_events` RLS from `using (true)` to trip-membership/self-ownership, the four tables R1's first pass explicitly deferred. New `can_access_trip()` helper.
+- `supabase/migrations/20260907091000_batch2_participant_lockdown.sql` — column-level `REVOKE`/`GRANT` on `participants` so `trip_id`/`device_id`/`auth_user_id`/`managed_by_participant_id`/`account_id` are immutable for anon/authenticated after insert; `account_id` must be null and `managed_by_participant_id` must point at the caller's own row at INSERT time.
+- `supabase/migrations/20260907092000_batch2_battle_aggregate_authz.sql` — adds a trip-membership authorization check to `battle_team_score()`/`trip_battle_win_tally()` (previously callable with any battle/trip id by anyone); the scoring formula itself is unchanged.
+- `supabase/migrations/20260907093000_batch2_creator_account_auth.sql` — `creator_accounts.auth_user_id` (nullable, `pin_hash` now nullable too) — see "Security model" point 7 above and `src/lib/security/session.ts`.
+- `supabase/migrations/20260907094000_batch2_ip_rate_limits.sql` — `ip_rate_limits` (service-role only), backing an IP-keyed rate limit on new-trip and new-account creation alongside the existing per-device/per-phone checks.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

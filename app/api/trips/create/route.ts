@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { slugify } from "@/lib/slug";
+import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit";
 
 // Needs the Node runtime for the service-role Supabase client -- not
 // edge-compatible.
@@ -16,6 +17,15 @@ const MAX_TRIPS_PER_DEVICE_PER_DAY = 1;
 // between requests).
 const MAX_TRIPS_GLOBAL_PER_DAY = 20;
 const MAX_DESTINATION_LENGTH = 80;
+// Batch 2 (2026-09-05 review, R1 continued): device_id is a plain
+// client-asserted string (src/lib/device.ts) -- clearing localStorage
+// resets the per-device limit above for free. This IP-keyed limit
+// (src/lib/security/ipRateLimit.ts) doesn't reset that way; looser than
+// the per-device cap (a shared home/office IP can host more than one
+// real family creating a trip) but still bounds a scripted attacker
+// cycling device ids from one machine.
+const MAX_TRIPS_PER_IP_PER_DAY = 3;
+const IP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export async function POST(request: Request) {
   try {
@@ -98,6 +108,20 @@ async function handleCreate(request: Request): Promise<Response> {
       { error: "Am atins limita zilnică de călătorii noi. Încearcă din nou mâine." },
       { status: 503 },
     );
+  }
+
+  const clientIp = getClientIp(request);
+  if (clientIp) {
+    const ipStatus = await checkAndRecordIpAttempt(admin, clientIp, "trip_create", {
+      maxAttempts: MAX_TRIPS_PER_IP_PER_DAY,
+      windowMs: IP_WINDOW_MS,
+    });
+    if (!ipStatus.allowed) {
+      return NextResponse.json(
+        { error: "Poți crea o singură călătorie nouă pe zi de pe acest dispozitiv. Încearcă din nou mâine." },
+        { status: 429, headers: { "Retry-After": String(ipStatus.retryAfterSeconds ?? 86400) } },
+      );
+    }
   }
 
   const destinationName = destination.trim();
