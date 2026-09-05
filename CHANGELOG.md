@@ -927,6 +927,32 @@
     forged/unrecognized identifiers, and direct Supabase-role access
     (not just through Next route code) -- see the PR description for
     the full verification report, remaining limits, and rollout steps.
+- Fixed: two production regressions surfaced immediately after R1
+  deployed, both blocking every brand-new participant join:
+  - `src/lib/device.ts`'s `ensureAuthSession()` now explicitly re-asserts
+    the freshly-created anonymous session via `supabase.auth.
+    setSession()` before returning. This turned out not to be the actual
+    cause (see below), but is a real, harmless hardening against the
+    class of client/session-sync timing issue it targets, so it stays.
+  - The actual cause: the `participants` SELECT policy
+    (20260906090000_auth_ownership.sql) allowed a read via a legacy row
+    or `is_trip_member(trip_id)` (an existing sibling row on the same
+    trip), but never let a session read back its own row directly. A
+    brand-new session's first-ever participant insert
+    (`.insert(...).select().single()`, i.e. `INSERT ... RETURNING`) has
+    no sibling row yet, so the RETURNING read-back failed RLS --
+    reported identically to an INSERT rejection ("new row violates row
+    level security policy for table participants"), even though the
+    INSERT's own check (`auth_user_id = auth.uid()`) was satisfied (confirmed
+    by reproducing it directly in SQL). `20260906100000_
+    participants_self_read_fix.sql` adds a direct `auth_user_id = auth.uid()`
+    disjunct to that policy -- deliberately a plain column comparison,
+    not a subquery-based helper function, since a first attempt using
+    `participant_is_self_or_legacy(id)` (a SECURITY DEFINER subquery)
+    failed the same way: that subquery doesn't reliably see the row the
+    same command is still in the middle of inserting. New regression
+    test: `supabase/tests/r1_participant_first_insert_returning.test.sql`
+    (`npm run test:sql:r1-first-insert`).
 
 ### Known limitations
 - Participation is still registration-free and device-based (see
