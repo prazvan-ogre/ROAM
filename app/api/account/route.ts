@@ -281,13 +281,29 @@ async function handleAccount(request: Request): Promise<Response> {
       password: pin,
       phone_confirm: true,
     });
-    if (createError || !created.user) throw createError ?? new Error("Lazy account migration returned no user.");
-
-    const { error: migrateError } = await admin
-      .from("creator_accounts")
-      .update({ auth_user_id: created.user.id, pin_hash: null })
-      .eq("id", existing.id);
-    if (migrateError) throw migrateError;
+    if (createError || !created.user) {
+      // R1 (2026-09-05 review, closure batch): two simultaneous logins
+      // for this same not-yet-migrated legacy phone both read
+      // auth_user_id as still null and both pass the PIN check above
+      // before either's own migration commits -- Supabase Auth enforces
+      // phone uniqueness across auth.users, so the SECOND createUser call
+      // in that exact race fails with a "phone already registered" error,
+      // not a real failure: the OTHER concurrent request's migration
+      // already succeeded (or is about to). Fall through to the normal
+      // sign-in below -- against whichever auth user actually won,
+      // authenticated with the same correct PIN both requests already
+      // verified -- instead of failing this otherwise-legitimate login
+      // with a bare 500.
+      if (!createError?.message?.toLowerCase().includes("phone")) {
+        throw createError ?? new Error("Lazy account migration returned no user.");
+      }
+    } else {
+      const { error: migrateError } = await admin
+        .from("creator_accounts")
+        .update({ auth_user_id: created.user.id, pin_hash: null })
+        .eq("id", existing.id);
+      if (migrateError) throw migrateError;
+    }
 
     accountId = existing.id;
     isAdmin = existing.is_admin;
