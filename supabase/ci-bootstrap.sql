@@ -16,19 +16,26 @@
 -- WHAT THIS IS NOT: this is the minimum needed for `psql -f` to apply
 -- every migration in supabase/migrations/ without erroring, so that
 -- supabase/tests/*.test.sql can run against a fully-migrated schema and
--- exercise the real functions/policies. It is NOT a Supabase Auth
--- emulation -- auth.uid() below is a bare stub that only ever returns
--- NULL (nothing in this repo's CI sets `request.jwt.claim.sub`), so any
--- RLS policy that depends on a specific authenticated identity (e.g.
--- "a session can only create participants for itself", see
--- 20260906100000_participants_self_read_fix.sql and
--- 20260906090000_auth_ownership.sql) cannot be meaningfully exercised
--- through this bootstrap alone -- it only proves those migrations *apply*
--- cleanly, not that the RLS policies they create behave correctly under a
--- real authenticated session. Verifying that needs either a real
--- Supabase local dev stack (`supabase start`) or a test harness that can
--- set `request.jwt.claim.sub` per statement (e.g. `set local
--- request.jwt.claim.sub = '...'`) -- out of scope for this batch.
+-- exercise the real functions/policies. It is NOT a full Supabase Auth
+-- emulation -- there is no phone/OTP provider, no JWT issuance, nothing
+-- that mints a real session. auth.uid() below is a stub reading whatever
+-- the *test file itself* puts in the `request.jwt.claim.sub` session
+-- variable (`select set_config('request.jwt.claim.sub', '<uuid>', ...)`,
+-- see r1_auth_ownership_rls.test.sql and every batch2_*.test.sql for the
+-- pattern) -- a test that never sets it (or runs as anon) correctly sees
+-- auth.uid() as NULL, exactly like an unauthenticated request would.
+--
+-- Base table privileges: a real Supabase project GRANTs SELECT/INSERT/
+-- UPDATE/DELETE on every table to anon/authenticated at creation time
+-- (RLS is what actually restricts access despite that broad grant, not
+-- the grant itself) -- this bootstrap has to replicate that with `ALTER
+-- DEFAULT PRIVILEGES`, run before any migration creates a table, so
+-- every table created afterward picks it up automatically. Without this,
+-- `set role anon`/`set role authenticated` inside a test fails outright
+-- with "permission denied for table ..." before ever reaching an RLS
+-- check -- confirmed the hard way: test:sql:r1 and the batch2_*.test.sql
+-- files were wired into CI without this, and every one of them failed on
+-- their very first `set role`/`select`, not on any real RLS assertion.
 
 do $$
 begin
@@ -40,6 +47,10 @@ begin
   end if;
 end
 $$;
+
+grant usage on schema public to anon, authenticated;
+alter default privileges in schema public grant select, insert, update, delete on tables to anon, authenticated;
+alter default privileges in schema public grant execute on functions to anon, authenticated;
 
 -- Every real Supabase project creates this publication by default;
 -- 20260831090000_realtime_publication.sql only ever ALTERs it.
