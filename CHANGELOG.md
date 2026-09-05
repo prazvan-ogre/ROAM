@@ -1051,6 +1051,42 @@
   `tests/unit/trips-page-link-on-existing-login.test.tsx` (previously a
   reproduction of the bug) now asserts the corrected behavior, plus a
   second case for the best-effort failure path.
+- Fixed: neither answer-submission path re-derived correctness
+  server-side -- a score-integrity gap explicitly carved out of the
+  2026-09-05 review's batch 2 (scoped to identity/ownership/RLS, not
+  "tranzacțiile de răspuns/scor") and found while completing that batch.
+  Discover's `submitResponse` (`src/lib/discover.ts`) inserted straight
+  into `responses` with `is_correct: selectedOption.is_correct` computed
+  client-side and sent as-is; the table's RLS INSERT policy only checked
+  `participant_is_self_or_legacy(participant_id)` (ownership), never
+  correctness. `record_battle_answer()`
+  (`20260906120000_atomic_record_battle_answer.sql`) had the same shape
+  one level deeper: `p_is_correct`/`p_score` were plain caller-supplied
+  parameters to a `SECURITY DEFINER` function, never checked against the
+  real `answer_options` row. Either gap let a caller talking to the
+  Supabase REST endpoint directly with the anon key claim any answer was
+  correct, inflating the individual "Clasamentul familiei" leaderboard
+  and, via catch-up answers, the season-long "PĂRINȚI vs COPII" battle
+  tally. Fixed by
+  `20260906130000_server_side_answer_correctness.sql`: a new
+  `submit_response()` `SECURITY DEFINER` RPC (mirroring
+  `record_battle_answer()`'s own ownership-recheck pattern) looks up the
+  question's actual correct `answer_options` row and computes
+  `is_correct` itself -- `submitResponse` now calls it instead of
+  inserting directly. `record_battle_answer()` is replaced with a
+  5-parameter version (the `p_is_correct`/`p_score` overload is dropped)
+  that re-derives both the same way, applying the *same* unchanged
+  scoring formula (10 points, 5 for a Final Battle question, 0 for
+  wrong) server-side instead of trusting it from the caller. Since
+  neither table is written directly by app code any more, the
+  direct-insert RLS policies and table privileges on `responses` and
+  `battle_scores` are revoked too, closing the same gap against a caller
+  that skips the RPC and hits PostgREST's table endpoint directly. New
+  `supabase/tests/submit_response_server_side_correctness.test.sql`
+  (`npm run test:sql:submit-response`) and a new case in
+  `supabase/tests/record_battle_answer_atomicity.test.sql` prove an
+  actually-wrong answer is stored as incorrect with score 0 -- there is
+  no longer a parameter through which a caller can claim otherwise.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see

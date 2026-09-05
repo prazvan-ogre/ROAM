@@ -69,21 +69,21 @@ export async function getMyResponse(
   return data;
 }
 
+// is_correct is never trusted from the client -- submit_response()
+// (20260906130000_server_side_answer_correctness.sql) looks up the
+// question's actual correct answer_options row itself and computes it
+// server-side, so a caller hitting the Supabase REST endpoint directly
+// with the anon key can't forge a wrong answer as correct.
 export async function submitResponse(
   participantId: string,
   questionId: string,
   selectedOption: AnswerOption,
 ): Promise<Response> {
-  const { data, error } = await supabase
-    .from("responses")
-    .insert({
-      participant_id: participantId,
-      question_id: questionId,
-      selected_option_id: selectedOption.id,
-      is_correct: selectedOption.is_correct,
-    })
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc("submit_response", {
+    p_participant_id: participantId,
+    p_question_id: questionId,
+    p_selected_option_id: selectedOption.id,
+  });
 
   if (error) throw error;
   return data;

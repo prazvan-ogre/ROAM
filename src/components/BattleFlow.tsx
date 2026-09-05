@@ -117,14 +117,7 @@ export function BattleFlow({
     try {
       const team: BattleTeam = activeProfile.role === "adult" ? "adults" : "kids";
       const [response, assignedExtra] = await Promise.all([
-        recordBattleAnswer(
-          activeProfile.id,
-          team,
-          content.battle.id,
-          current.question,
-          selectedOption,
-          isFinal,
-        ),
+        recordBattleAnswer(activeProfile.id, team, content.battle.id, current.question, selectedOption),
         getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id),
       ]);
       setMyResponse(response);

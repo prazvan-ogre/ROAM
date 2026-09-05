@@ -11,7 +11,15 @@
 --   3. atomicity itself: forcing the *second* insert (battle_scores) to
 --      fail (via a bogus battle_id, an FK violation) leaves *no*
 --      orphaned responses row -- the exact divergence hypothesis B was
---      about, now impossible.
+--      about, now impossible;
+--   4. server-side correctness (20260906130000_server_side_answer_correctness.sql,
+--      the score-integrity gap deliberately excluded from the 2026-09-05
+--      review's batch 2): record_battle_answer() no longer takes
+--      p_is_correct/p_score as inputs at all, so there is no longer a
+--      parameter through which a caller can claim a wrong answer is
+--      correct -- selecting the actually-wrong option stores
+--      is_correct = false and a battle_scores row with score = 0,
+--      regardless of anything the caller might have tried to assert.
 --
 -- Run against a scratch/dev database with all migrations applied (never
 -- against real trip data) -- wrapped in a transaction that is rolled
@@ -42,11 +50,14 @@ insert into battles (id, trip_id, title) values
 
 insert into questions (id, trip_id, kind, battle_id, day_number, slot, order_index, prompt, question_type, points, verified, published) values
   ('00000000-0000-0000-0000-000000000531', '00000000-0000-0000-0000-000000000501', 'battle', '00000000-0000-0000-0000-000000000521', 1, null, 1, 'Q1?', 'single_choice', 10, true, true),
-  ('00000000-0000-0000-0000-000000000532', '00000000-0000-0000-0000-000000000501', 'battle', '00000000-0000-0000-0000-000000000521', 1, null, 2, 'Q2?', 'single_choice', 10, true, true);
+  ('00000000-0000-0000-0000-000000000532', '00000000-0000-0000-0000-000000000501', 'battle', '00000000-0000-0000-0000-000000000521', 1, null, 2, 'Q2?', 'single_choice', 10, true, true),
+  ('00000000-0000-0000-0000-000000000533', '00000000-0000-0000-0000-000000000501', 'battle', '00000000-0000-0000-0000-000000000521', 1, null, 3, 'Q3?', 'single_choice', 10, true, true);
 
 insert into answer_options (id, question_id, order_index, label, is_correct) values
   ('00000000-0000-0000-0000-000000000541', '00000000-0000-0000-0000-000000000531', 1, 'A', true),
-  ('00000000-0000-0000-0000-000000000542', '00000000-0000-0000-0000-000000000532', 1, 'A', true);
+  ('00000000-0000-0000-0000-000000000542', '00000000-0000-0000-0000-000000000532', 1, 'A', true),
+  ('00000000-0000-0000-0000-000000000543', '00000000-0000-0000-0000-000000000533', 1, 'Correct', true),
+  ('00000000-0000-0000-0000-000000000544', '00000000-0000-0000-0000-000000000533', 2, 'Wrong', false);
 
 -- ========================================================================
 -- Test 1: success path -- as the actual owning session.
@@ -63,10 +74,8 @@ begin
     '00000000-0000-0000-0000-000000000511'::uuid,
     '00000000-0000-0000-0000-000000000531'::uuid,
     '00000000-0000-0000-0000-000000000541'::uuid,
-    true,
     '00000000-0000-0000-0000-000000000521'::uuid,
-    'adults',
-    10
+    'adults'
   );
 
   select count(*) into v_responses_count from responses where participant_id = '00000000-0000-0000-0000-000000000511';
@@ -93,10 +102,8 @@ begin
     '00000000-0000-0000-0000-000000000511'::uuid,
     '00000000-0000-0000-0000-000000000531'::uuid,
     '00000000-0000-0000-0000-000000000541'::uuid,
-    true,
     '00000000-0000-0000-0000-000000000521'::uuid,
-    'adults',
-    10
+    'adults'
   );
   raise exception 'FAILED (ownership): should have been rejected, was not';
 exception
@@ -122,10 +129,8 @@ begin
       '00000000-0000-0000-0000-000000000511'::uuid,
       '00000000-0000-0000-0000-000000000532'::uuid,
       '00000000-0000-0000-0000-000000000542'::uuid,
-      true,
       '00000000-0000-0000-0000-000000000999'::uuid, -- nonexistent battle_id
-      'adults',
-      10
+      'adults'
     );
     raise exception 'FAILED (atomicity): expected a foreign key violation, call succeeded instead';
   exception
@@ -143,6 +148,44 @@ begin
   end if;
 
   raise notice 'PASS: a failed battle_scores insert leaves no orphaned responses row (atomic rollback)';
+end $$;
+
+-- ========================================================================
+-- Test 4: server-side correctness -- there is no p_is_correct/p_score
+-- parameter any more (20260906130000_server_side_answer_correctness.sql),
+-- so the only way to test a "forged correct answer" is to actually
+-- submit the wrong option and confirm the function still stores the
+-- truth: is_correct = false on the responses row, score = 0 on the
+-- battle_scores row.
+-- ========================================================================
+do $$
+declare
+  v_resp responses;
+  v_score int;
+begin
+  select * into v_resp from record_battle_answer(
+    '00000000-0000-0000-0000-000000000511'::uuid,
+    '00000000-0000-0000-0000-000000000533'::uuid,
+    '00000000-0000-0000-0000-000000000544'::uuid, -- the wrong option
+    '00000000-0000-0000-0000-000000000521'::uuid,
+    'adults'
+  );
+
+  select score into v_score
+  from battle_scores
+  where participant_id = '00000000-0000-0000-0000-000000000511'
+    and battle_id = '00000000-0000-0000-0000-000000000521'
+    and score = 0;
+
+  if v_resp.is_correct is distinct from false then
+    raise exception 'FAILED (server-side correctness): expected is_correct = false for the wrong option, got %', v_resp.is_correct;
+  end if;
+
+  if v_score is distinct from 0 then
+    raise exception 'FAILED (server-side correctness): expected a battle_scores row with score = 0 for the wrong answer, found none';
+  end if;
+
+  raise notice 'PASS: an actually-wrong answer is stored as incorrect with score 0 -- there is no parameter left to forge a correct one through';
 end $$;
 
 rollback;

@@ -9,6 +9,15 @@
 // call writes to *neither* table, matching the real function's
 // atomicity (an exception raised inside a plpgsql function rolls back
 // every write that function made).
+//
+// record_battle_answer() no longer takes p_is_correct/p_score as inputs
+// (20260906130000_server_side_answer_correctness.sql moved correctness
+// server-side) -- this fake doesn't re-derive them from real
+// answer_options data either (that logic is only exercised by the
+// Postgres regression tests, supabase/tests/record_battle_answer_atomicity.test.sql),
+// it just fabricates a fixed is_correct/score per call so the atomicity
+// tests here (which only assert row counts and participant_id) still
+// have something to store.
 
 export interface FakeDb {
   responses: Array<{ id: string; participant_id: string; question_id: string; is_correct: boolean | null }>;
@@ -37,7 +46,7 @@ export function createFakeSupabaseClient(db: FakeDb, opts: { failRpc?: boolean }
         id: nextId(),
         participant_id: args.p_participant_id as string,
         question_id: args.p_question_id as string,
-        is_correct: args.p_is_correct as boolean | null,
+        is_correct: true,
       };
       db.responses.push(response);
       db.battle_scores.push({
@@ -45,7 +54,7 @@ export function createFakeSupabaseClient(db: FakeDb, opts: { failRpc?: boolean }
         battle_id: args.p_battle_id as string,
         participant_id: args.p_participant_id as string,
         team: args.p_team as string,
-        score: args.p_score as number,
+        score: 10,
         created_at: new Date().toISOString(),
       });
       return { data: response, error: null };

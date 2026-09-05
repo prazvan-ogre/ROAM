@@ -56,7 +56,7 @@ describe("R3: personal/team score atomicity (fixed)", () => {
     const { recordBattleAnswer } = await import("@/lib/battle");
 
     await expect(
-      recordBattleAnswer("p1", "adults", "b1", question, correctOption, false),
+      recordBattleAnswer("p1", "adults", "b1", question, correctOption),
     ).rejects.toThrow("simulated network failure");
 
     // Fixed: no partial write survives a failed call -- both tables stay
@@ -70,7 +70,7 @@ describe("R3: personal/team score atomicity (fixed)", () => {
     failRpc = false;
     const { recordBattleAnswer } = await import("@/lib/battle");
 
-    await recordBattleAnswer("p1", "adults", "b1", question, correctOption, false);
+    await recordBattleAnswer("p1", "adults", "b1", question, correctOption);
 
     expect(db.responses).toHaveLength(1);
     expect(db.responses[0].participant_id).toBe("p1");

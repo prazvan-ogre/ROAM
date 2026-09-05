@@ -88,8 +88,8 @@ export async function getFinalBattle(tripId: string): Promise<BattleContent | nu
 // Product owner spec: every participant answers Battle questions
 // individually now, not one submission per team via a shared
 // "controller" device. Correct answers are worth 10 points (Final
-// Battle: 5 points), same values as before.
-const BATTLE_POINTS = { normal: 10, final: 5 } as const;
+// Battle: 5 points), same values as before -- now applied server-side by
+// record_battle_answer() itself (20260906130000_server_side_answer_correctness.sql).
 
 // A team's evening result stays open for 15 minutes after the first
 // individual answer, so everyone gets a chance to answer before anyone
@@ -151,23 +151,25 @@ export async function getBattleWindowStatus(battleId: string): Promise<BattleWin
 // calls used to leave the personal response committed with no team
 // credit if the second write failed (hypothesis B, 2026-09-05 review;
 // tests/unit/battle-score-divergence.test.ts).
+//
+// Neither correctness nor score is computed here or trusted from this
+// call's arguments -- record_battle_answer() looks up the question's
+// actual correct answer_options row itself and derives both server-side
+// (20260906130000_server_side_answer_correctness.sql), the same fix
+// applied to Discover's submitResponse.
 export async function recordBattleAnswer(
   participantId: string,
   team: BattleTeam,
   battleId: string,
   question: Question,
   selectedOption: AnswerOption,
-  isFinal: boolean,
 ): Promise<Response> {
-  const score = selectedOption.is_correct ? (isFinal ? BATTLE_POINTS.final : BATTLE_POINTS.normal) : 0;
   const { data, error } = await supabase.rpc("record_battle_answer", {
     p_participant_id: participantId,
     p_question_id: question.id,
     p_selected_option_id: selectedOption.id,
-    p_is_correct: selectedOption.is_correct,
     p_battle_id: battleId,
     p_team: team,
-    p_score: score,
   });
   if (error) throw error;
   return data;

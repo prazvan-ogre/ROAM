@@ -304,10 +304,25 @@ export interface Database {
           p_participant_id: string;
           p_question_id: string;
           p_selected_option_id: string;
-          p_is_correct: boolean;
           p_battle_id: string;
           p_team: BattleTeam;
-          p_score: number;
+        };
+        Returns: {
+          id: string;
+          question_id: string;
+          participant_id: string;
+          selected_option_id: string | null;
+          response_text: string | null;
+          is_correct: boolean | null;
+          response_time_ms: number | null;
+          created_at: string;
+        };
+      };
+      submit_response: {
+        Args: {
+          p_participant_id: string;
+          p_question_id: string;
+          p_selected_option_id: string;
         };
         Returns: {
           id: string;

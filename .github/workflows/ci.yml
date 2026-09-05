@@ -112,6 +112,7 @@ jobs:
           npm run test:sql:fractional
           npm run test:sql:completion
           npm run test:sql:record-battle-answer
+          npm run test:sql:submit-response
 
   unit-tests:
     runs-on: ubuntu-latest
