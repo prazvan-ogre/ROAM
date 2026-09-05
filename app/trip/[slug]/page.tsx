@@ -29,6 +29,16 @@ interface BattleStatus {
 const EMPTY_STATUS: SlotStatus = { questionId: null, completed: false };
 const EMPTY_BATTLE_STATUS: BattleStatus = { available: false, completed: false };
 
+// The profile "Cine răspunde?"/ProfileMenu is currently set to answer
+// as, falling back to the first (typically the account holder/trip
+// creator) profile on this device if none has been explicitly chosen
+// yet. `list` must be non-empty -- every call site below already checks
+// that before calling this.
+function resolveActiveProfile(tripId: string, list: Participant[]): Participant {
+  const stored = getStoredActiveProfileId(tripId);
+  return list.find((p) => p.id === stored) ?? list[0];
+}
+
 export default function TripHomePage() {
   const { slug } = useParams<{ slug: string }>();
   const { data: trip, error: tripError } = useTrip(slug);
@@ -43,7 +53,7 @@ export default function TripHomePage() {
   const [hasCatchUp, setHasCatchUp] = useState(false);
 
   const loadSlotStatus = useCallback(
-    async (tripId: string, day: number, profileIds: string[]) => {
+    async (tripId: string, day: number, profileId: string) => {
       const [{ data: morningQ }, { data: lunchQ }] = await Promise.all([
         supabase
           .from("questions")
@@ -63,13 +73,17 @@ export default function TripHomePage() {
           .maybeSingle(),
       ]);
 
+      // Scoped to the active profile alone (hypothesis D, 2026-09-05
+      // review): this used to check every profile on the device, so one
+      // profile's answer marked the slot "completed" for a sibling
+      // profile that had never answered it.
       async function isCompleted(questionId: string | undefined) {
-        if (!questionId || profileIds.length === 0) return false;
+        if (!questionId) return false;
         const { count } = await supabase
           .from("responses")
           .select("id", { count: "exact", head: true })
           .eq("question_id", questionId)
-          .in("participant_id", profileIds);
+          .eq("participant_id", profileId);
         return (count ?? 0) > 0;
       }
 
@@ -85,7 +99,7 @@ export default function TripHomePage() {
   );
 
   const loadBattleStatus = useCallback(
-    async (tripId: string, day: number, isLastDay: boolean, profileIds: string[]) => {
+    async (tripId: string, day: number, isLastDay: boolean, profileId: string) => {
       // Final Battle replaces that evening's regular Battle on the
       // trip's last day (product owner spec), not a second, additional
       // thing to play -- so the daily battle is never even fetched then,
@@ -95,19 +109,19 @@ export default function TripHomePage() {
         isLastDay ? getFinalBattle(tripId) : Promise.resolve(null),
       ]);
 
-      // Everyone on this device answers Battle questions individually
-      // now (like Discover), so "completed" here means this device's own
-      // participants have already answered, same check as Discover's
-      // slot status -- not a trip-wide "has anyone at all played" flag.
+      // "Completed" here means the active profile has already answered
+      // (same active-profile scoping as Discover's slot status above,
+      // hypothesis D) -- not a trip-wide "has anyone at all played" flag,
+      // and not "has any profile on this device played".
       async function isDeviceCompleted(content: typeof daily) {
-        if (!content || profileIds.length === 0) return false;
+        if (!content) return false;
         const questionIds = content.questions.map((q) => q.question.id);
         if (questionIds.length === 0) return false;
         const { count } = await supabase
           .from("responses")
           .select("id", { count: "exact", head: true })
           .in("question_id", questionIds)
-          .in("participant_id", profileIds);
+          .eq("participant_id", profileId);
         return (count ?? 0) > 0;
       }
 
@@ -132,13 +146,7 @@ export default function TripHomePage() {
   // picker there), not "any profile on this device", so the banner never
   // promises catch-up questions that aren't actually there for whoever
   // it's about to send in.
-  const loadCatchUpStatus = useCallback(async (tripId: string, day: number, list: Participant[]) => {
-    if (list.length === 0) {
-      setHasCatchUp(false);
-      return;
-    }
-    const stored = getStoredActiveProfileId(tripId);
-    const activeProfile = list.find((p) => p.id === stored) ?? list[0];
+  const loadCatchUpStatus = useCallback(async (tripId: string, day: number, activeProfile: Participant) => {
     const pending = await getCatchUpQuestions(tripId, day, activeProfile.id);
     setHasCatchUp(pending.length > 0);
   }, []);
@@ -157,11 +165,11 @@ export default function TripHomePage() {
       setLoadError(false);
       try {
         const day = currentTripDay(trip!);
-        const profileIds = profiles!.map((p) => p.id);
+        const activeProfile = resolveActiveProfile(trip!.id, profiles!);
         await Promise.all([
-          loadSlotStatus(trip!.id, day, profileIds),
-          loadBattleStatus(trip!.id, day, day >= trip!.duration_days, profileIds),
-          loadCatchUpStatus(trip!.id, day, profiles!),
+          loadSlotStatus(trip!.id, day, activeProfile.id),
+          loadBattleStatus(trip!.id, day, day >= trip!.duration_days, activeProfile.id),
+          loadCatchUpStatus(trip!.id, day, activeProfile),
         ]);
       } catch {
         if (!cancelled) setLoadError(true);
@@ -181,11 +189,11 @@ export default function TripHomePage() {
     const list = await mutateProfiles();
     if (!list || list.length === 0) return;
     const day = currentTripDay(trip);
-    const profileIds = list.map((p) => p.id);
+    const activeProfile = resolveActiveProfile(trip.id, list);
     await Promise.all([
-      loadSlotStatus(trip.id, day, profileIds),
-      loadBattleStatus(trip.id, day, day >= trip.duration_days, profileIds),
-      loadCatchUpStatus(trip.id, day, list),
+      loadSlotStatus(trip.id, day, activeProfile.id),
+      loadBattleStatus(trip.id, day, day >= trip.duration_days, activeProfile.id),
+      loadCatchUpStatus(trip.id, day, activeProfile),
     ]);
   }
 

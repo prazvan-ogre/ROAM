@@ -967,6 +967,19 @@
   `supabase/tests/battle_scoring_fractional_average.test.sql` (previously
   a reproduction of the bug) now asserts the corrected behavior for both
   functions.
+- Fixed: the Home dashboard's "is this Discover/Battle slot completed?"
+  check (`app/trip/[slug]/page.tsx`'s `loadSlotStatus`/`loadBattleStatus`)
+  counted responses across *every* profile on the device
+  (`listProfilesForDevice`), not just the currently active one -- one
+  profile's answer marked a slot "completed" for a sibling profile that
+  had never answered it (hypothesis D, 2026-09-05 review). Now resolves
+  the single active profile once per load (`resolveActiveProfile()`, the
+  same `getStoredActiveProfileId()` resolution ProfileMenu/Discover/
+  Battle/Catchup already use) and scopes both checks to it alone, the
+  same way `loadCatchUpStatus`'s catch-up banner already was (see
+  9fcc72e). `supabase/tests/profile_completion_signal.test.sql`
+  (previously a reproduction of the bug) now asserts the corrected
+  behavior.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see
