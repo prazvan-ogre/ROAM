@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, X, History, ExternalLink } from "lucide-react";
@@ -58,6 +58,13 @@ export default function CatchUpPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
 
+  // R2 (2026-09-05 review, closure batch): same guard as Discover's
+  // activeProfileIdRef -- kept in sync every render so handleSubmit's async
+  // continuation below can detect a profile switch that happened while its
+  // own request was still in flight.
+  const activeProfileIdRef = useRef<string | null>(activeProfile?.id ?? null);
+  activeProfileIdRef.current = activeProfile?.id ?? null;
+
   useEffect(() => {
     if (!trip || !profiles || profiles.length === 0 || !activeProfile) return;
 
@@ -99,21 +106,37 @@ export default function CatchUpPage() {
   async function handleSubmit() {
     if (!activeProfile || !selected || submitting) return;
     const current = questions[index];
+    const submittedProfileId = activeProfile.id;
+    const submittedProfileRole = activeProfile.role;
     setSubmitting(true);
     setSubmitError(false);
     try {
-      const result = await submitAnswer(activeProfile.id, current.question.id, selected.id);
+      const result = await submitAnswer(submittedProfileId, current.question.id, selected.id);
+      if (activeProfileIdRef.current !== submittedProfileId) {
+        // Switched to a different profile while this request was in
+        // flight -- submittedProfileId's answer is already safely
+        // recorded (record_answer is idempotent), but must never be
+        // painted onto whichever OTHER profile's screen is showing now.
+        return;
+      }
       setResponse(result.response);
       setStep("reveal");
 
-      getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id)
-        .then(setExtra)
+      getOrAssignExtra(submittedProfileId, submittedProfileRole, current.question.id)
+        .then((assignedExtra) => {
+          if (activeProfileIdRef.current !== submittedProfileId) return;
+          setExtra(assignedExtra);
+        })
         .catch((err) => console.error("getOrAssignExtra failed", err));
     } catch (err) {
       console.error("submitAnswer failed", err);
-      setSubmitError(true);
+      if (activeProfileIdRef.current === submittedProfileId) {
+        setSubmitError(true);
+      }
     } finally {
-      setSubmitting(false);
+      if (activeProfileIdRef.current === submittedProfileId) {
+        setSubmitting(false);
+      }
     }
   }
 

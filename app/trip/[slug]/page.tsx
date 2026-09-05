@@ -14,7 +14,7 @@ import { getDailyBattle, getFinalBattle } from "@/lib/battle";
 import { getCatchUpQuestions } from "@/lib/discover";
 import { getSlotAvailability, getNextWindowOpening } from "@/lib/schedule";
 import { SLOT_LABEL } from "@/lib/constants";
-import { useTrip, useProfiles } from "@/lib/hooks";
+import { useTrip, useProfiles, useActiveProfile } from "@/lib/hooks";
 
 interface SlotStatus {
   questionId: string | null;
@@ -43,6 +43,16 @@ export default function TripHomePage() {
   const { slug } = useParams<{ slug: string }>();
   const { data: trip, error: tripError } = useTrip(slug);
   const { data: profiles, error: profilesError, mutate: mutateProfiles } = useProfiles(trip?.id);
+  // Reactive to ProfileMenu's "Schimbă profilul" (R2, 2026-09-05 review
+  // closure batch): this used to re-resolve the active profile via a
+  // plain getStoredActiveProfileId() read (resolveActiveProfile below)
+  // inside the status-loading effect, keyed only on [trip, profiles, ...]
+  // -- none of which change on a same-device profile switch. So switching
+  // from A (who'd already answered today) to B (who hadn't) kept showing
+  // A's "completed" checkmarks under B's own name until the page was
+  // remounted. Same fix, same shared SWR key, as Discover/Catchup's own
+  // useActiveProfile.
+  const activeProfile = useActiveProfile(trip?.id, profiles);
 
   const [statusesLoading, setStatusesLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -157,6 +167,12 @@ export default function TripHomePage() {
       setStatusesLoading(false);
       return;
     }
+    // Waits for useActiveProfile to resolve too -- it's null only while
+    // profiles hasn't loaded yet, which the guard above already covers,
+    // but the re-run on activeProfile changing (dependency array below)
+    // is the whole point of this effect no longer using
+    // resolveActiveProfile's one-off localStorage snapshot.
+    if (!activeProfile) return;
 
     let cancelled = false;
 
@@ -165,11 +181,10 @@ export default function TripHomePage() {
       setLoadError(false);
       try {
         const day = currentTripDay(trip!);
-        const activeProfile = resolveActiveProfile(trip!.id, profiles!);
         await Promise.all([
-          loadSlotStatus(trip!.id, day, activeProfile.id),
-          loadBattleStatus(trip!.id, day, day >= trip!.duration_days, activeProfile.id),
-          loadCatchUpStatus(trip!.id, day, activeProfile),
+          loadSlotStatus(trip!.id, day, activeProfile!.id),
+          loadBattleStatus(trip!.id, day, day >= trip!.duration_days, activeProfile!.id),
+          loadCatchUpStatus(trip!.id, day, activeProfile!),
         ]);
       } catch {
         if (!cancelled) setLoadError(true);
@@ -182,7 +197,7 @@ export default function TripHomePage() {
     return () => {
       cancelled = true;
     };
-  }, [trip, profiles, loadSlotStatus, loadBattleStatus, loadCatchUpStatus]);
+  }, [trip, profiles, activeProfile, loadSlotStatus, loadBattleStatus, loadCatchUpStatus]);
 
   async function handleWizardComplete() {
     if (!trip) return;
