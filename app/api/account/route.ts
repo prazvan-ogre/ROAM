@@ -15,6 +15,7 @@ import {
 import { checkLoginLock, recordFailedLogin, resetLoginAttempts } from "@/lib/security/loginRateLimit";
 import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit";
 import { linkCreatorParticipant } from "@/lib/security/participantLink";
+import { linkOwnedTripsToAccount } from "@/lib/security/tripOwnership";
 import { isSameOriginRequest } from "@/lib/security/csrf";
 
 export const runtime = "nodejs";
@@ -325,7 +326,17 @@ async function handleAccount(request: Request): Promise<Response> {
         );
       }
     }
-    if (isLinkingNewTrip && expectExisting === true) {
+    // R5-fix4: this guard used to only run when isLinkingNewTrip -- the
+    // plain "Călătoriile mele" login (app/trips/page.tsx, no ?link=)
+    // never showed the "Ai deja cont?" chooser at all and always sent
+    // expectExisting: undefined, so an unrecognized phone+PIN there fell
+    // straight through to silently creating a brand-new, blank account.
+    // Exactly the R1 concern ("an unrecognized identifier at login must
+    // not implicitly create a new account") -- just never fixed on this
+    // specific path. Now applies whenever the client claims an existing
+    // account (expectExisting === true), whether or not a trip is being
+    // linked.
+    if (expectExisting === true) {
       await recordFailedLogin(admin, normalizedPhone);
       return NextResponse.json(
         { error: "Nu am găsit un cont cu acest număr. Alege \"Nu am cont\" ca să creezi unul." },
@@ -378,22 +389,28 @@ async function handleAccount(request: Request): Promise<Response> {
 
   await resetLoginAttempts(admin, normalizedPhone);
 
-  // Linking is best-effort: only if this exact device created that exact
-  // trip, and it isn't already tied to some other account. A failed or
-  // skipped link never fails the whole login -- the account still works,
-  // this trip just doesn't show up in its history.
+  // Linking is best-effort: a failed or skipped link never fails the
+  // whole login -- the account still works, this trip just doesn't show
+  // up in its history.
   if (isLinkingNewTrip) {
     const tripSlug = (linkTripSlug as string).trim();
     const trimmedDeviceId = (deviceId as string).trim();
 
-    const { data: tripRow } = await admin
-      .from("trips")
-      .select("id, created_by_account_id, created_by_device_id")
-      .eq("slug", tripSlug)
-      .maybeSingle();
+    const { data: tripRow } = await admin.from("trips").select("id").eq("slug", tripSlug).maybeSingle();
 
-    if (tripRow && !tripRow.created_by_account_id && tripRow.created_by_device_id === trimmedDeviceId) {
-      await admin.from("trips").update({ created_by_account_id: accountId }).eq("id", tripRow.id);
+    // R5: ownership is decided ONLY by created_by_auth_user_id (stamped
+    // server-side at trip-creation time from a verified bearer token,
+    // app/api/trips/create/route.ts), never by comparing the
+    // client-supplied deviceId above to created_by_device_id -- that
+    // column was only ever a rate-limit key (see the migration's own
+    // comment), not proof of ownership. Sweeping up every trip this
+    // exact verified device created and hasn't linked yet (not just
+    // tripSlug) is what makes this a safe path to associate after
+    // authentication, independent of which specific trip triggered this
+    // login.
+    const deviceAuthUserId = await resolveBearerAuthUserId(request);
+    if (deviceAuthUserId) {
+      await linkOwnedTripsToAccount(admin, { authUserId: deviceAuthUserId, accountId });
     }
 
     // Auto-join the account holder as this trip's first adult participant
@@ -406,7 +423,6 @@ async function handleAccount(request: Request): Promise<Response> {
     // the original client-side flow this replaces, which only ever
     // required a display name, not a fresh link.
     const joinDisplayName = resultDisplayName || normalizedName;
-    const deviceAuthUserId = await resolveBearerAuthUserId(request);
     if (tripRow && joinDisplayName && deviceAuthUserId) {
       try {
         await linkCreatorParticipant(admin, {

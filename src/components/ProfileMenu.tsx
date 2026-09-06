@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, LogOut, UserRoundPlus, UsersRound } from "lucide-react";
+import { Check, List, LogOut, UserRoundPlus, UsersRound } from "lucide-react";
 import { setStoredActiveProfileId } from "@/lib/participant";
 import { clearStoredAccountId, getStoredAccountId } from "@/lib/creatorAccount";
 import { useTrip, useProfiles, useActiveProfile } from "@/lib/hooks";
@@ -145,13 +145,30 @@ export function ProfileMenu({ slug }: { slug: string }) {
                   </button>
                 )}
                 {hasAccount ? (
-                  <button
-                    onClick={handleLogout}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-[14px] font-medium text-destructive transition-colors hover:bg-secondary active:bg-secondary"
-                  >
-                    <LogOut size={17} className="shrink-0" />
-                    Deconectare cont
-                  </button>
+                  <>
+                    {/* R5: the only clear entry point to the global trips
+                        list (app/trips/page.tsx) from the account area --
+                        previously reachable only via Setări > Toate
+                        călătoriile, which requires already being a
+                        participant in some trip first. */}
+                    <button
+                      onClick={() => {
+                        closeMenu();
+                        router.push("/trips");
+                      }}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left text-[14px] font-medium text-foreground transition-colors hover:bg-secondary active:bg-secondary"
+                    >
+                      <List size={17} className="shrink-0 text-muted-foreground" />
+                      Toate călătoriile
+                    </button>
+                    <button
+                      onClick={handleLogout}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left text-[14px] font-medium text-destructive transition-colors hover:bg-secondary active:bg-secondary"
+                    >
+                      <LogOut size={17} className="shrink-0" />
+                      Deconectare cont
+                    </button>
+                  </>
                 ) : (
                   <button
                     onClick={handleCreateAccount}

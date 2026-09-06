@@ -140,6 +140,7 @@ jobs:
           npm run test:sql:batch2-activity
           npm run test:sql:batch2-lockdown
           npm run test:sql:batch2-battle-authz
+          npm run test:sql:r5-trip-ownership
 
   unit-tests:
     runs-on: ubuntu-latest
