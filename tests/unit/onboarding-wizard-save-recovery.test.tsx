@@ -146,10 +146,75 @@ describe("R4: OnboardingWizard finish/vote -- a failed vote doesn't leave the bu
     expect((retryButton as HTMLButtonElement).disabled).toBe(false);
     expect(onComplete).not.toHaveBeenCalled();
 
-    castPrizeVote.mockResolvedValueOnce(undefined);
+    castPrizeVote.mockResolvedValueOnce("recorded");
     await click(retryButton);
 
     expect(castPrizeVote).toHaveBeenCalledTimes(2);
     expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("a vote CONFLICT (a different option already on record) is never reported as the new pick being saved", async () => {
+    getOrCreateAdultParticipant.mockResolvedValue({ id: "adult-1" });
+    const onComplete = await goToRoleStep();
+    await click(screen.getByRole("button", { name: /Continuă/i })); // join
+    await screen.findByText("Cum funcționează");
+    await click(screen.getByRole("button", { name: /Continuă/i })); // how -> prize
+
+    await screen.findByText("Prăjitură");
+    await click(screen.getByRole("button", { name: /Prăjitură/i }));
+
+    castPrizeVote.mockResolvedValueOnce("conflict");
+    await click(await screen.findByRole("button", { name: /Votează și/i }));
+
+    await screen.findByText(/Aveai deja un vot înregistrat pentru altă opțiune/i);
+    // Not finished yet -- the person must see this before continuing.
+    expect(onComplete).not.toHaveBeenCalled();
+    // No generic "couldn't finish" error is ALSO shown -- this isn't that
+    // kind of failure.
+    expect(screen.queryByText(/Nu am putut finaliza/i)).toBeNull();
+
+    // Acknowledging continues without re-attempting the vote -- it's
+    // already resolved (the original pick stands either way).
+    await click(screen.getByRole("button", { name: /Am înțeles, continuă/i }));
+
+    expect(castPrizeVote).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("R4-fix5: OnboardingWizard prize load error is distinct from 'no options', with its own retry", () => {
+  it("shows a retry instead of silently proceeding as if there's nothing to vote for", async () => {
+    getPrizeStatus.mockReset().mockRejectedValueOnce(new Error("network down"));
+    getOrCreateAdultParticipant.mockResolvedValue({ id: "adult-1" });
+    await goToRoleStep();
+    await click(screen.getByRole("button", { name: /Continuă/i })); // join
+    await screen.findByText("Cum funcționează");
+    await click(screen.getByRole("button", { name: /Continuă/i })); // how -> prize
+
+    await screen.findByText(/Nu am putut încărca premiul/i);
+    // Never silently substitutes the "no options configured" screen.
+    expect(screen.queryByText("Premiul câștigătorilor")).toBeNull();
+    // The finish button is disabled while in this state -- can't
+    // accidentally continue past a load failure and lose the vote.
+    expect((screen.getByRole("button", { name: /Hai să începem/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    getPrizeStatus.mockResolvedValueOnce(prizeWithOptions);
+    await click(screen.getByRole("button", { name: /Încearcă din nou/i }));
+
+    await screen.findByText("Prăjitură");
+  });
+});
+
+describe("R4-fix4: OnboardingWizard join -- a slow/hanging analytics call never delays advancing", () => {
+  it("goes to the next step even while trackEvent is still pending", async () => {
+    getOrCreateAdultParticipant.mockResolvedValue({ id: "adult-1" });
+    trackEvent.mockReset().mockReturnValue(new Promise(() => {})); // never resolves
+    await goToRoleStep();
+
+    await click(screen.getByRole("button", { name: /Continuă/i }));
+
+    // The join succeeded and the wizard already moved on, despite
+    // trackEvent's promise never settling.
+    await screen.findByText("Cum funcționează");
   });
 });

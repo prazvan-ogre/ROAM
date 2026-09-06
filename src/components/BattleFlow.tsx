@@ -68,7 +68,10 @@ export function BattleFlow({
   }
 
   async function handleStart() {
-    await trackEvent(tripId, "battle_opened", undefined, { battle_id: content.battle.id });
+    // Fire-and-forget: trackEvent never rejects (src/lib/analytics.ts),
+    // and a slow/unavailable analytics endpoint must never delay
+    // showing the profile picker / first question.
+    void trackEvent(tripId, "battle_opened", undefined, { battle_id: content.battle.id });
     // Product owner request: use the profile picked top-right (the
     // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
     // asking "Cine răspunde?" here -- same resolution it uses (stored
@@ -224,7 +227,9 @@ export function BattleFlow({
       console.error("goToDone score lookup failed", err);
     }
     if (isFinal) {
-      await trackEvent(tripId, "final_battle_completed", activeProfile?.id, {
+      // Fire-and-forget -- a slow/unavailable analytics endpoint must
+      // never delay showing the final score screen.
+      void trackEvent(tripId, "final_battle_completed", activeProfile?.id, {
         battle_id: content.battle.id,
       });
     }

@@ -93,3 +93,53 @@ describe("R4: FeedbackForm -- error preserves answers, no premature confirmation
     expect(onSubmitted).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("R4-fix3: FeedbackForm's request id -- stable across a bare retry, fresh after an actual edit", () => {
+  it("retrying without changing anything reuses the same request id", async () => {
+    submitFeedback.mockRejectedValueOnce(new Error("network down"));
+    render(<FeedbackForm tripId="trip-1" participantId="participant-1" onSubmitted={vi.fn()} />);
+    fillRequiredAnswers();
+    await click(screen.getByRole("button", { name: "TRIMITE" }));
+    await screen.findByText(/Nu am putut trimite răspunsurile/i);
+
+    submitFeedback.mockResolvedValueOnce(undefined);
+    await click(screen.getByRole("button", { name: "ÎNCEARCĂ DIN NOU" }));
+
+    expect(submitFeedback).toHaveBeenCalledTimes(2);
+    const [, firstRequestId] = submitFeedback.mock.calls[0];
+    const [, secondRequestId] = submitFeedback.mock.calls[1];
+    expect(secondRequestId).toBe(firstRequestId);
+  });
+
+  it("changing an answer before retrying gets a NEW request id -- a correction is a new attempt, not the old one repeated", async () => {
+    submitFeedback.mockRejectedValueOnce(new Error("network down"));
+    render(<FeedbackForm tripId="trip-1" participantId="participant-1" onSubmitted={vi.fn()} />);
+    fillRequiredAnswers();
+    await click(screen.getByRole("button", { name: "TRIMITE" }));
+    await screen.findByText(/Nu am putut trimite răspunsurile/i);
+
+    // Corrects the comment before retrying.
+    fireEvent.change(screen.getByPlaceholderText("Opțional"), { target: { value: "De fapt, altceva" } });
+    submitFeedback.mockResolvedValueOnce(undefined);
+    await click(screen.getByRole("button", { name: "ÎNCEARCĂ DIN NOU" }));
+
+    expect(submitFeedback).toHaveBeenCalledTimes(2);
+    const [, firstRequestId] = submitFeedback.mock.calls[0];
+    const [, secondRequestId] = submitFeedback.mock.calls[1];
+    expect(secondRequestId).not.toBe(firstRequestId);
+  });
+});
+
+describe("R4-fix4: FeedbackForm -- a slow/hanging analytics call never delays the confirmation", () => {
+  it("calls onSubmitted even while trackEvent is still pending", async () => {
+    submitFeedback.mockResolvedValueOnce(undefined);
+    trackEvent.mockReset().mockReturnValue(new Promise(() => {})); // never resolves
+    const onSubmitted = vi.fn();
+    render(<FeedbackForm tripId="trip-1" participantId="participant-1" onSubmitted={onSubmitted} />);
+
+    fillRequiredAnswers();
+    await click(screen.getByRole("button", { name: "TRIMITE" }));
+
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+  });
+});

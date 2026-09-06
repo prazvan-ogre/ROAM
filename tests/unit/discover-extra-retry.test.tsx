@@ -66,7 +66,8 @@ vi.mock("@/lib/discover", () => ({
   submitAnswer: (...args: unknown[]) => submitAnswer(...args),
   getOrAssignExtra: (...args: unknown[]) => getOrAssignExtra(...args),
 }));
-vi.mock("@/lib/analytics", () => ({ trackEvent: vi.fn().mockResolvedValue(undefined) }));
+const trackEvent = vi.fn();
+vi.mock("@/lib/analytics", () => ({ trackEvent: (...args: unknown[]) => trackEvent(...args) }));
 
 async function click(el: HTMLElement) {
   await act(async () => {
@@ -81,6 +82,7 @@ afterEach(() => {
   submitAnswer.mockClear();
   getOrAssignExtra.mockClear();
   getMyResponse.mockReset().mockResolvedValue(null);
+  trackEvent.mockReset().mockResolvedValue(undefined);
 });
 
 describe("R4: Discover -- an Extra load failure never hides the already-recorded answer, and has its own retry", () => {
@@ -134,5 +136,16 @@ describe("R4: Discover -- an Extra load failure never hides the already-recorded
     await screen.findByText("Corect");
     await screen.findByText(/Nu am putut încărca Extra/i);
     expect(screen.queryByText(/Nu am putut încărca datele/i)).toBeNull();
+  });
+});
+
+describe("R4-fix4: Discover -- a slow/hanging analytics call never delays showing the question", () => {
+  it("shows the question even while trackEvent('question_opened') is still pending", async () => {
+    trackEvent.mockReturnValue(new Promise(() => {})); // never resolves
+
+    const { default: DiscoverPage } = await import("../../app/trip/[slug]/discover/[slot]/page");
+    render(<DiscoverPage />);
+
+    await screen.findByText("Cine a raspuns?");
   });
 });

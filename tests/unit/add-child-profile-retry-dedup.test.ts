@@ -1,12 +1,12 @@
-// R4 regression (2026-09-06 batch): "retry reușit fără duplicare" for
-// adding a child profile. addChildProfile (src/lib/participant.ts) used
-// to be a plain insert -- a lost confirmation (the insert commits, the
-// response never reaches the caller) meant a retry from the onboarding
-// wizard or Setări's "Adaugă profil copil" created a second child with
-// the same name. Fixed with an app-level (no migration) check: an exact
-// name+age match created by this same device in the last 15 seconds is
-// recognized as the caller's own retry and returned directly, instead of
-// inserting again.
+// R4 correction (2026-09-06 batch, review round 2): addChildProfile
+// (src/lib/participant.ts) no longer recognizes a retry by a 15-second
+// exact-match window (replaced because a slower retry still duplicated,
+// and two honestly separate identical adds -- twins -- submitted close
+// together could be wrongly collapsed into one). It now uses a real
+// idempotency key: the caller generates one id per distinct attempt and
+// keeps it stable across a retry of THAT attempt (see OnboardingWizard/
+// Settings' own callers) -- this file tests the library function's own
+// contract for that key, independent of timing.
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@/lib/device", () => ({
@@ -14,7 +14,7 @@ vi.mock("@/lib/device", () => ({
   ensureAuthSession: async () => "auth-user-1",
 }));
 
-let rows: Array<{
+type Row = {
   id: string;
   trip_id: string;
   device_id: string;
@@ -24,58 +24,49 @@ let rows: Array<{
   created_at: string;
   managed_by_participant_id: string | null;
   auth_user_id: string;
-}>;
-let nextId = 1;
+  client_request_id: string | null;
+};
 
-function matchesFilters(row: Record<string, unknown>, filters: Record<string, unknown>): boolean {
-  return Object.entries(filters).every(([key, value]) => row[key] === value);
-}
+let rows: Row[];
+let nextId = 1;
 
 vi.mock("@/lib/supabase/client", () => ({
   supabase: {
     from: (table: string) => {
       if (table !== "participants") throw new Error(`unexpected table "${table}"`);
       return {
+        // Reconciliation read: addChildProfile only ever selects by
+        // client_request_id after a 23505.
         select: (_cols: string) => {
           const filters: Record<string, unknown> = {};
-          let ageIsNull = false;
-          let minCreatedAt: string | null = null;
           const builder = {
             eq(column: string, value: unknown) {
               filters[column] = value;
               return builder;
             },
-            is(column: string, _value: null) {
-              if (column === "age") ageIsNull = true;
-              return builder;
-            },
-            gte(column: string, value: string) {
-              if (column === "created_at") minCreatedAt = value;
-              return builder;
-            },
-            order() {
-              return builder;
-            },
-            limit() {
-              return builder;
-            },
-            async maybeSingle() {
-              const match = rows.find((r) => {
-                if (!matchesFilters(r as unknown as Record<string, unknown>, filters)) return false;
-                if (ageIsNull && r.age !== null) return false;
-                if (minCreatedAt && r.created_at < minCreatedAt) return false;
-                return true;
-              });
-              return { data: match ?? null, error: null };
+            async single() {
+              const match = rows.find((r) => Object.entries(filters).every(([k, v]) => (r as never)[k] === v));
+              if (!match) return { data: null, error: { code: "PGRST116", message: "no rows" } };
+              return { data: match, error: null };
             },
           };
           return builder;
         },
+        // Synchronous check-then-push (no await between them) so that
+        // two "concurrent" calls -- which only actually interleave at
+        // each other's own earlier `await ensureAuthSession()` -- still
+        // serialize correctly here, exactly like a real unique index
+        // would: whichever call's insert step happens to run first wins,
+        // the other observes the row and reports 23505.
         insert: (row: Record<string, unknown>) => ({
           select: () => ({
             single: async () => {
-              const created = { id: `child-${nextId++}`, created_at: new Date().toISOString(), ...row };
-              rows.push(created as (typeof rows)[number]);
+              const requestId = row.client_request_id as string | null;
+              if (requestId && rows.some((r) => r.client_request_id === requestId)) {
+                return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint" } };
+              }
+              const created = { id: `child-${nextId++}`, created_at: new Date().toISOString(), ...row } as Row;
+              rows.push(created);
               return { data: created, error: null };
             },
           }),
@@ -85,28 +76,58 @@ vi.mock("@/lib/supabase/client", () => ({
   },
 }));
 
-describe("R4 regression: addChildProfile de-duplicates an exact-match retry", () => {
-  it("two different children (different names) both get their own row", async () => {
+describe("R4 regression: addChildProfile keys off a real idempotency id, not timing", () => {
+  it("two different children (different request ids, different names) both get their own row", async () => {
     const { addChildProfile } = await import("@/lib/participant");
     rows = [];
     nextId = 1;
 
-    const a = await addChildProfile("trip-1", "Ana", 7);
-    const b = await addChildProfile("trip-1", "Bogdan", 9);
+    const a = await addChildProfile("trip-1", "Ana", 7, "req-1");
+    const b = await addChildProfile("trip-1", "Bogdan", 9, "req-2");
 
     expect(a.id).not.toBe(b.id);
     expect(rows).toHaveLength(2);
   });
 
-  it("a retry with the SAME name+age within the window returns the existing row, not a duplicate", async () => {
+  it("two DIFFERENT request ids with IDENTICAL name+age both succeed -- twins stay possible", async () => {
     const { addChildProfile } = await import("@/lib/participant");
     rows = [];
     nextId = 1;
 
-    const first = await addChildProfile("trip-1", "Ana", 7);
-    const retry = await addChildProfile("trip-1", "Ana", 7);
+    const twin1 = await addChildProfile("trip-1", "Ana", 7, "req-twin-1");
+    const twin2 = await addChildProfile("trip-1", "Ana", 7, "req-twin-2");
+
+    expect(twin1.id).not.toBe(twin2.id);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("a retry with the SAME request id well over 15s later still returns the original row, not a duplicate", async () => {
+    const { addChildProfile } = await import("@/lib/participant");
+    rows = [];
+    nextId = 1;
+
+    const first = await addChildProfile("trip-1", "Ana", 7, "req-slow-retry");
+    // No 15s-window logic exists anymore to expire -- simulate a much
+    // later retry by advancing the row's own created_at into the past,
+    // proving the match isn't time-bounded at all.
+    rows[0].created_at = new Date(Date.now() - 5 * 60_000).toISOString();
+    const retry = await addChildProfile("trip-1", "Ana", 7, "req-slow-retry");
 
     expect(retry.id).toBe(first.id);
+    expect(rows).toHaveLength(1);
+  });
+
+  it("two concurrent calls with the SAME request id resolve to the same row, not two rows", async () => {
+    const { addChildProfile } = await import("@/lib/participant");
+    rows = [];
+    nextId = 1;
+
+    const [a, b] = await Promise.all([
+      addChildProfile("trip-1", "Ana", 7, "req-concurrent"),
+      addChildProfile("trip-1", "Ana", 7, "req-concurrent"),
+    ]);
+
+    expect(a.id).toBe(b.id);
     expect(rows).toHaveLength(1);
   });
 
@@ -115,8 +136,8 @@ describe("R4 regression: addChildProfile de-duplicates an exact-match retry", ()
     rows = [];
     nextId = 1;
 
-    const first = await addChildProfile("trip-1", "Ana", null);
-    const retry = await addChildProfile("trip-1", "Ana", null);
+    const first = await addChildProfile("trip-1", "Ana", null, "req-null-age");
+    const retry = await addChildProfile("trip-1", "Ana", null, "req-null-age");
 
     expect(retry.id).toBe(first.id);
     expect(rows).toHaveLength(1);

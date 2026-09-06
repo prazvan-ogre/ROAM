@@ -66,7 +66,8 @@ vi.mock("@/lib/discover", () => ({
   submitAnswer: (...args: unknown[]) => submitAnswer(...args),
   getOrAssignExtra: (...args: unknown[]) => getOrAssignExtra(...args),
 }));
-vi.mock("@/lib/analytics", () => ({ trackEvent: vi.fn().mockResolvedValue(undefined) }));
+const trackEvent = vi.fn();
+vi.mock("@/lib/analytics", () => ({ trackEvent: (...args: unknown[]) => trackEvent(...args) }));
 vi.mock("@/lib/battle", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/battle")>();
   return {
@@ -93,6 +94,7 @@ afterEach(() => {
   cleanup();
   submitAnswer.mockClear();
   getOrAssignExtra.mockClear();
+  trackEvent.mockReset().mockResolvedValue(undefined);
 });
 
 describe("R4: BattleFlow -- an Extra load failure never hides the already-recorded answer, and has its own retry", () => {
@@ -121,5 +123,17 @@ describe("R4: BattleFlow -- an Extra load failure never hides the already-record
     await screen.findByText("Un fapt interesant.");
     expect(screen.queryByText(/Nu am putut încărca Extra/i)).toBeNull();
     expect(screen.getByText("Răspuns: Opt 1A")).toBeTruthy();
+  });
+});
+
+describe("R4-fix4: BattleFlow -- a slow/hanging analytics call never delays showing the first question", () => {
+  it("shows the question even while trackEvent('battle_opened') is still pending", async () => {
+    trackEvent.mockReturnValue(new Promise(() => {})); // never resolves
+
+    const { BattleFlow } = await import("@/components/BattleFlow");
+    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={false} profiles={[participant as never]} />);
+
+    await click(screen.getByRole("button", { name: "HAI LA BATTLE" }));
+    await screen.findByText("Prima intrebare");
   });
 });

@@ -1,6 +1,17 @@
-// R4 regression (2026-09-06 batch): two lib-level fixes bundled here
-// since both are small, pure functions with the same "must never surface
-// an already-handled failure as a hard error" shape.
+// R4 regression (2026-09-06 batch; feedback part corrected round 2):
+// two lib-level fixes bundled here since both are small, pure functions
+// with the same "must never surface an already-handled failure as a
+// hard error" shape.
+//
+// submitFeedback no longer keys off `unique (trip_id, participant_id)`
+// (that constraint asserted an unconfirmed "one feedback ever per
+// participant" product rule -- see 20260907120000_r4_feedback_request_
+// id_idempotency.sql's own comment for why). It now uses a client-
+// generated requestId, exactly like addChildProfile: a 23505 there can
+// only mean THIS specific attempt's own earlier insert already landed,
+// with no ambiguity to reconcile and no need to ever read feedback back
+// (feedback has no SELECT policy at all, intentionally) -- this file
+// proves both the idempotency and that no select is ever attempted.
 import { describe, it, expect, vi } from "vitest";
 
 const feedbackInserts: unknown[] = [];
@@ -17,6 +28,9 @@ vi.mock("@/lib/supabase/client", () => ({
             feedbackInserts.push(row);
             if (nextFeedbackError) return { error: nextFeedbackError };
             return { error: null };
+          },
+          select: () => {
+            throw new Error("feedback has no SELECT policy -- submitFeedback must never attempt to read it back");
           },
         };
       }
@@ -39,61 +53,50 @@ vi.mock("@/lib/supabase/client", () => ({
   },
 }));
 
-describe("R4 regression: submitFeedback is idempotent on a duplicate submission", () => {
-  it("a genuinely new submission succeeds and inserts exactly once", async () => {
+const feedbackPayload = {
+  trip_id: "trip-1",
+  participant_id: "participant-1",
+  learned_new: 5,
+  generated_conversations: 5,
+  searched_more: true,
+  anticipated_next: "da" as const,
+  would_use_again: "sigur" as const,
+  comment: null,
+};
+
+describe("R4 regression: submitFeedback is idempotent on requestId, never reads feedback back", () => {
+  it("a genuinely new submission succeeds, inserts exactly once, and carries the request id", async () => {
     const { submitFeedback } = await import("@/lib/feedback");
     nextFeedbackError = null;
     feedbackInserts.length = 0;
 
-    await expect(
-      submitFeedback({
-        trip_id: "trip-1",
-        participant_id: "participant-1",
-        learned_new: 5,
-        generated_conversations: 5,
-        searched_more: true,
-        anticipated_next: "da",
-        would_use_again: "sigur",
-        comment: null,
-      }),
-    ).resolves.toBeUndefined();
+    await expect(submitFeedback(feedbackPayload, "req-1")).resolves.toBeUndefined();
     expect(feedbackInserts).toHaveLength(1);
+    expect(feedbackInserts[0]).toMatchObject({ client_request_id: "req-1" });
   });
 
-  it("a unique_violation (23505) retry -- feedback already on record from an earlier attempt -- resolves without throwing", async () => {
+  it("a unique_violation (23505) retry of the SAME requestId resolves without throwing or reading feedback back", async () => {
     const { submitFeedback } = await import("@/lib/feedback");
     nextFeedbackError = { code: "23505", message: "duplicate key value violates unique constraint" };
 
-    await expect(
-      submitFeedback({
-        trip_id: "trip-1",
-        participant_id: "participant-1",
-        learned_new: 5,
-        generated_conversations: 5,
-        searched_more: true,
-        anticipated_next: "da",
-        would_use_again: "sigur",
-        comment: null,
-      }),
-    ).resolves.toBeUndefined();
+    await expect(submitFeedback(feedbackPayload, "req-1")).resolves.toBeUndefined();
+  });
+
+  it("a DIFFERENT requestId is a genuinely separate submission -- not blocked by an earlier one", async () => {
+    const { submitFeedback } = await import("@/lib/feedback");
+    nextFeedbackError = null;
+    feedbackInserts.length = 0;
+
+    await expect(submitFeedback(feedbackPayload, "req-2")).resolves.toBeUndefined();
+    await expect(submitFeedback({ ...feedbackPayload, comment: "altceva" }, "req-3")).resolves.toBeUndefined();
+    expect(feedbackInserts).toHaveLength(2);
   });
 
   it("any OTHER error still throws", async () => {
     const { submitFeedback } = await import("@/lib/feedback");
     nextFeedbackError = { code: "500", message: "internal error" };
 
-    await expect(
-      submitFeedback({
-        trip_id: "trip-1",
-        participant_id: "participant-1",
-        learned_new: 5,
-        generated_conversations: 5,
-        searched_more: true,
-        anticipated_next: "da",
-        would_use_again: "sigur",
-        comment: null,
-      }),
-    ).rejects.toMatchObject({ code: "500" });
+    await expect(submitFeedback(feedbackPayload, "req-4")).rejects.toMatchObject({ code: "500" });
   });
 });
 

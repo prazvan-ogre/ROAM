@@ -106,7 +106,10 @@ export default function DiscoverPage() {
           return;
         }
         setContent(c);
-        await trackEvent(trip!.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
+        // Fire-and-forget: trackEvent never rejects (src/lib/analytics.ts),
+        // and a slow/unavailable analytics endpoint must never delay
+        // showing the question.
+        void trackEvent(trip!.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
         await selectProfile(c);
       } catch {
         if (!cancelled) setStep("error");
@@ -227,9 +230,12 @@ export default function DiscoverPage() {
     }
   }
 
-  async function handleExploreClick(linkId: string) {
+  function handleExploreClick(linkId: string) {
     if (!trip) return;
-    await trackEvent(trip.id, "explore_clicked", activeProfile?.id, { explore_link_id: linkId });
+    // Fire-and-forget: the <a target="_blank"> below navigates natively,
+    // unaffected by how long this takes -- but nothing here should ever
+    // await analytics regardless.
+    void trackEvent(trip.id, "explore_clicked", activeProfile?.id, { explore_link_id: linkId });
   }
 
   function retryExtra() {

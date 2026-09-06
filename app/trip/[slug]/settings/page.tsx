@@ -106,18 +106,41 @@ export default function SettingsPage() {
     setTab(hasAccount && (trip.content_status !== "ready" || !joined) ? "trips" : "users");
   }, [trip, profiles, hasAccount]);
 
+  // R4 correction (2026-09-06 batch, round 2): addChildProfile now keys
+  // off a real idempotency key (client_request_id) instead of a time
+  // window -- generated once per distinct attempt here, kept across a
+  // retry of THAT attempt, and reset (null) whenever the person actually
+  // changes the name/age (a correction, not a retry -- see
+  // handleChildNameChange/handleChildAgeChange below) or after a
+  // successful add (the next add is a new attempt).
+  const addChildRequestIdRef = useRef<string | null>(null);
+
+  function handleChildNameChange(v: string) {
+    addChildRequestIdRef.current = null;
+    setChildName(v);
+  }
+  function handleChildAgeChange(v: string) {
+    addChildRequestIdRef.current = null;
+    setChildAge(v);
+  }
+
   async function handleAddChild(e: FormEvent) {
     e.preventDefault();
     if (!trip || !childName.trim() || !profiles || addChildSubmitting) return;
     const adult = profiles.find((p) => p.role === "adult");
     if (!adult) return;
+    if (!addChildRequestIdRef.current) addChildRequestIdRef.current = crypto.randomUUID();
     setAddChildSubmitting(true);
     setAddChildError(null);
     try {
-      // addChildProfile itself absorbs an exact-match retry within a
-      // short window (src/lib/participant.ts) -- a retry here after this
-      // catch block's own error never creates a second child.
-      await addChildProfile(trip.id, childName.trim(), childAge ? Number(childAge) : null, adult.id);
+      await addChildProfile(
+        trip.id,
+        childName.trim(),
+        childAge ? Number(childAge) : null,
+        addChildRequestIdRef.current,
+        adult.id,
+      );
+      addChildRequestIdRef.current = null;
       setChildName("");
       setChildAge("");
       setShowAddChild(false);
@@ -237,11 +260,12 @@ export default function SettingsPage() {
             onCancelAddChild={() => {
               setShowAddChild(false);
               setAddChildError(null);
+              addChildRequestIdRef.current = null;
             }}
             childName={childName}
-            onChildNameChange={setChildName}
+            onChildNameChange={handleChildNameChange}
             childAge={childAge}
-            onChildAgeChange={setChildAge}
+            onChildAgeChange={handleChildAgeChange}
             onAddChild={handleAddChild}
             addChildSubmitting={addChildSubmitting}
             addChildError={addChildError}
@@ -615,6 +639,23 @@ function EditProfileForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // R4-fix6 (2026-09-06 batch, review round 2): a stale save for THIS
+  // profile that resolves after the person has already switched to
+  // editing a DIFFERENT profile (parent unmounts this instance by
+  // changing editingId, per-profile `key`) used to still call onCancel()
+  // -- a plain closure into the parent's setEditingId(null), unaffected
+  // by this component's own unmount -- and silently close whichever
+  // OTHER profile's form was now open, discarding anything typed into
+  // it. React already no-ops this component's own setState calls after
+  // unmount, but onCancel reaches into the PARENT, so it needs its own
+  // guard.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // R4 (2026-09-06 batch): closes the form itself (onCancel), only after
   // every step it actually needs has succeeded -- previously onSave alone
   // closed it (see handleSaveEdit above), before the account-details save
@@ -637,7 +678,7 @@ function EditProfileForm({
       if (!profileSaved) {
         await onSave(profile.id, name.trim(), role, role === "child" ? Number(age) || null : null);
         profileJustSaved = true;
-        setProfileSaved(true);
+        if (mountedRef.current) setProfileSaved(true);
       }
       if (showAccountFields && accountId) {
         await updateAccountDetails({
@@ -645,12 +686,20 @@ function EditProfileForm({
           pin: pin.trim() ? pin.trim() : undefined,
         });
       }
-      onCancel();
+      // Only ever close THIS form if it's still the one open -- a switch
+      // to a different profile while this save was in flight must not
+      // close that other, now-open form out from under the person using
+      // it.
+      if (mountedRef.current) onCancel();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Nu s-a putut salva. Încearcă din nou.";
-      setError(profileJustSaved ? `Profilul a fost salvat, dar detaliile contului nu: ${message}` : message);
+      if (mountedRef.current) {
+        setError(profileJustSaved ? `Profilul a fost salvat, dar detaliile contului nu: ${message}` : message);
+      } else {
+        console.error("EditProfileForm save failed after switching away", err);
+      }
     } finally {
-      setSubmitting(false);
+      if (mountedRef.current) setSubmitting(false);
     }
   }
 
