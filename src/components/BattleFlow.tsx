@@ -315,7 +315,9 @@ export function BattleFlow({
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 text-center">
         {closedInfo?.status === "before" ? (
-          <p className="text-muted-foreground">Battle-ul devine disponibil la {closedInfo.opensAt}.</p>
+          <p className="text-muted-foreground">
+            Battle-ul devine disponibil la {closedInfo.opensAt} (ora destinației, {timeZone}).
+          </p>
         ) : (
           <p className="text-muted-foreground">Battle-ul s-a încheiat pentru azi.</p>
         )}

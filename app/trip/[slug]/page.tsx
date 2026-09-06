@@ -446,7 +446,14 @@ export default function TripHomePage() {
       )}
 
       <section>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Detalii</p>
+        <div className="mb-1 flex items-center justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Detalii</p>
+          {/* R6 follow-up: every time shown below (and in the countdown
+              above) is the DESTINATION's own local time, not this
+              device's -- called out once here rather than repeated on
+              every row. */}
+          <p className="text-[11px] text-disabled">ora destinației · {timezone}</p>
+        </div>
         <div className="mt-3">
           <ChallengeRow
             icon={<Sun size={17} />}
@@ -574,7 +581,7 @@ function NextChallengeCountdown({ compact, timeZone }: { compact?: boolean; time
   return (
     <div className="text-center">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-        Următorul challenge: {SLOT_LABEL[next.slot]}
+        Următorul challenge: {SLOT_LABEL[next.slot]} (ora destinației)
       </p>
       <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
         {pad(hours)}:{pad(minutes)}:{pad(seconds)}

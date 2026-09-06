@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Plus, MapPin, Calendar, Trophy, Eye, EyeOff } from "lucide-react";
-import type { Trip } from "@/lib/trip";
+import { Plus, MapPin, Calendar, Clock, Trophy, Eye, EyeOff } from "lucide-react";
+import { getTripTimezone, type Trip } from "@/lib/trip";
 import { addChildProfile, updateParticipant, deleteParticipant, type Participant } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
@@ -338,6 +338,11 @@ function ConfigSection({
         label="Durata competiției"
         value={`${trip.duration_days} zile`}
       />
+      {/* R6 follow-up: fusul orar al DESTINAȚIEI, nu al dispozitivului
+          care se uită la Setări acum -- getTripTimezone falls back to
+          Europe/Bucharest doar pentru un trip vechi, pre-R6, fără
+          valoare stocată. */}
+      <ConfigRow icon={<Clock size={17} />} label="Fus orar (ora destinației)" value={getTripTimezone(trip)} />
       <ConfigRow icon={<Trophy size={17} />} label="Premiul competiției" value={prizeValue} />
       {prizeStatus === "error" && (
         <button onClick={onRetryPrize} className="self-start text-[13px] font-semibold text-primary underline">

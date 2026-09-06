@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { slugify } from "@/lib/slug";
 import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit";
 import { resolveBearerAuthUserId } from "@/lib/security/session";
+import { isValidIanaTimezone } from "@/lib/timezone";
 
 // Needs the Node runtime for the service-role Supabase client -- not
 // edge-compatible.
@@ -51,7 +52,7 @@ async function handleCreate(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
   }
 
-  const { destination, startDate, durationDays, deviceId, requestId, website } = (body ?? {}) as Record<
+  const { destination, startDate, durationDays, timezone, deviceId, requestId, website } = (body ?? {}) as Record<
     string,
     unknown
   >;
@@ -97,6 +98,21 @@ async function handleCreate(request: Request): Promise<Response> {
       { error: `Durata trebuie să fie între ${MIN_DURATION_DAYS} și ${MAX_DURATION_DAYS} zile.` },
       { status: 400 },
     );
+  }
+
+  // R6 follow-up: the DESTINATION's timezone, explicitly chosen in
+  // app/page.tsx's own picker -- required, and re-validated here as a
+  // real IANA zone identifier (isValidIanaTimezone, the same check
+  // Postgres's own is_valid_iana_timezone() constraint performs at the
+  // database layer) rather than trusted as an opaque client string. There
+  // is deliberately no fallback to any client-derived value here (no
+  // browser/Intl timezone, no header, nothing read from localStorage) --
+  // a request with this field missing or invalid is rejected outright,
+  // never silently defaulted, so a trip's timezone always reflects an
+  // actual choice made about the destination, not the creator's own
+  // device.
+  if (typeof timezone !== "string" || !isValidIanaTimezone(timezone)) {
+    return NextResponse.json({ error: "Alege un fus orar valid pentru destinație." }, { status: 400 });
   }
 
   // R6: startDate is a date-only value (no time-of-day, no timezone) --
@@ -202,14 +218,13 @@ async function handleCreate(request: Request): Promise<Response> {
       language: "ro",
       start_date: startDate,
       duration_days: duration,
-      // R6 (20260907140000_r6_trip_timezone_and_lifecycle.sql): every
-      // trip created through this route stamps its timezone explicitly
-      // -- 'ro' is already the only hardcoded language above, so
-      // Europe/Bucharest is the one real locale this public flow serves
-      // today, not a guess. A trip that genuinely needs a different zone
-      // (e.g. Europe/Athens) is set directly on the row after creation --
-      // there is no timezone picker in this form.
-      timezone: "Europe/Bucharest",
+      // R6 follow-up: the destination's own timezone, validated above --
+      // no longer hardcoded to Europe/Bucharest regardless of where the
+      // trip actually is. trips.timezone itself and its IANA CHECK
+      // constraint already exist from
+      // 20260907140000_r6_trip_timezone_and_lifecycle.sql; only this
+      // route's own value changed, not the schema.
+      timezone,
       destination: destinationName,
       created_by_device_id: deviceId,
       created_by_auth_user_id: authUserId,

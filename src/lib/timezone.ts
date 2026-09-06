@@ -87,3 +87,20 @@ export function daysBetweenDateOnly(
 ): number {
   return Math.round((Date.UTC(a.year, a.month - 1, a.day) - Date.UTC(b.year, b.month - 1, b.day)) / 86_400_000);
 }
+
+// R6 follow-up: validates a string as a real IANA zone identifier --
+// Intl.DateTimeFormat throws RangeError for anything it doesn't
+// recognize. Used both client-side (app/page.tsx's timezone picker) and
+// server-side (app/api/trips/create/route.ts, the Node runtime) as the
+// same check Postgres's own is_valid_iana_timezone() performs at the
+// database layer (20260907140000_r6_trip_timezone_and_lifecycle.sql) --
+// belt-and-suspenders, not a replacement for that constraint.
+export function isValidIanaTimezone(timeZone: string): boolean {
+  if (typeof timeZone !== "string" || !timeZone.trim()) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}

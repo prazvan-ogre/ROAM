@@ -359,38 +359,108 @@ end $$;
 reset role;
 rollback;
 
+-- =======================================================================
+-- Scenario set H: same proof as G, but with the actual NAMED destination
+-- zones this R6 follow-up batch's picker offers (app/page.tsx /
+-- src/lib/ianaTimezones.ts) rather than Etc/GMT test fixtures -- a
+-- Tokyo trip and a New York trip, both real IANA zones with their own
+-- DST rules (America/New_York observes DST, Asia/Tokyo does not), each
+-- deterministically day 1/active for its OWN zone via the same
+-- `now() at time zone <its own tz>` trick as scenario set G.
+-- =======================================================================
+begin;
+
+insert into auth.users (id) values
+  ('00000000-0000-0000-0000-0000000090a5');
+
+insert into trips (id, slug, name, duration_days, start_date, timezone) values
+  ('00000000-0000-0000-0000-000000009063', 'r6-tz-tokyo', 'R6 TZ Tokyo', 5, (now() at time zone 'Asia/Tokyo')::date, 'Asia/Tokyo'),
+  ('00000000-0000-0000-0000-000000009064', 'r6-tz-newyork', 'R6 TZ New York', 5, (now() at time zone 'America/New_York')::date, 'America/New_York');
+
+insert into participants (id, trip_id, device_id, display_name, role, auth_user_id) values
+  ('00000000-0000-0000-0000-000000009073', '00000000-0000-0000-0000-000000009063', 'dev-r6-tz2', 'R6 Tokyo Adult', 'adult', '00000000-0000-0000-0000-0000000090a5'),
+  ('00000000-0000-0000-0000-000000009074', '00000000-0000-0000-0000-000000009064', 'dev-r6-tz2', 'R6 New York Adult', 'adult', '00000000-0000-0000-0000-0000000090a5');
+
+insert into battles (id, trip_id, day_number, title, is_final) values
+  ('00000000-0000-0000-0000-000000009083', '00000000-0000-0000-0000-000000009063', 1, 'R6 Tokyo Battle Day 1', false),
+  ('00000000-0000-0000-0000-000000009084', '00000000-0000-0000-0000-000000009064', 1, 'R6 New York Battle Day 1', false);
+
+insert into questions (id, trip_id, battle_id, kind, day_number, order_index, prompt, question_type, points, verified, published) values
+  ('00000000-0000-0000-0000-000000009093', '00000000-0000-0000-0000-000000009063', '00000000-0000-0000-0000-000000009083', 'battle', 1, 1, 'R6 Tokyo Q', 'single_choice', 10, true, true),
+  ('00000000-0000-0000-0000-000000009094', '00000000-0000-0000-0000-000000009064', '00000000-0000-0000-0000-000000009084', 'battle', 1, 1, 'R6 New York Q', 'single_choice', 10, true, true);
+
+insert into answer_options (id, question_id, order_index, label, is_correct) values
+  ('00000000-0000-0000-0000-0000000090a6', '00000000-0000-0000-0000-000000009093', 1, 'Tokyo correct', true),
+  ('00000000-0000-0000-0000-0000000090a7', '00000000-0000-0000-0000-000000009094', 1, 'New York correct', true);
+
+commit;
+
+begin;
+set role authenticated;
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-0000000090a5';
+do $$
+declare rtokyo record; rnyc record;
+begin
+  select * into rtokyo from record_answer(
+    '00000000-0000-0000-0000-000000009073'::uuid,
+    '00000000-0000-0000-0000-000000009093'::uuid,
+    '00000000-0000-0000-0000-0000000090a6'::uuid
+  );
+  select * into rnyc from record_answer(
+    '00000000-0000-0000-0000-000000009074'::uuid,
+    '00000000-0000-0000-0000-000000009094'::uuid,
+    '00000000-0000-0000-0000-0000000090a7'::uuid
+  );
+  if rtokyo.status <> 'accepted' or rtokyo.contributed_to_team is not true then
+    raise exception 'FAIL scenario H (Asia/Tokyo): expected an accepted, team-contributing answer on day 1 of its own zone, got %', rtokyo;
+  end if;
+  if rnyc.status <> 'accepted' or rnyc.contributed_to_team is not true then
+    raise exception 'FAIL scenario H (America/New_York): expected an accepted, team-contributing answer on day 1 of its own zone, got %', rnyc;
+  end if;
+  raise notice 'PASS scenario H: a real Asia/Tokyo trip and a real America/New_York trip (destination-owned timezones, R6 follow-up) each open their own battle-day team window correctly';
+end $$;
+reset role;
+rollback;
+
 -- -----------------------------------------------------------------------
 -- Cleanup. Fixture data from the committed transactions above -- safe to
 -- re-run from a clean slate.
 -- -----------------------------------------------------------------------
 delete from battle_scores where battle_id in (
-  '00000000-0000-0000-0000-000000009041', '00000000-0000-0000-0000-000000009081', '00000000-0000-0000-0000-000000009082'
+  '00000000-0000-0000-0000-000000009041', '00000000-0000-0000-0000-000000009081', '00000000-0000-0000-0000-000000009082',
+  '00000000-0000-0000-0000-000000009083', '00000000-0000-0000-0000-000000009084'
 );
 delete from responses where question_id in (
   '00000000-0000-0000-0000-000000009031', '00000000-0000-0000-0000-000000009032', '00000000-0000-0000-0000-000000009033',
-  '00000000-0000-0000-0000-000000009034', '00000000-0000-0000-0000-000000009091', '00000000-0000-0000-0000-000000009092'
+  '00000000-0000-0000-0000-000000009034', '00000000-0000-0000-0000-000000009091', '00000000-0000-0000-0000-000000009092',
+  '00000000-0000-0000-0000-000000009093', '00000000-0000-0000-0000-000000009094'
 );
 delete from answer_options where question_id in (
   '00000000-0000-0000-0000-000000009031', '00000000-0000-0000-0000-000000009032', '00000000-0000-0000-0000-000000009033',
-  '00000000-0000-0000-0000-000000009034', '00000000-0000-0000-0000-000000009091', '00000000-0000-0000-0000-000000009092'
+  '00000000-0000-0000-0000-000000009034', '00000000-0000-0000-0000-000000009091', '00000000-0000-0000-0000-000000009092',
+  '00000000-0000-0000-0000-000000009093', '00000000-0000-0000-0000-000000009094'
 );
 delete from questions where id in (
   '00000000-0000-0000-0000-000000009031', '00000000-0000-0000-0000-000000009032', '00000000-0000-0000-0000-000000009033',
-  '00000000-0000-0000-0000-000000009034', '00000000-0000-0000-0000-000000009091', '00000000-0000-0000-0000-000000009092'
+  '00000000-0000-0000-0000-000000009034', '00000000-0000-0000-0000-000000009091', '00000000-0000-0000-0000-000000009092',
+  '00000000-0000-0000-0000-000000009093', '00000000-0000-0000-0000-000000009094'
 );
 delete from battles where id in (
-  '00000000-0000-0000-0000-000000009041', '00000000-0000-0000-0000-000000009081', '00000000-0000-0000-0000-000000009082'
+  '00000000-0000-0000-0000-000000009041', '00000000-0000-0000-0000-000000009081', '00000000-0000-0000-0000-000000009082',
+  '00000000-0000-0000-0000-000000009083', '00000000-0000-0000-0000-000000009084'
 );
 delete from participants where trip_id in (
   '00000000-0000-0000-0000-000000009011', '00000000-0000-0000-0000-000000009012', '00000000-0000-0000-0000-000000009013',
-  '00000000-0000-0000-0000-000000009061', '00000000-0000-0000-0000-000000009062'
+  '00000000-0000-0000-0000-000000009061', '00000000-0000-0000-0000-000000009062',
+  '00000000-0000-0000-0000-000000009063', '00000000-0000-0000-0000-000000009064'
 );
 delete from trips where id in (
   '00000000-0000-0000-0000-000000009011', '00000000-0000-0000-0000-000000009012', '00000000-0000-0000-0000-000000009013',
-  '00000000-0000-0000-0000-000000009061', '00000000-0000-0000-0000-000000009062'
+  '00000000-0000-0000-0000-000000009061', '00000000-0000-0000-0000-000000009062',
+  '00000000-0000-0000-0000-000000009063', '00000000-0000-0000-0000-000000009064'
 );
 delete from auth.users where id in (
-  '00000000-0000-0000-0000-0000000090a1', '00000000-0000-0000-0000-0000000090a2'
+  '00000000-0000-0000-0000-0000000090a1', '00000000-0000-0000-0000-0000000090a2', '00000000-0000-0000-0000-0000000090a5'
 );
 
 \echo 'r6_trip_timezone_lifecycle.test.sql: all scenarios passed.'

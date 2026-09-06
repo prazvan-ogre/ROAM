@@ -325,7 +325,9 @@ export default function DiscoverPage() {
         ) : tripNotActive === "ended" ? (
           <p>Călătoria s-a încheiat.</p>
         ) : closedInfo?.status === "before" ? (
-          <p>{SLOT_LABEL[discoverSlot]} devine disponibil la {closedInfo.opensAt}.</p>
+          <p>
+            {SLOT_LABEL[discoverSlot]} devine disponibil la {closedInfo.opensAt} (ora destinației, {getTripTimezone(trip)}).
+          </p>
         ) : (
           <p>{SLOT_LABEL[discoverSlot]} s-a încheiat pentru azi.</p>
         )}

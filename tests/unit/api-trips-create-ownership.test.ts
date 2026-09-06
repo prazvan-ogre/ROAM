@@ -37,6 +37,7 @@ function createRequest(body: Record<string, unknown>, token: string | null = TOK
 const validBody = {
   destination: "Corfu",
   startDate: "2027-06-01",
+  timezone: "Europe/Athens",
   durationDays: 5,
   deviceId: "device-1",
   requestId: "req-1",

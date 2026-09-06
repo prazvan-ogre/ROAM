@@ -1232,6 +1232,36 @@
   `timezone = 'UTC'` on their fixture trips so their own `current_date`-
   based day arithmetic keeps agreeing with the new timezone-aware
   computation regardless of what wall-clock hour CI runs at).
+- R6 follow-up (destination-owned timezone, `claude/r6-calendar-timezone-states`):
+  the first R6 cut stamped every newly-created trip with a hardcoded
+  `'Europe/Bucharest'` regardless of where the trip actually was --
+  fine only because the pilot itself was in Romania. `app/page.tsx`'s
+  public creation form now has an explicit "Fusul orar al destinației"
+  picker (`src/lib/ianaTimezones.ts`, a curated MVP list of common IANA
+  zones, not a geocoding service), defaulting to nothing selected --
+  never to the browser's own `Intl`-resolved timezone, which is the
+  creator's device, not the destination. A recognized destination keyword
+  pre-selects a matching option as a convenience
+  (`suggestTimezoneForDestination()`) but never overrides an explicit
+  choice and never submits on its own. `app/api/trips/create/route.ts`
+  re-validates the submitted value server-side as a real IANA zone
+  (`isValidIanaTimezone()`, new in `src/lib/timezone.ts`) and rejects the
+  request outright if it's missing or invalid -- no fallback to any
+  client-derived value at this layer. Settings ("Configurare") now shows
+  the trip's own timezone, and every "available at HH:MM" message
+  (Dashboard, Discover's and Battle's "closed" screens) is labeled as the
+  destination's own time. Documented as a deliberate single-timezone-per-
+  trip decision for this batch (a trip that itself crosses zones is out
+  of scope), and that nothing in the app ever changes an existing trip's
+  stored timezone automatically -- not a device's location/clock
+  changing, not a bulk rewrite of historical trips -- see
+  `docs/DATABASE.md` point 13's own follow-up paragraph. Verified with
+  new Vitest coverage (a Bucharest-device creator submitting a trip in
+  Europe/Athens/America/New_York/Asia/Tokyo stores exactly that zone, not
+  the device's), new API tests (missing/invalid/valid timezone), a named-
+  zone SQL scenario alongside the existing UTC+14/UTC-12 one, and a UI
+  test for the destination-time labeling; all pre-existing regressions
+  re-verified green.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see

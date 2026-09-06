@@ -382,6 +382,46 @@ what a newly-created row gets.
     clock the header comment there previously (and deliberately) relied
     on — the UI and `record_answer()` now share one temporal source
     instead of two independently-computed ones.
+    **The timezone belongs to the destination, not the creator (R6
+    follow-up)**: the first cut above stamped every newly-created trip
+    with a hardcoded `'Europe/Bucharest'`, regardless of where the trip
+    actually was — fine only because the pilot itself was in Romania.
+    `app/page.tsx`'s public creation form now has an explicit "Fusul orar
+    al destinației" picker (`src/lib/ianaTimezones.ts`'s
+    `COMMON_DESTINATION_TIMEZONES`, an MVP curated list — not a geocoding
+    service), defaulting to nothing selected, never to the browser's own
+    `Intl.DateTimeFormat().resolvedOptions().timeZone` (that's the
+    creator's device, not the destination). Typing a destination the
+    curated keyword list recognizes (`suggestTimezoneForDestination()`)
+    pre-selects a matching option as a convenience, but never overrides a
+    choice the person already made by hand, and never submits on its own
+    — the select is `required`. `app/api/trips/create/route.ts` re-
+    validates the submitted value server-side as a real IANA zone
+    (`isValidIanaTimezone()`, the same check as the database's own CHECK
+    constraint) and rejects the request outright if it's missing or
+    invalid — there is no fallback to a client-derived value (browser
+    timezone, a request header, anything read from `localStorage`) at
+    this layer; a trip's timezone always reflects an explicit choice
+    about the destination. Settings ("Configurare") now shows the trip's
+    timezone in the open, and every "available at HH:MM" message (the
+    Dashboard's Detalii section, Discover's and Battle's own "closed"
+    screens) is labeled as the destination's own time, since a family
+    travelling with their phones on a different zone than the
+    destination — or simply reading the app from home before the trip
+    starts — would otherwise have no way to tell whose clock a shown time
+    is on. **Single timezone per trip, deliberately, for this batch**: a
+    vacation that itself crosses zones (e.g. a cruise, or a multi-country
+    road trip) is out of scope — `trips.timezone` is one value for the
+    whole trip, exactly the destination chosen at creation, and nothing
+    in the app changes it afterward automatically: not a device's
+    location changing after creation, not its clock/timezone setting
+    changing, and not a bulk rewrite of already-created trips' historical
+    `timezone` values without an explicit decision to do so (same
+    "fallback is a runtime read, never a backfill" rule as the base R6
+    migration above). A trip that genuinely needs a different zone after
+    creation (a data-entry mistake, e.g.) is corrected by updating that
+    one row directly — there is no in-app timezone-editing UI for an
+    existing trip in this batch.
     **Final Battle points, re-confirmed 2026-09-05**: `questions.points`
     stays `10` for Final Battle questions (product-owner decision) — the
     client's own `BATTLE_POINTS.final = 5` constant (never applied to the
