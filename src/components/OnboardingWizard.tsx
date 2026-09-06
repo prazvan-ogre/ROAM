@@ -41,6 +41,13 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   // option A, and this attempt just tried B) must not be silently
   // reported as "your pick was saved" -- see handleFinish.
   const [voteConflict, setVoteConflict] = useState(false);
+  // R8: which option id this participant's vote actually got recorded
+  // for (set once castPrizeVote returns 'recorded' or 'already_recorded')
+  // -- shown as its own confirmation panel below, distinct from the
+  // "voting open" picker and from voteConflict above, so casting a real
+  // vote gets a real, visible acknowledgment instead of silently
+  // finishing onboarding.
+  const [voteRecorded, setVoteRecorded] = useState<string | null>(null);
 
   // R4 correction (round 2): the child-join request id is a real
   // idempotency key (client_request_id, see src/lib/participant.ts) --
@@ -117,36 +124,48 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
     }
   }
 
-  // R4 (2026-09-06 batch; corrected round 2): a failed vote or a failed
-  // onComplete() (e.g. the follow-up profile refresh) used to leave
+  // R8 (20260908090000_r8_prize_voting_rules.sql): a failed vote or a
+  // failed onComplete() (e.g. the follow-up profile refresh) used to leave
   // finishing=false with no explanation at all -- the button looked
   // clickable again, but nothing told the user their tap hadn't actually
   // gotten them in.
   //
-  // castPrizeVote (src/lib/prize.ts) returns a 3-way status, same shape
-  // as record_answer()'s: "recorded" | "already_recorded" | "conflict".
-  // "conflict" means this participant already has a vote on record for a
-  // DIFFERENT option than the one just picked here -- that must never be
-  // reported as "your pick was saved" (it wasn't; the original stands).
-  // Surfaced as a one-time notice the person acknowledges before
-  // finishing, rather than silently continuing as if nothing happened.
+  // castPrizeVote (src/lib/prize.ts) now returns a 6-way status:
+  // "recorded"/"already_recorded" mean the vote is on record for the
+  // option just picked -- shown below as its own confirmation, never a
+  // silent continue. "conflict" means this participant already has a
+  // vote on record for a DIFFERENT option than the one just picked here
+  // -- never reported as "your pick was saved" (it wasn't; the product
+  // rule is that a vote can never be changed once cast, so the original
+  // stands). "voting_closed"/"invalid_option"/"not_configured" mean the
+  // state changed server-side between loading this step and submitting
+  // (voting closed right at the boundary, or -- defensively -- the
+  // option/trip configuration is no longer what this screen loaded) --
+  // refreshing the status instead of finishing silently means the real
+  // current state (the winner, or "not configured") shows next, not a
+  // false "your vote was saved".
   async function handleFinish() {
     setFinishing(true);
     setFinishError(null);
     try {
-      if (voteConflict) {
-        // Already saw the notice and chose to continue -- the vote is
-        // resolved either way (their original pick stands), no need to
-        // re-attempt it.
+      if (voteConflict || voteRecorded) {
+        // Already resolved (recorded moments ago, or an earlier conflict
+        // notice already acknowledged) -- nothing left to submit.
         await onComplete();
         return;
       }
       if (canVote && selectedPrizeId && participantId) {
-        const result = await castPrizeVote(trip.id, participantId, selectedPrizeId);
+        const result = await castPrizeVote(participantId, selectedPrizeId);
         if (result === "conflict") {
           setVoteConflict(true);
           return;
         }
+        if (result === "recorded" || result === "already_recorded") {
+          setVoteRecorded(selectedPrizeId);
+          return;
+        }
+        loadPrizeStatus();
+        return;
       }
       await onComplete();
     } catch (err) {
@@ -157,7 +176,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
     }
   }
 
-  const canVote = !!prizeStatus && prizeStatus !== "error" && prizeStatus.votingOpen && prizeStatus.options.length > 0;
+  const canVote = !!prizeStatus && prizeStatus !== "error" && prizeStatus.votingOpen && prizeStatus.configured;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-12 pt-16">
@@ -261,7 +280,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
               </div>
             ) : !prizeStatus ? (
               <p className="text-center text-[15px] text-muted-foreground">Se încarcă...</p>
-            ) : prizeStatus.options.length === 0 ? (
+            ) : !prizeStatus.configured ? (
               <div className="text-center">
                 <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">
                   Premiul câștigătorilor
@@ -271,6 +290,18 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
                 </h1>
                 <p className="mt-4 text-[17px] leading-relaxed text-muted-foreground">
                   La final, o singură echipă câștigă. Premiul ei va fi anunțat în curând.
+                </p>
+              </div>
+            ) : voteRecorded ? (
+              <div className="text-center">
+                <p className="text-[13px] font-semibold uppercase tracking-wide text-primary">
+                  Votul tău a fost înregistrat
+                </p>
+                <h1 className="mt-2 text-[22px] font-semibold tracking-tight text-foreground">
+                  🗳️ {prizeStatus.options.find((o) => o.id === voteRecorded)?.title ?? "Vot înregistrat"}
+                </h1>
+                <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+                  Votul nu mai poate fi schimbat. Câștigătorul se anunță la finalul primei zile a călătoriei.
                 </p>
               </div>
             ) : !prizeStatus.votingOpen && prizeStatus.winner ? (
@@ -343,6 +374,8 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
                 "..."
               ) : voteConflict ? (
                 <>Am înțeles, continuă <ArrowRight size={16} /></>
+              ) : voteRecorded ? (
+                <>Continuă <ArrowRight size={16} /></>
               ) : (
                 <>{canVote ? "Votează și " : ""}Hai să începem <ArrowRight size={16} /></>
               )}

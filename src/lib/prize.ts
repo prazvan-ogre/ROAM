@@ -2,95 +2,79 @@ import { supabase } from "./supabase/client";
 import type { Database } from "./supabase/types";
 
 export type PrizeOption = Database["public"]["Tables"]["prize_options"]["Row"];
+export type PrizeResolutionMethod = Database["public"]["Tables"]["prize_results"]["Row"]["resolution_method"];
 
 export interface PrizeStatus {
   options: PrizeOption[];
+  // R8 (20260908090000_r8_prize_voting_rules.sql): false when the trip
+  // has fewer than 2 distinct, non-blank prize options -- the product
+  // rule that at least 2 real choices must exist before a vote means
+  // anything. votingOpen/winner/resolutionMethod are always
+  // false/null/null while this is false.
+  configured: boolean;
   votingOpen: boolean;
   winner: PrizeOption | null;
+  resolutionMethod: PrizeResolutionMethod | null;
+  // Only set while votingOpen is true -- the instant voting closes, in
+  // UTC (render it in the trip's own destination timezone, same rule as
+  // every other "available at HH:MM" label in this app -- see
+  // getTripTimezone).
   closesAt: Date | null;
 }
 
-const VOTING_WINDOW_MS = 12 * 60 * 60 * 1000;
-
-// Product owner spec: 3 prize options, each participant votes for their
-// favourite once (unique(participant_id) enforces this server-side).
-// Voting closes 12 hours after the *first* vote is cast (computed here on
-// every read, not by a background job) -- before the first vote, or with
-// no options seeded, voting is simply open indefinitely.
+// R8: voting state and the winner are now resolved and PERSISTED
+// server-side (get_prize_status RPC) -- never recomputed on the client.
+// Before this, getPrizeStatus computed "closes 12h after the first vote,
+// most votes wins, ties broken by order_index" entirely on every read:
+// a trip with zero votes never closed at all, and a random tie-break
+// (this batch's whole point) could never have been introduced safely
+// that way, since two reads moments apart could otherwise land on two
+// different "winners". See the migration header for the full contract:
+// voting closes at the end of the trip's first day, in its own
+// destination timezone; the winner, once resolved, is stored and never
+// re-rolled.
 export async function getPrizeStatus(tripId: string): Promise<PrizeStatus> {
-  const [{ data: options, error: optionsError }, { data: votes, error: votesError }] = await Promise.all([
+  const [{ data: options, error: optionsError }, { data: status, error: statusError }] = await Promise.all([
     supabase.from("prize_options").select("*").eq("trip_id", tripId).order("order_index", { ascending: true }),
-    supabase.from("prize_votes").select("prize_option_id, created_at").eq("trip_id", tripId),
+    supabase.rpc("get_prize_status", { p_trip_id: tripId }),
   ]);
   if (optionsError) throw optionsError;
-  if (votesError) throw votesError;
+  if (statusError) throw statusError;
 
   const opts = options ?? [];
-  const allVotes = votes ?? [];
+  const winner = status.winner_option_id ? (opts.find((o) => o.id === status.winner_option_id) ?? null) : null;
 
-  if (allVotes.length === 0) {
-    return { options: opts, votingOpen: true, winner: null, closesAt: null };
-  }
-
-  const firstVoteMs = Math.min(...allVotes.map((v) => new Date(v.created_at).getTime()));
-  const closesAt = new Date(firstVoteMs + VOTING_WINDOW_MS);
-  const votingOpen = Date.now() < closesAt.getTime();
-
-  if (votingOpen) {
-    return { options: opts, votingOpen: true, winner: null, closesAt };
-  }
-
-  const counts = new Map<string, number>();
-  for (const v of allVotes) {
-    counts.set(v.prize_option_id, (counts.get(v.prize_option_id) ?? 0) + 1);
-  }
-  const winner =
-    opts
-      .slice()
-      .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) || a.order_index - b.order_index)[0] ?? null;
-
-  return { options: opts, votingOpen: false, winner, closesAt };
+  return {
+    options: opts,
+    configured: status.configured,
+    votingOpen: status.voting_open,
+    winner,
+    resolutionMethod: status.resolution_method,
+    closesAt: status.closes_at ? new Date(status.closes_at) : null,
+  };
 }
 
-// "recorded": this insert is what's on record now. "already_recorded":
-// a 23505 retry, but the row already there is for the SAME option this
-// call just tried -- a true idempotent retry (lost confirmation), same
-// outcome either way. "conflict": a 23505 retry where the row already
-// there is for a DIFFERENT option -- this call's choice was NOT saved;
-// the original vote stands (matches the "one vote per participant,
-// ever" rule `unique (participant_id)` already enforces, unchanged).
-export type PrizeVoteResult = "recorded" | "already_recorded" | "conflict";
+export type PrizeVoteResult = Database["public"]["Functions"]["cast_prize_vote"]["Returns"]["status"];
 
-export async function castPrizeVote(
-  tripId: string,
-  participantId: string,
-  prizeOptionId: string,
-): Promise<PrizeVoteResult> {
-  const { error } = await supabase.from("prize_votes").insert({
-    trip_id: tripId,
-    prize_option_id: prizeOptionId,
-    participant_id: participantId,
+// R8: the only way to cast a vote now -- cast_prize_vote (SECURITY
+// DEFINER) is atomic and idempotent, and enforces every rule server-side:
+// one vote per participant ever (never changeable once recorded -- a
+// second, different choice comes back 'conflict', not applied), the
+// option must belong to the SAME trip as the participant ('invalid_option'
+// otherwise -- the old RLS `with check` never verified this), a
+// genuinely new vote is rejected once voting has closed ('voting_closed'),
+// and a trip with fewer than 2 configured options never accepts a
+// meaningless single-option "vote" ('not_configured').
+//
+// No tripId parameter -- the RPC derives it from the participant's own
+// row, so there is no way to pass a mismatched trip/participant pair
+// through this function at all (unlike the old client-side insert, which
+// took trip_id as a bare, trusted argument).
+export async function castPrizeVote(participantId: string, prizeOptionId: string): Promise<PrizeVoteResult> {
+  const { data, error } = await supabase.rpc("cast_prize_vote", {
+    p_participant_id: participantId,
+    p_prize_option_id: prizeOptionId,
   });
-  if (!error) return "recorded";
-
-  // R4 (2026-09-06 batch; corrected round 2): 23505 alone only says
-  // *a* vote is on record for this participant -- not that it's the one
-  // just attempted. Blindly treating every 23505 as success used to let
-  // a genuine conflict (this participant already voted for a different
-  // option before) report "your pick was saved" when it wasn't. Reconcile
-  // by reading back which option is actually on record: prize_votes'
-  // "trip members (or legacy trips) can read prize votes" SELECT policy
-  // (20260907090000_batch2_trip_activity_rls.sql) already permits this --
-  // no new access granted for this check.
-  if (error.code === "23505") {
-    const { data: existing, error: selectError } = await supabase
-      .from("prize_votes")
-      .select("prize_option_id")
-      .eq("participant_id", participantId)
-      .single();
-    if (selectError) throw selectError;
-    return existing.prize_option_id === prizeOptionId ? "already_recorded" : "conflict";
-  }
-
-  throw error;
+  if (error) throw error;
+  return data.status;
 }

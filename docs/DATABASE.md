@@ -34,7 +34,8 @@ Everything else maps 1:1 to the spec's entity list.
 | Table | Purpose |
 |---|---|
 | `trips` | One row per pilot trip (e.g. Kassandra 2026). `is_demo` flags seed/demo trips. `destination`/`location_info` back the Home dashboard's location blurb. `prize` is unused (superseded by `prize_options`/`prize_votes`, left in place rather than dropped). |
-| `prize_options` / `prize_votes` | The 3 prize choices for a trip, and each participant's single vote (`unique(participant_id)`) for their favourite. The option with the most votes 12h after the first vote is the competition prize, computed on read (`getPrizeStatus`) — see Setări > Configurare and the onboarding wizard's prize step. |
+| `prize_options` / `prize_votes` | The prize choices for a trip (≥2 distinct, non-blank options — enforced by constraints; see point 14 below) and each participant's single, unchangeable vote (`unique(participant_id)`) for their favourite. Written only via `cast_prize_vote()` — see Setări > Configurare and the onboarding wizard's prize step. |
+| `prize_results` | One row per trip, written exactly once by `get_prize_status()` once voting closes (end of the trip's first day, in its own destination timezone) — the resolved winner, permanently. Never recomputed once written. |
 | `battles` | A themed group of Battle questions for a given day; `is_final` marks the Final Battle. |
 | `questions` | Discover or Battle questions (`kind` discriminates). `battle_id`/`slot` set only for their respective kind. Carries the full Discover content shape: `common_core`, `one_thing`, `correct_reveal_message`/`alternative_reveal_message`, `sources`, `verified`, `published`. |
 | `answer_options` | Options for a question; `is_correct` marks the right one(s). |
@@ -131,7 +132,9 @@ identitate (Supabase Auth session)
 | `participants` profile fields (`display_name`/`role`/`age`) | edit any participant on trips it owns (Setări > Utilizatori) | edit own or any on the same trip (Setări > Utilizatori is trip-scoped, not account-scoped) | — | edit the children it manages | no special right beyond its own participation | — |
 | `participants` identity fields (`trip_id`/`device_id`/`auth_user_id`/`managed_by_participant_id`/`account_id`) | immutable for every role except `service_role` (column-level `REVOKE`) | immutable | immutable | immutable | immutable | — |
 | `responses` / `battle_scores` | — (not a creator-account concept) | read within trip; write only as self | — | write on behalf of a managed child (same `auth_user_id` as the device) | — | — |
-| `extra_assignments` / `prize_votes` | — | read within trip (needed for load-balancing/tallying); write only as self | — | same as any participant | — | — |
+| `extra_assignments` | — | read within trip (needed for load-balancing); write only as self | — | same as any participant | — | — |
+| `prize_votes` (write via `cast_prize_vote()` only, no direct insert policy) | — | read within trip (tallying); cast own vote, once, only while voting is open for that trip | — | same as any participant | — | rejected (`42501`) |
+| `prize_results` (write via `get_prize_status()` only) | — | read within trip (the resolved winner, once voting has closed) | — | same as any participant | — | rejected (`42501`) |
 | `feedback` / `analytics_events` | — | write only as self, within trip; never read back | — | same as any participant | — | — |
 | `battle_team_score()` / `trip_battle_win_tally()` (aggregate RPCs) | — | callable for trips it's a member of | rejected (`42501`) | same as any participant | — | — |
 
@@ -430,6 +433,65 @@ what a newly-created row gets.
     only source of truth for both the individual leaderboard and the
     team score going forward, closing that divergence without touching
     any already-seeded `points` value.
+14. **Prize voting rules, made a real server-side contract
+    (`20260908090000_r8_prize_voting_rules.sql`, R8)**: `prize_options`/
+    `prize_votes` (product owner's original spec) previously had no
+    server-side concept of "voting is closed" at all — `getPrizeStatus()`
+    (`src/lib/prize.ts`) computed "closes 12h after the first vote, most
+    votes wins, ties broken by `order_index`" entirely on the client, on
+    every read. That has two real bugs baked in: a trip with zero votes
+    never closed (nothing ever announced a prize if nobody voted), and
+    nothing stopped a *second* read from recomputing a *different*
+    winner once a random tie-break was introduced (this batch's whole
+    point) — two family members opening the app moments apart could see
+    two different "winners". Two new SECURITY DEFINER functions, granted
+    to anon/authenticated (the same participant-level trust as
+    `record_answer`, never an admin check):
+    - `cast_prize_vote(participant_id, prize_option_id)` — the only way
+      to write `prize_votes` now (its old direct-insert RLS policy is
+      dropped). Atomic and idempotent, same retry contract as
+      `record_answer`: `'recorded'`/`'already_recorded'`/`'conflict'`
+      (a vote can never be changed once cast — a different option than
+      what's on record is rejected, the original stands, matching
+      `record_answer`'s own already-established "no client-visible
+      overwrite" pattern), plus `'voting_closed'` (a genuinely new vote
+      attempted after the trip's first day has ended, in the trip's own
+      destination timezone — the exact end-of-day-1/start-of-day-2
+      boundary `record_answer`'s own trip-day rollover already computes,
+      factored into a shared `prize_voting_closes_at()` helper so the two
+      can't independently drift), `'invalid_option'` (the option doesn't
+      exist, or belongs to a **different trip** — the old RLS
+      `with check` never verified this at all), and `'not_configured'`
+      (fewer than 2 valid `prize_options` exist for the trip — see the
+      constraints below).
+    - `get_prize_status(trip_id)` — the read path. Once the closing
+      instant has passed and no result is stored yet, this resolves the
+      winner **once**, locking the trip's own row first (the identical
+      lock `cast_prize_vote` takes, so a vote can never be accepted by
+      one transaction while a resolution already excluded it in
+      another), and **persists** it in the new `prize_results` table
+      (one row per trip, no anon/authenticated write policy at all —
+      reachable only through this function, same "responses/
+      battle_scores" pattern as `record_answer`). Every later call, by
+      anyone — including a participant who joined after voting closed,
+      who is never shown a picker and can never change the outcome —
+      returns that same stored row, never recomputed. Zero votes cast
+      resolves to the first configured option in its own stable
+      `order_index` order (`'no_votes_default'`); a genuine tie is
+      resolved by a **controlled, deterministic** tie-break — the tied
+      option with the lowest `md5(trip_id || ':' || option_id)` —
+      instead of Postgres's own `random()`/session state, so a test can
+      independently compute the exact expected winner from the trip and
+      option ids alone (`'tie_break_random'`).
+    `prize_options` gains two constraints enforcing "distinct, non-null
+    options" at the row level: a non-blank `title` (`check (btrim(title)
+    <> '')`) and a unique `title` per trip. "At least 2 options" itself
+    isn't a row-level `CHECK` (Postgres can't count sibling rows in one)
+    — both RPCs above treat a trip with fewer than 2 options as
+    `'not_configured'`/`configured: false` instead, never running a real
+    vote or resolution against a single-option (or empty) set. The real
+    Kassandra 2026 seed data already has 3 distinct, non-blank titles —
+    unaffected by either constraint.
 
 ### Admin bootstrap and credential rotation
 
@@ -562,6 +624,8 @@ batch describes, and neither is silently reclaimed or deleted:
 - `supabase/migrations/20260907092000_batch2_battle_aggregate_authz.sql` — adds a trip-membership authorization check to `battle_team_score()`/`trip_battle_win_tally()` (previously callable with any battle/trip id by anyone); the scoring formula itself is unchanged.
 - `supabase/migrations/20260907093000_batch2_creator_account_auth.sql` — `creator_accounts.auth_user_id` (nullable, `pin_hash` now nullable too) — see "Security model" point 7 above and `src/lib/security/session.ts`.
 - `supabase/migrations/20260907094000_batch2_ip_rate_limits.sql` — `ip_rate_limits` (service-role only), backing an IP-keyed rate limit on new-trip and new-account creation alongside the existing per-device/per-phone checks.
+- `supabase/migrations/20260907140000_r6_trip_timezone_and_lifecycle.sql` — R6: `trips.timezone` (nullable IANA zone, `is_valid_iana_timezone()` CHECK), `trips_public` now exposes it, `record_answer()` computes the trip's own day in that zone and rejects a new answer on a scheduled/ended trip.
+- `supabase/migrations/20260908090000_r8_prize_voting_rules.sql` — R8: `prize_options` gains non-blank-title and unique-title-per-trip constraints; new `prize_results` table (one row per trip, written once); `prize_voting_closes_at()`, `cast_prize_vote()`, `get_prize_status()`, all three revoked-by-default and explicitly granted to anon/authenticated; `prize_votes`' old direct-insert RLS policy is dropped. See "Security model" point 14 above.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

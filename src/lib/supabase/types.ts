@@ -17,6 +17,14 @@ export type ExtraAudience = "all" | "adult" | "child";
 export type AssignmentStatus = "assigned" | "viewed" | "completed";
 export type BattleTeam = "adults" | "kids";
 export type TripContentStatus = "pending" | "generating" | "ready" | "failed";
+export type PrizeResolutionMethod = "plurality" | "tie_break_random" | "no_votes_default";
+export type PrizeVoteStatus =
+  | "recorded"
+  | "already_recorded"
+  | "conflict"
+  | "voting_closed"
+  | "invalid_option"
+  | "not_configured";
 
 type TableDef<Row, InsertRequired extends keyof Row> = {
   Row: Row;
@@ -259,6 +267,21 @@ export interface Database {
         },
         "trip_id" | "prize_option_id" | "participant_id"
       >;
+      // R8 (20260908090000_r8_prize_voting_rules.sql): written exactly
+      // once per trip, only by get_prize_status() -- no anon/authenticated
+      // insert/update/delete policy at all (same "reachable only through
+      // the owning SECURITY DEFINER function" pattern as responses/
+      // battle_scores). Once a row exists here, it IS that trip's prize
+      // result, permanently.
+      prize_results: TableDef<
+        {
+          trip_id: string;
+          winner_option_id: string;
+          resolution_method: PrizeResolutionMethod;
+          resolved_at: string;
+        },
+        "trip_id" | "winner_option_id" | "resolution_method"
+      >;
       analytics_events: TableDef<
         {
           id: string;
@@ -404,6 +427,52 @@ export interface Database {
       get_answered_correct_options: {
         Args: { p_question_ids: string[] };
         Returns: { question_id: string; correct_option_id: string }[];
+      };
+      // R8 (20260908090000_r8_prize_voting_rules.sql): the only way to
+      // write prize_votes -- atomic, idempotent, same retry contract as
+      // record_answer (status: 'recorded' | 'already_recorded' |
+      // 'conflict'), plus 'voting_closed' (a genuinely new vote attempted
+      // after the trip's first day ends, in its own destination timezone),
+      // 'invalid_option' (doesn't exist, or belongs to a different trip),
+      // and 'not_configured' (fewer than 2 valid prize options exist for
+      // this trip). `vote` is null whenever no row was written/found.
+      cast_prize_vote: {
+        Args: { p_participant_id: string; p_prize_option_id: string };
+        Returns: {
+          status:
+            | "recorded"
+            | "already_recorded"
+            | "conflict"
+            | "voting_closed"
+            | "invalid_option"
+            | "not_configured";
+          vote: {
+            id: string;
+            trip_id: string;
+            prize_option_id: string;
+            participant_id: string;
+            created_at: string;
+          } | null;
+        };
+      };
+      // R8: read path. Resolves and PERSISTS the winner (prize_results)
+      // the first time this is called after voting closes -- every later
+      // call, by anyone, returns that same stored row, never recomputed
+      // (see the migration header for why: a random tie-break must never
+      // re-roll on a later read). `configured` is false when fewer than 2
+      // valid options exist for the trip -- voting_open/winner_option_id/
+      // resolution_method are meaningless in that case (always
+      // false/null/null). `closes_at` is only ever set while voting_open
+      // is true.
+      get_prize_status: {
+        Args: { p_trip_id: string };
+        Returns: {
+          configured: boolean;
+          voting_open: boolean;
+          closes_at: string | null;
+          winner_option_id: string | null;
+          resolution_method: PrizeResolutionMethod | null;
+        };
       };
     };
   };

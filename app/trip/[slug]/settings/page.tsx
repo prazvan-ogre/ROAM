@@ -310,6 +310,21 @@ function NotJoinedNotice({ slug }: { slug: string }) {
   );
 }
 
+// R8 (20260908090000_r8_prize_voting_rules.sql): voting closes at a
+// specific instant (end of the trip's first day) rather than "12h after
+// the first vote" -- shown in the trip's own destination timezone, same
+// "ora destinației" labeling rule as every other time this app displays
+// (Dashboard's countdown, Discover/Battle's own closed screens).
+function formatClosesAt(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("ro-RO", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  }).format(date);
+}
+
 function ConfigSection({
   trip,
   prizeStatus,
@@ -324,11 +339,13 @@ function ConfigSection({
       ? "Se încarcă..."
       : prizeStatus === "error"
         ? "Nu am putut încărca"
-        : prizeStatus.options.length === 0
+        : !prizeStatus.configured
           ? "Nu a fost stabilit încă"
           : !prizeStatus.votingOpen && prizeStatus.winner
             ? prizeStatus.winner.title
-            : "Se stabilește prin vot (fiecare participant votează la înscriere)";
+            : prizeStatus.votingOpen && prizeStatus.closesAt
+              ? `Se stabilește prin vot -- se închide ${formatClosesAt(prizeStatus.closesAt, getTripTimezone(trip))} (ora destinației)`
+              : "Se stabilește prin vot (fiecare participant votează la înscriere)";
 
   return (
     <div className="flex flex-col gap-3">

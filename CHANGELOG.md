@@ -1262,6 +1262,52 @@
   zone SQL scenario alongside the existing UTC+14/UTC-12 one, and a UI
   test for the destination-time labeling; all pre-existing regressions
   re-verified green.
+- R8 (prize voting rules, `claude/prize-voting-rules`): prize voting had
+  no server-side concept of "closed" at all -- `getPrizeStatus()`
+  computed "closes 12h after the first vote, most votes wins, ties by
+  `order_index`" entirely on the client, on every read. A trip with zero
+  votes never closed, and nothing stopped two reads moments apart from
+  computing two different "winners" once a random tie-break existed.
+  Adds two SQL functions (`20260908090000_r8_prize_voting_rules.sql`,
+  granted to anon/authenticated -- the same participant-level trust as
+  `record_answer`, never an admin check): `cast_prize_vote()` is now the
+  only way to write `prize_votes` (its old direct-insert RLS policy is
+  dropped) -- atomic and idempotent, same retry contract as
+  `record_answer` (`'recorded'`/`'already_recorded'`/`'conflict'` -- a
+  vote can never be changed once cast), plus `'voting_closed'` (a
+  genuinely new vote after the trip's first day has ended, in its own
+  destination timezone), `'invalid_option'` (the option belongs to a
+  *different* trip -- the old RLS check never verified this), and
+  `'not_configured'` (fewer than 2 valid options exist). `get_prize_status()`
+  resolves the winner exactly once after closing (locking the trip row,
+  the same lock `cast_prize_vote` takes, so a vote can never land on one
+  side of the boundary while resolution already happened on the other)
+  and **persists** it in a new `prize_results` table -- every later call
+  returns that same stored row, never recomputed; a late joiner is never
+  shown a picker and sees the winning prize directly. Zero votes resolves
+  to the first configured option in its own stable `order_index` order;
+  a genuine tie is broken by a controlled, deterministic hash
+  (`md5(trip_id || ':' || option_id)`, lowest wins) instead of Postgres's
+  own `random()`, so a test can compute the exact expected winner from
+  the trip/option ids alone. `prize_options` gains a non-blank-title
+  check and a unique-title-per-trip constraint; "at least 2 options" is
+  enforced live by both RPCs (never a row-level CHECK, which can't count
+  sibling rows) rather than only at authoring time. `OnboardingWizard`'s
+  prize step now shows a distinct "vote recorded" confirmation before
+  finishing, and refreshes to the real state instead of a false success
+  if voting closes in the moment between loading the step and
+  submitting; Setări > Configurare labels the closing instant as the
+  destination's own time while voting is open. Verified with a new SQL
+  regression file (`supabase/tests/r8_prize_voting.test.sql`, `npm run
+  test:sql:r8-prize-voting`) covering a valid vote, a same-option retry,
+  an attempted change (conflict), voting after day 1, a cross-trip
+  option, zero votes, a genuine tie (with an independently-computed
+  expected winner), a participant added after close, back-to-back
+  "concurrent" votes resolving correctly, an under-configured trip, and
+  the anon/authenticated permission-denied boundary; new/updated Vitest
+  coverage for `src/lib/prize.ts`'s RPC pass-through and every
+  OnboardingWizard/Settings prize UI state. All pre-existing SQL/Vitest
+  regressions re-verified green on the same local Postgres 16 instance.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see

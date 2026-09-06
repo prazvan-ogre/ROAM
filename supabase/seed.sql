@@ -44,8 +44,13 @@ values (
 
 -- ---------------------------------------------------------------------
 -- Prize vote (product owner's 3 recommendations, wizard step 5): each
--- participant votes for their favourite on first join; the option with
--- the most votes 12h after the first vote becomes the competition prize.
+-- participant votes for their favourite on first join, at most once,
+-- ever. R8 (20260908090000_r8_prize_voting_rules.sql): voting closes at
+-- the end of the trip's FIRST day (in its own destination timezone, or
+-- Europe/Bucharest for this trip -- it predates trips.timezone and has
+-- none set), not "12h after the first vote" -- the option with the most
+-- votes at that instant becomes the competition prize, resolved once by
+-- get_prize_status() and never recomputed afterward.
 -- ---------------------------------------------------------------------
 insert into prize_options (trip_id, title, description, order_index)
 select id, o.title, o.description, o.order_index
