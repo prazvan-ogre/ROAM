@@ -135,6 +135,8 @@ jobs:
           npm run test:sql:r1-first-insert
           npm run test:sql:content-isolation
           npm run test:sql:record-answer
+          npm run test:sql:record-answer-rollback
+          npm run test:sql:integrated-flow
           npm run test:sql:batch2-activity
           npm run test:sql:batch2-lockdown
           npm run test:sql:batch2-battle-authz

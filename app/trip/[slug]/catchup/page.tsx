@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, X, History, ExternalLink } from "lucide-react";
@@ -57,6 +57,16 @@ export default function CatchUpPage() {
   const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
+  // R3 (2026-09-05 review, closure batch): same "conflict" distinction as
+  // Discover -- see that page's wasConflict for the full rationale.
+  const [wasConflict, setWasConflict] = useState(false);
+
+  // R2 (2026-09-05 review, closure batch): same guard as Discover's
+  // activeProfileIdRef -- kept in sync every render so handleSubmit's async
+  // continuation below can detect a profile switch that happened while its
+  // own request was still in flight.
+  const activeProfileIdRef = useRef<string | null>(activeProfile?.id ?? null);
+  activeProfileIdRef.current = activeProfile?.id ?? null;
 
   useEffect(() => {
     if (!trip || !profiles || profiles.length === 0 || !activeProfile) return;
@@ -78,6 +88,7 @@ export default function CatchUpPage() {
         setResponse(null);
         setExtra(null);
         setSubmitError(false);
+        setWasConflict(false);
         setStep(pending.length === 0 ? "empty" : "question");
       } catch {
         if (!cancelled) setStep("error");
@@ -99,21 +110,38 @@ export default function CatchUpPage() {
   async function handleSubmit() {
     if (!activeProfile || !selected || submitting) return;
     const current = questions[index];
+    const submittedProfileId = activeProfile.id;
+    const submittedProfileRole = activeProfile.role;
     setSubmitting(true);
     setSubmitError(false);
     try {
-      const result = await submitAnswer(activeProfile.id, current.question.id, selected.id);
+      const result = await submitAnswer(submittedProfileId, current.question.id, selected.id);
+      if (activeProfileIdRef.current !== submittedProfileId) {
+        // Switched to a different profile while this request was in
+        // flight -- submittedProfileId's answer is already safely
+        // recorded (record_answer is idempotent), but must never be
+        // painted onto whichever OTHER profile's screen is showing now.
+        return;
+      }
       setResponse(result.response);
+      setWasConflict(result.status === "conflict");
       setStep("reveal");
 
-      getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id)
-        .then(setExtra)
+      getOrAssignExtra(submittedProfileId, submittedProfileRole, current.question.id)
+        .then((assignedExtra) => {
+          if (activeProfileIdRef.current !== submittedProfileId) return;
+          setExtra(assignedExtra);
+        })
         .catch((err) => console.error("getOrAssignExtra failed", err));
     } catch (err) {
       console.error("submitAnswer failed", err);
-      setSubmitError(true);
+      if (activeProfileIdRef.current === submittedProfileId) {
+        setSubmitError(true);
+      }
     } finally {
-      setSubmitting(false);
+      if (activeProfileIdRef.current === submittedProfileId) {
+        setSubmitting(false);
+      }
     }
   }
 
@@ -123,6 +151,7 @@ export default function CatchUpPage() {
     setResponse(null);
     setExtra(null);
     setSubmitError(false);
+    setWasConflict(false);
     if (nextIndex >= questions.length) {
       setStep("done");
       return;
@@ -239,6 +268,12 @@ export default function CatchUpPage() {
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
       <FlowHeader label="De recuperat" icon={<History size={15} />} onClose={goHome} />
       <div className="flex flex-1 flex-col gap-5">
+        {wasConflict && (
+          <p className="rounded-xl bg-secondary px-4 py-3 text-[13px] leading-relaxed text-secondary-foreground">
+            Răspunsul tău fusese deja înregistrat cu o altă opțiune înainte să încerci din nou -- rămâne cel
+            înregistrat prima dată, cel de mai jos.
+          </p>
+        )}
         <div>
           <p className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-primary">{progressLabel}</p>
           <div

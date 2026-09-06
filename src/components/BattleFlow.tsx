@@ -47,6 +47,9 @@ export function BattleFlow({
   const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
+  // R3 (2026-09-05 review, closure batch): same "conflict" distinction as
+  // Discover -- see that page's wasConflict for the full rationale.
+  const [wasConflict, setWasConflict] = useState(false);
   const [correctOptionId, setCorrectOptionId] = useState<string | null>(null);
   const [passCorrect, setPassCorrect] = useState(0);
   const [passAnswered, setPassAnswered] = useState(0);
@@ -112,6 +115,7 @@ export function BattleFlow({
     setExtra(null);
     setCorrectOptionId(null);
     setSubmitError(false);
+    setWasConflict(false);
     setStep("question");
   }
 
@@ -131,8 +135,15 @@ export function BattleFlow({
       const result = await submitAnswer(activeProfile.id, current.question.id, selectedOption.id);
       setMyResponse(result.response);
       setCorrectOptionId(result.correctOptionId);
-      setPassAnswered((n) => n + 1);
-      if (result.response.is_correct) setPassCorrect((n) => n + 1);
+      setWasConflict(result.status === "conflict");
+      // Only a genuinely fresh answer belongs in this pass's own tally --
+      // "already_recorded"/"conflict" mean this question was already
+      // answered before this pass reached it (a retry, or a multi-tab
+      // race), so it must not be counted a second time here.
+      if (result.status === "accepted") {
+        setPassAnswered((n) => n + 1);
+        if (result.response.is_correct) setPassCorrect((n) => n + 1);
+      }
       setStep("reveal");
 
       getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id)
@@ -171,6 +182,7 @@ export function BattleFlow({
       setExtra(null);
       setCorrectOptionId(null);
       setSubmitError(false);
+      setWasConflict(false);
       setStep("question");
     }
   }
@@ -341,6 +353,12 @@ export function BattleFlow({
       <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
         <FlowHeader label="Battle" icon={<Moon size={15} />} onClose={goHome} />
         <div className="flex flex-1 flex-col gap-5">
+          {wasConflict && (
+            <p className="rounded-xl bg-secondary px-4 py-3 text-[13px] leading-relaxed text-secondary-foreground">
+              Răspunsul tău fusese deja înregistrat cu o altă opțiune înainte să încerci din nou -- rămâne cel
+              înregistrat prima dată, cel de mai jos.
+            </p>
+          )}
           <div className={`flex h-10 w-10 items-center justify-center rounded-full ${isCorrect ? "bg-accent" : "bg-secondary"}`}>
             {isCorrect ? <Check size={18} className="text-primary" /> : <X size={18} className="text-muted-foreground" />}
           </div>

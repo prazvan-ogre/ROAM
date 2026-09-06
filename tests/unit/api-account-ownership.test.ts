@@ -53,6 +53,13 @@ function cookieHeader(token: string): string {
   return `${ACCESS_COOKIE_NAME}=${token}`;
 }
 
+// PATCH/DELETE now check Origin/Host (R1 CSRF hardening, 2026-09-05
+// review closure batch, src/lib/security/csrf.ts) -- these tests aren't
+// about CSRF itself (see api-account-csrf.test.ts for that), so every
+// PATCH request here carries a same-origin Origin header to isolate the
+// ownership behavior under test from that unrelated check.
+const SAME_ORIGIN_HEADERS = { origin: "http://localhost", host: "localhost" };
+
 describe("batch 2: /api/account session ownership", () => {
   it("GET with no session cookie at all is rejected", async () => {
     const { GET } = await import("../../app/api/account/route");
@@ -97,7 +104,7 @@ describe("batch 2: /api/account session ownership", () => {
     const { PATCH } = await import("../../app/api/account/route");
     const request = new Request("http://localhost/api/account", {
       method: "PATCH",
-      headers: { "content-type": "application/json", cookie: cookieHeader(ATTACKER_TOKEN) },
+      headers: { "content-type": "application/json", cookie: cookieHeader(ATTACKER_TOKEN), ...SAME_ORIGIN_HEADERS },
       // An attacker who has learned/guessed the victim's id can no longer
       // aim a PATCH at it -- the route never reads accountId from the
       // body at all, only the session-resolved identity.
@@ -120,7 +127,7 @@ describe("batch 2: /api/account session ownership", () => {
     const { PATCH } = await import("../../app/api/account/route");
     const request = new Request("http://localhost/api/account", {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...SAME_ORIGIN_HEADERS },
       body: JSON.stringify({ accountId: victim.id, phoneNumber: "0799999999" }),
     });
 

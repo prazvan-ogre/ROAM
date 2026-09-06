@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Check, X, ExternalLink } from "lucide-react";
@@ -49,13 +49,43 @@ export default function DiscoverPage() {
   const [extra, setExtra] = useState<Extra | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(false);
+  // R3 (2026-09-05 review, closure batch): record_answer()'s 3-way status
+  // ("accepted" | "already_recorded" | "conflict") used to collapse into
+  // the same reveal screen regardless of which one came back -- a retry
+  // that landed on a DIFFERENT option than the one already on record
+  // (status "conflict") looked identical to a normal fresh accept, even
+  // though myResponse below is actually the ORIGINAL answer, not the one
+  // just clicked. True for "accepted"/"already_recorded" (same answer
+  // either way) but misleading for "conflict".
+  const [wasConflict, setWasConflict] = useState(false);
   const [openedAt] = useState(() => Date.now());
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
+
+  // R2 (2026-09-05 review, closure batch): read from a submission's async
+  // continuation to detect whether the active profile has since changed --
+  // a plain closure over `activeProfile` only ever sees the value frozen
+  // at the moment that continuation's outer function was created, not a
+  // live one. Kept in sync on every render (not just via an effect) so a
+  // switch that happens while a request is already in flight is visible
+  // the instant the request resolves, not one render late.
+  const activeProfileIdRef = useRef<string | null>(activeProfile?.id ?? null);
+  activeProfileIdRef.current = activeProfile?.id ?? null;
 
   useEffect(() => {
     if (!trip || !profiles || profiles.length === 0 || !activeProfile) return;
 
     let cancelled = false;
+
+    // A profile switch re-runs this effect (activeProfile dependency
+    // below) -- reset every piece of UI state tied to the PREVIOUS
+    // profile's in-progress answer before loading the new profile's own
+    // state, so an unsubmitted selection (or a stale error banner) never
+    // survives into the newly active profile's screen.
+    setSelectedOption(null);
+    setSubmitError(false);
+    setMyResponse(null);
+    setExtra(null);
+    setWasConflict(false);
 
     async function load() {
       try {
@@ -121,34 +151,57 @@ export default function DiscoverPage() {
   // awaited as part of the submission's own success/failure path.
   async function handleSubmitAnswer() {
     if (!trip || !content || !activeProfile || !selectedOption) return;
+    // Captured once, at click time -- this is WHO the request is actually
+    // submitted as (unaffected by any later switch) and the identity every
+    // later state update below must still match before it's allowed to
+    // touch the screen.
+    const submittedProfileId = activeProfile.id;
+    const submittedProfileRole = activeProfile.role;
+    const tripId = trip.id;
+    const questionId = content.question.id;
     setSubmitting(true);
     setSubmitError(false);
     try {
-      const result = await submitAnswer(activeProfile.id, content.question.id, selectedOption.id);
+      const result = await submitAnswer(submittedProfileId, questionId, selectedOption.id);
+      if (activeProfileIdRef.current !== submittedProfileId) {
+        // The active profile changed while this request was in flight --
+        // submittedProfileId's answer is already safely recorded
+        // server-side (record_answer is idempotent), but it must never be
+        // painted onto whichever OTHER profile's screen is showing now.
+        // That profile's own effect run (activeProfile dependency above)
+        // will fetch its own state fresh.
+        return;
+      }
       setMyResponse(result.response);
+      setWasConflict(result.status === "conflict");
       setStep("reveal");
 
-      getOrAssignExtra(activeProfile.id, activeProfile.role, content.question.id)
+      getOrAssignExtra(submittedProfileId, submittedProfileRole, questionId)
         .then((assignedExtra) => {
+          if (activeProfileIdRef.current !== submittedProfileId) return;
           setExtra(assignedExtra);
           if (assignedExtra) {
-            void trackEvent(trip.id, "extra_viewed", activeProfile.id, { extra_id: assignedExtra.id });
+            void trackEvent(tripId, "extra_viewed", submittedProfileId, { extra_id: assignedExtra.id });
           }
         })
         .catch((err) => console.error("getOrAssignExtra failed", err));
 
-      void trackEvent(trip.id, "answer_submitted", activeProfile.id, {
-        question_id: content.question.id,
+      void trackEvent(tripId, "answer_submitted", submittedProfileId, {
+        question_id: questionId,
         response_time_ms: Date.now() - openedAt,
       });
       if (result.response.is_correct) {
-        void trackEvent(trip.id, "answer_correct", activeProfile.id, { question_id: content.question.id });
+        void trackEvent(tripId, "answer_correct", submittedProfileId, { question_id: questionId });
       }
     } catch (err) {
       console.error("submitAnswer failed", err);
-      setSubmitError(true);
+      if (activeProfileIdRef.current === submittedProfileId) {
+        setSubmitError(true);
+      }
     } finally {
-      setSubmitting(false);
+      if (activeProfileIdRef.current === submittedProfileId) {
+        setSubmitting(false);
+      }
     }
   }
 
@@ -260,6 +313,12 @@ export default function DiscoverPage() {
       <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-12 pt-14">
         <FlowHeader label={SLOT_LABEL[discoverSlot]} icon={<SlotIcon size={15} />} onClose={goHome} />
         <div className="flex flex-1 flex-col gap-6">
+          {wasConflict && (
+            <p className="rounded-xl bg-secondary px-4 py-3 text-[13px] leading-relaxed text-secondary-foreground">
+              Răspunsul tău fusese deja înregistrat cu o altă opțiune înainte să încerci din nou -- rămâne cel
+              înregistrat prima dată, cel de mai jos.
+            </p>
+          )}
           <div>
             <div className={`mb-5 flex h-10 w-10 items-center justify-center rounded-full ${isCorrect ? "bg-accent" : "bg-secondary"}`}>
               {isCorrect ? <Check size={18} className="text-primary" /> : <X size={18} className="text-muted-foreground" />}

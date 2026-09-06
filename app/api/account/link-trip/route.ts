@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveAccountSession, resolveBearerAuthUserId, setAccountSessionCookies } from "@/lib/security/session";
 import { linkCreatorParticipant } from "@/lib/security/participantLink";
+import { isSameOriginRequest } from "@/lib/security/csrf";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,9 @@ export const runtime = "nodejs";
 // reachable from the mount effect without asking an already-authenticated
 // user to log in again.
 export async function POST(request: Request) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Cerere respinsă." }, { status: 403 });
+  }
   try {
     const session = await resolveAccountSession(request);
     if (!session) {
