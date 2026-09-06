@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveAccountSession, resolveBearerAuthUserId, setAccountSessionCookies } from "@/lib/security/session";
 import { linkCreatorParticipant } from "@/lib/security/participantLink";
+import { linkOwnedTripsToAccount } from "@/lib/security/tripOwnership";
 import { isSameOriginRequest } from "@/lib/security/csrf";
 
 export const runtime = "nodejs";
@@ -49,18 +50,25 @@ export async function POST(request: Request) {
 
     const { data: tripRow, error: tripError } = await admin
       .from("trips")
-      .select("id, created_by_account_id, created_by_device_id")
+      .select("id")
       .eq("slug", trimmedTripSlug)
       .maybeSingle();
     if (tripError) throw tripError;
 
-    // Same rule as app/api/account/route.ts's own linking: only if this
-    // exact device created that exact trip, and it isn't already tied to
-    // some other account. A trip that doesn't match either condition
-    // (someone else's device, or already linked) is silently left alone
-    // -- not an error, just nothing to do.
-    if (tripRow && !tripRow.created_by_account_id && tripRow.created_by_device_id === trimmedDeviceId) {
-      await admin.from("trips").update({ created_by_account_id: session.accountId }).eq("id", tripRow.id);
+    // R5: ownership is decided ONLY by created_by_auth_user_id (stamped
+    // server-side at trip-creation time from a verified bearer token,
+    // app/api/trips/create/route.ts), never by comparing the
+    // client-supplied deviceId above to created_by_device_id -- that
+    // column was only ever a rate-limit key (see the migration's own
+    // comment), not proof of ownership. resolveBearerAuthUserId here
+    // verifies THIS request's own bearer token the same way; sweeping up
+    // every trip this exact verified device created and hasn't linked
+    // yet (not just trimmedTripSlug) is what makes this a safe path to
+    // associate after authentication regardless of which trip brought
+    // the person back to /trips.
+    const deviceAuthUserId = await resolveBearerAuthUserId(request);
+    if (deviceAuthUserId) {
+      await linkOwnedTripsToAccount(admin, { authUserId: deviceAuthUserId, accountId: session.accountId });
     }
 
     // The caller (app/trips/page.tsx) used to need `displayName` back to
@@ -69,7 +77,6 @@ export async function POST(request: Request) {
     // an account" gap the review calls out. The join now happens here,
     // server-side, with the calling device's own anonymous identity
     // verified via its Authorization bearer token.
-    const deviceAuthUserId = await resolveBearerAuthUserId(request);
     if (tripRow && account?.display_name && deviceAuthUserId) {
       try {
         await linkCreatorParticipant(admin, {

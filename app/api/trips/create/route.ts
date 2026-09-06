@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { slugify } from "@/lib/slug";
 import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit";
+import { resolveBearerAuthUserId } from "@/lib/security/session";
 
 // Needs the Node runtime for the service-role Supabase client -- not
 // edge-compatible.
@@ -50,7 +51,10 @@ async function handleCreate(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
   }
 
-  const { destination, startDate, durationDays, deviceId, website } = (body ?? {}) as Record<string, unknown>;
+  const { destination, startDate, durationDays, deviceId, requestId, website } = (body ?? {}) as Record<
+    string,
+    unknown
+  >;
 
   // Honeypot: a field real visitors never see or fill in (see app/page.tsx).
   // Rejected with the same generic message as a real validation failure,
@@ -67,6 +71,24 @@ async function handleCreate(request: Request): Promise<Response> {
   }
   if (typeof deviceId !== "string" || !deviceId.trim()) {
     return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+  }
+  if (typeof requestId !== "string" || !requestId.trim()) {
+    return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
+  }
+
+  // R5: who actually created this trip is now a server-verified identity,
+  // not the client-asserted deviceId string above (that stays only for
+  // the per-device rate limit below, its original and only purpose --
+  // see the migration's own comment for why it was never fit to be an
+  // ownership proof). The client always has an anonymous Supabase Auth
+  // session by this point (src/lib/publicTripCreation.ts calls
+  // ensureAuthSession() before this request, the same "no form, no
+  // password" mechanism every participant already uses) -- requiring it
+  // here closes the gap that let app/api/account/route.ts's own linking
+  // trust a bare deviceId match as proof of ownership.
+  const authUserId = await resolveBearerAuthUserId(request);
+  if (!authUserId) {
+    return NextResponse.json({ error: "Nu am putut verifica sesiunea. Încearcă din nou." }, { status: 401 });
   }
 
   const duration = Number(durationDays);
@@ -88,6 +110,22 @@ async function handleCreate(request: Request): Promise<Response> {
   }
 
   const admin = createAdminClient();
+
+  // R5: a retry of THIS SAME creation attempt (a lost confirmation --
+  // the insert committed, the response never reached the client) must
+  // return the trip that already exists, never re-run the rate limits
+  // below or create a second one. Checked before anything else so a
+  // true retry never spends a day's rate-limit allowance twice.
+  const { data: existingByRequestId, error: existingLookupError } = await admin
+    .from("trips")
+    .select("slug")
+    .eq("client_request_id", requestId)
+    .maybeSingle();
+  if (existingLookupError) throw existingLookupError;
+  if (existingByRequestId) {
+    return NextResponse.json({ slug: existingByRequestId.slug });
+  }
+
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   const [deviceCountResult, globalCountResult] = await Promise.all([
@@ -138,17 +176,40 @@ async function handleCreate(request: Request): Promise<Response> {
   // flips content_status to 'ready' as part of that same migration. See
   // docs/DATABASE.md "Security model" point 6 and docs/ARCHITECTURE.md
   // "Public trip creation".
-  const { error: insertTripError } = await admin.from("trips").insert({
-    slug,
-    name: `${destinationName} ${tripYear}`,
-    language: "ro",
-    start_date: start.toISOString().slice(0, 10),
-    duration_days: duration,
-    destination: destinationName,
-    created_by_device_id: deviceId,
-    content_status: "pending",
-  });
-  if (insertTripError) throw insertTripError;
+  const { data: created, error: insertTripError } = await admin
+    .from("trips")
+    .insert({
+      slug,
+      name: `${destinationName} ${tripYear}`,
+      language: "ro",
+      start_date: start.toISOString().slice(0, 10),
+      duration_days: duration,
+      destination: destinationName,
+      created_by_device_id: deviceId,
+      created_by_auth_user_id: authUserId,
+      client_request_id: requestId,
+      content_status: "pending",
+    })
+    .select("slug")
+    .single();
 
-  return NextResponse.json({ slug });
+  if (insertTripError) {
+    if (insertTripError.code === "23505") {
+      // Either this exact requestId raced itself (two concurrent
+      // submissions) -- reconcile onto whichever won -- or, far less
+      // likely, the random slug suffix collided with an unrelated trip.
+      // Only the first case is this route's own retry contract; the
+      // second still surfaces as a real error, same as before.
+      const { data: winner, error: selectError } = await admin
+        .from("trips")
+        .select("slug")
+        .eq("client_request_id", requestId)
+        .maybeSingle();
+      if (selectError) throw selectError;
+      if (winner) return NextResponse.json({ slug: winner.slug });
+    }
+    throw insertTripError;
+  }
+
+  return NextResponse.json({ slug: created.slug });
 }

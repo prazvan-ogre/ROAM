@@ -48,6 +48,17 @@ export interface Database {
           prize: string | null;
           created_by_device_id: string | null;
           created_by_account_id: string | null;
+          // R5 (20260907130000_r5_trip_creator_verification.sql):
+          // server-verified creator identity -- stamped at creation time
+          // from a bearer token verified against Supabase Auth
+          // (resolveBearerAuthUserId), never from a client-supplied
+          // value. The only column any ownership-linking decision may
+          // compare against; created_by_device_id above is a rate-limit
+          // key only (see app/api/trips/create/route.ts).
+          created_by_auth_user_id: string | null;
+          // Client-generated idempotency key for a single creation
+          // attempt -- see createPublicTrip (src/lib/publicTripCreation.ts).
+          client_request_id: string | null;
           content_status: TripContentStatus;
           is_active: boolean;
           is_demo: boolean;

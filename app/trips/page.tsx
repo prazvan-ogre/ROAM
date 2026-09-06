@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Loader2, LogOut, Plus } from "lucide-react";
+import { Loader2, LogOut } from "lucide-react";
 import {
   authenticateCreatorAccount,
   clearStoredAccountId,
@@ -11,6 +11,8 @@ import {
   getTripsForCurrentAccount,
   linkTripToCurrentAccount,
 } from "@/lib/creatorAccount";
+import { TripsList } from "@/components/TripsList";
+import type { Trip } from "@/lib/trip";
 
 // This page has no dynamic route segment, so Next would otherwise try to
 // statically prerender it at build time -- which eagerly loads the
@@ -52,6 +54,16 @@ function TripsPageInner() {
 
   const [step, setStep] = useState<Step>("loading");
   const [isAdmin, setIsAdmin] = useState(false);
+  // R5: null = loading, "error" = failed to load, an array (possibly
+  // empty) = loaded. This page used to redirect straight into a trip's
+  // own Setări whenever the account had at least one, so it never
+  // actually rendered a populated list -- it now shows the real list,
+  // reusing the same cards/statuses as Setări > Toate călătoriile
+  // (src/components/TripsList.tsx). A load failure is no longer
+  // indistinguishable from "not logged in" either (see the mount effect
+  // below, which used to send any getTripsForCurrentAccount() error
+  // straight back to the auth screen).
+  const [trips, setTrips] = useState<Trip[] | "error" | null>(null);
   const [accountChoice, setAccountChoice] = useState<AccountChoice>(prefilledName ? "new" : "unknown");
   const [displayName, setDisplayName] = useState(prefilledName ?? "");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -59,24 +71,18 @@ function TripsPageInner() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authenticating, setAuthenticating] = useState(false);
 
-  // Logging into "Călătoriile mele" (with or without having just created
-  // a trip) lands inside a trip's Setări > Toate călătoriile instead of
-  // showing the list on this standalone page -- product owner request.
-  // The list ordered by created_at desc (src/lib/trip.ts), so [0] is the
-  // most recent; prefer one that's actually ready to look at. The list
-  // itself only gets shown here (below) for the one case with nowhere
-  // else to send you: an account with zero trips yet.
-  const loadTrips = useCallback(async () => {
-    const { isAdmin: admin, trips: list } = await getTripsForCurrentAccount();
-    setIsAdmin(admin);
-
-    if (list.length === 0) {
-      setStep("list");
-      return;
-    }
-    const target = list.find((t) => t.content_status === "ready") ?? list[0];
-    router.push(`/trip/${target.slug}/settings`);
-  }, [router]);
+  const loadTrips = useCallback(() => {
+    setTrips(null);
+    getTripsForCurrentAccount()
+      .then(({ isAdmin: admin, trips: list }) => {
+        setIsAdmin(admin);
+        setTrips(list);
+      })
+      .catch((err) => {
+        console.error("getTripsForCurrentAccount failed", err);
+        setTrips("error");
+      });
+  }, []);
 
   // The already-logged-in counterpart to handleAuthSubmit's own linking
   // below (hypothesis E, 2026-09-05 review): a device that already has a
@@ -112,7 +118,12 @@ function TripsPageInner() {
     if (linkSlug) {
       linkNewTripThenRedirect(linkSlug);
     } else {
-      loadTrips().catch(() => setStep("auth"));
+      // R5: loadTrips() handles its own failure (sets trips to "error"),
+      // never throws -- a transient load failure must not be
+      // indistinguishable from "not logged in" by falling back to the
+      // auth screen, as this used to.
+      setStep("list");
+      loadTrips();
     }
   }, [linkSlug, loadTrips, linkNewTripThenRedirect]);
 
@@ -122,12 +133,15 @@ function TripsPageInner() {
     setAuthError(null);
     setAuthenticating(true);
     try {
-      const result = await authenticateCreatorAccount({
+      await authenticateCreatorAccount({
         phoneNumber,
         pin,
         linkTripSlug: linkSlug ?? undefined,
         displayName: accountChoice === "new" ? displayName : undefined,
-        expectExisting: linkSlug ? accountChoice === "existing" : undefined,
+        // R5-fix4: no longer gated on linkSlug -- the chooser above now
+        // always runs first, so accountChoice is always "existing" or
+        // "new" by the time this form can submit.
+        expectExisting: accountChoice === "existing",
       });
 
       // Product owner request: whoever creates a trip should become its
@@ -140,16 +154,17 @@ function TripsPageInner() {
       // no-op for an older account that never set one. Best-effort there
       // too: a failure shouldn't block getting into "Călătoriile mele".
 
-      // Right after creating a trip, land inside it (Setări > Toate
-      // călătoriile) instead of on this standalone page -- product owner
-      // request. The plain "Călătoriile mele" login (no linkSlug) still
-      // lands here, showing the list on this page as before.
+      // Right after creating a trip, land inside it -- a clear
+      // destination for the trip just made/linked. The plain
+      // "Călătoriile mele" login (no linkSlug) shows the list on this
+      // page instead (below), never a redirect.
       if (linkSlug) {
         router.push(`/trip/${linkSlug}/settings`);
         return;
       }
 
-      await loadTrips();
+      setStep("list");
+      loadTrips();
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Nu am putut verifica contul. Încearcă din nou.");
     } finally {
@@ -160,6 +175,10 @@ function TripsPageInner() {
   function handleLogOut() {
     clearStoredAccountId();
     setIsAdmin(false);
+    // R5: without this, a next login (same account or a different one)
+    // could briefly render the PREVIOUS account's already-fetched list
+    // before loadTrips() resolves again.
+    setTrips(null);
     setAccountChoice("unknown");
     setDisplayName("");
     setPhoneNumber("");
@@ -176,7 +195,13 @@ function TripsPageInner() {
   }
 
   if (step === "auth") {
-    const showChooser = Boolean(linkSlug) && accountChoice === "unknown";
+    // R5-fix4: used to only show this chooser when linking a just-created
+    // trip (Boolean(linkSlug) &&...) -- the plain "Călătoriile mele" login
+    // (reached from Home, no ?link=) skipped straight to the phone/PIN
+    // form with no "Ai deja cont?" step, so an unrecognized number typed
+    // there silently created a brand-new account (see app/api/account/
+    // route.ts's own R5-fix4 comment). Shown for both paths now.
+    const showChooser = accountChoice === "unknown";
 
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-8 px-5 py-14">
@@ -207,12 +232,20 @@ function TripsPageInner() {
             >
               Nu, e prima dată
             </button>
-            <Link
-              href={`/trip/${linkSlug}/settings`}
-              className="text-center text-[13px] font-medium text-muted-foreground underline"
-            >
-              Sari peste
-            </Link>
+            {linkSlug && (
+              <>
+                <Link
+                  href={`/trip/${linkSlug}/settings`}
+                  className="text-center text-[13px] font-medium text-muted-foreground underline"
+                >
+                  Sari peste
+                </Link>
+                <p className="text-center text-[12px] leading-relaxed text-muted-foreground">
+                  Dacă amâni acum, călătoria rămâne doar pe acest dispozitiv -- o poți asocia unui cont mai târziu,
+                  revenind aici din meniul de profil.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
@@ -285,12 +318,18 @@ function TripsPageInner() {
             </button>
 
             {linkSlug && (
-              <Link
-                href={`/trip/${linkSlug}/settings`}
-                className="text-center text-[13px] font-medium text-muted-foreground underline"
-              >
-                Sari peste
-              </Link>
+              <>
+                <Link
+                  href={`/trip/${linkSlug}/settings`}
+                  className="text-center text-[13px] font-medium text-muted-foreground underline"
+                >
+                  Sari peste
+                </Link>
+                <p className="text-center text-[12px] leading-relaxed text-muted-foreground">
+                  Dacă amâni acum, călătoria rămâne doar pe acest dispozitiv -- o poți asocia unui cont mai târziu,
+                  revenind aici din meniul de profil.
+                </p>
+              </>
             )}
           </form>
         )}
@@ -320,17 +359,13 @@ function TripsPageInner() {
         </button>
       </div>
 
-      {/* loadTrips() above redirects into a trip's Setări whenever the
-          account has at least one -- this list only ever renders empty. */}
-      <p className="text-center text-[15px] text-muted-foreground">Nicio călătorie încă.</p>
-
-      <Link
-        href="/"
-        className="mt-2 flex items-center justify-center gap-2 rounded-2xl border border-border bg-card py-[14px] text-[15px] font-semibold text-foreground transition-all active:scale-[0.98]"
-      >
-        <Plus size={16} />
-        Creează o călătorie nouă
-      </Link>
+      {trips === null ? (
+        <div className="flex justify-center py-10">
+          <Loader2 size={20} className="animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <TripsList trips={trips} isAdmin={isAdmin} onRetry={loadTrips} />
+      )}
     </main>
   );
 }

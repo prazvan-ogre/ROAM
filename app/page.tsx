@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2, Sparkles } from "lucide-react";
@@ -29,13 +29,41 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // R5: requestId is a real idempotency key for trip creation
+  // (src/lib/publicTripCreation.ts) -- generated once per distinct
+  // attempt, kept stable across a retry of THAT attempt (a failed
+  // submit's own "try again" click), and reset whenever the person
+  // actually changes what they're submitting, so a genuine correction
+  // is never mistaken for a retry of the old input.
+  const requestIdRef = useRef<string | null>(null);
+
+  function handleDestinationChange(v: string) {
+    requestIdRef.current = null;
+    setDestination(v);
+  }
+  function handleStartDateChange(v: string) {
+    requestIdRef.current = null;
+    setStartDate(v);
+  }
+  function handleDurationDaysChange(v: number) {
+    requestIdRef.current = null;
+    setDurationDays(v);
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (submitting) return;
+    if (!requestIdRef.current) requestIdRef.current = crypto.randomUUID();
     setError(null);
     setSubmitting(true);
     try {
-      const result = await createPublicTrip({ destination, startDate, durationDays, website });
+      const result = await createPublicTrip({
+        destination,
+        startDate,
+        durationDays,
+        website,
+        requestId: requestIdRef.current,
+      });
       router.push(`/trips?link=${result.slug}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nu am putut crea călătoria. Încearcă din nou.");
@@ -64,7 +92,7 @@ export default function HomePage() {
           <input
             id="destination"
             value={destination}
-            onChange={(e) => setDestination(e.target.value)}
+            onChange={(e) => handleDestinationChange(e.target.value)}
             placeholder="ex. Corfu, Grecia"
             required
             maxLength={80}
@@ -81,7 +109,7 @@ export default function HomePage() {
               id="startDate"
               type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => handleStartDateChange(e.target.value)}
               required
               className="w-full rounded-2xl border border-border bg-card px-4 py-4 text-[15px] text-foreground outline-none transition-colors focus:border-primary"
             />
@@ -93,7 +121,7 @@ export default function HomePage() {
             <select
               id="durationDays"
               value={durationDays}
-              onChange={(e) => setDurationDays(Number(e.target.value))}
+              onChange={(e) => handleDurationDaysChange(Number(e.target.value))}
               className="w-full rounded-2xl border border-border bg-card px-4 py-4 text-center text-[15px] text-foreground outline-none transition-colors focus:border-primary"
             >
               {DURATION_OPTIONS.map((d) => (
