@@ -32,10 +32,17 @@ insert into auth.users (id) values
   ('00000000-0000-0000-0000-0000000060a2'), -- Family A's OWN second device/session (not used to own anything)
   ('00000000-0000-0000-0000-0000000060b1'); -- Family B, trip T2 (a wholly different trip)
 
-insert into trips (id, slug, name, duration_days, start_date) values
-  ('00000000-0000-0000-0000-000000006001', 'r3-trip-t1', 'R3 Trip T1', 5, current_date),
-  ('00000000-0000-0000-0000-000000006002', 'r3-trip-t2', 'R3 Trip T2', 5, current_date),
-  ('00000000-0000-0000-0000-000000006003', 'r3-trip-t3', 'R3 Trip T3 (started 3 days ago)', 5, current_date - interval '3 days');
+-- R6 (20260907140000_r6_trip_timezone_and_lifecycle.sql): timezone is
+-- pinned to 'UTC' explicitly here so this fixture's `current_date`-based
+-- day arithmetic stays exact regardless of what wall-clock hour CI
+-- happens to run at -- record_answer() now computes the trip's "today" in
+-- ITS OWN timezone (falling back to Europe/Bucharest only when null),
+-- which would otherwise disagree with plain `current_date` (the test
+-- session's UTC date) for part of every day.
+insert into trips (id, slug, name, duration_days, start_date, timezone) values
+  ('00000000-0000-0000-0000-000000006001', 'r3-trip-t1', 'R3 Trip T1', 5, current_date, 'UTC'),
+  ('00000000-0000-0000-0000-000000006002', 'r3-trip-t2', 'R3 Trip T2', 5, current_date, 'UTC'),
+  ('00000000-0000-0000-0000-000000006003', 'r3-trip-t3', 'R3 Trip T3 (started 3 days ago)', 5, current_date - interval '3 days', 'UTC');
 
 insert into participants (id, trip_id, device_id, display_name, role, auth_user_id) values
   ('00000000-0000-0000-0000-000000006011', '00000000-0000-0000-0000-000000006001', 'dev-a', 'Family A Adult', 'adult', '00000000-0000-0000-0000-0000000060a1'),

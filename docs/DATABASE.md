@@ -342,17 +342,46 @@ what a newly-created row gets.
     (nobody has answered this battle individually yet) additionally
     requires this to be happening on the battle's own scheduled trip day
     (or, for the Final Battle, on/after the trip's last day), computed
-    from `trips.start_date` (a `date` column — calendar-date arithmetic
-    in UTC, not a time-of-day/timezone computation, since
-    `src/lib/schedule.ts`'s hour-level windows are deliberately
-    device-local with no stored timezone and can't be replicated
-    server-side with the same precision). A battle nobody played live,
-    recovered days later through Catchup (or any other late answer, live
-    Battle path included — there is no separate "Catchup mode" anymore,
-    just `record_answer` deriving the same eligibility from the same
-    data regardless of which page called it), still scores personally
-    but can never become the team's first — or any — contribution for
-    that battle.
+    from `trips.start_date` **in the trip's own IANA timezone as of R6**
+    (see point 13 below — this was plain UTC calendar-date arithmetic
+    before R6). A battle nobody played live, recovered days later through
+    Catchup (or any other late answer, live Battle path included — there
+    is no separate "Catchup mode" anymore, just `record_answer` deriving
+    the same eligibility from the same data regardless of which page
+    called it), still scores personally but can never become the team's
+    first — or any — contribution for that battle.
+13. **`trips.timezone` + the scheduled/active/ended lifecycle
+    (`20260907140000_r6_trip_timezone_and_lifecycle.sql`, R6)**: a
+    nullable IANA zone identifier (e.g. `Europe/Bucharest`), validated at
+    write time against Postgres's own tzdata
+    (`is_valid_iana_timezone()`). `record_answer()` now derives the
+    trip's own civil "today" from `now() AT TIME ZONE
+    coalesce(trip.timezone, 'Europe/Bucharest')` — server time is still
+    the only clock ever consulted (there is no timestamp/timezone
+    parameter to forge), only the ZONE that instant is read in changed —
+    and rejects a **new** answer outright on a trip that isn't currently
+    `active` (before `start_date`: `scheduled`; past `start_date +
+    duration_days - 1`: `ended`). An idempotent retry of an answer
+    already on record still resolves normally even on a scheduled/ended
+    trip (only a genuinely new insert is blocked), so nothing answered
+    during the active window ever becomes unreadable once the trip ends —
+    and the Final Battle specifically can never reopen its team-score
+    window on a later visit once the trip has ended, closing a gap R3 left
+    open (a battle's own eligibility window was bounded, but the trip
+    itself never was). `trips_public` now also exposes `timezone`.
+    **Fallback for pre-R6 trips**: `timezone` is added nullable and NOT
+    backfilled onto any existing row — `'Europe/Bucharest'` is applied as
+    a *runtime* fallback only (both in `record_answer()` and in
+    `src/lib/trip.ts`'s `getTripTimezone()`), never written back onto the
+    row, since there's no way to know after the fact what zone a past
+    trip's participants were actually standing in; every trip created
+    after this migration (`app/api/trips/create/route.ts`) stamps it
+    explicitly. `src/lib/schedule.ts`'s Morning/Lunch/Battle windows are
+    also computed in the trip's own zone as of R6 (an explicit `timeZone`
+    parameter via `Intl.DateTimeFormat`), replacing the device-local
+    clock the header comment there previously (and deliberately) relied
+    on — the UI and `record_answer()` now share one temporal source
+    instead of two independently-computed ones.
     **Final Battle points, re-confirmed 2026-09-05**: `questions.points`
     stays `10` for Final Battle questions (product-owner decision) — the
     client's own `BATTLE_POINTS.final = 5` constant (never applied to the

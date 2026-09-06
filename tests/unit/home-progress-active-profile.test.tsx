@@ -59,7 +59,11 @@ vi.mock("@/lib/hooks", async (importOriginal) => {
     useProfiles: () => ({ data: profiles, error: undefined, mutate: vi.fn() }),
   };
 });
-vi.mock("@/lib/trip", () => ({ currentTripDay: () => 1 }));
+vi.mock("@/lib/trip", () => ({
+  currentTripDay: () => 1,
+  getTripTemporalState: () => ({ status: "active", day: 1, daysUntilStart: null }),
+  getTripTimezone: () => "Europe/Bucharest",
+}));
 vi.mock("@/lib/schedule", () => ({
   getSlotAvailability: () => ({ status: "open", opensAt: "07:00", closesAt: "11:59" }),
   getNextWindowOpening: () => ({ slot: "morning", opensAt: new Date(Date.now() + 3600_000) }),

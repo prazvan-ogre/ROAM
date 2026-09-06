@@ -120,6 +120,8 @@ vi.mock("@/lib/hooks", async (importOriginal) => {
 
 vi.mock("@/lib/trip", () => ({
   currentTripDay: () => 1,
+  getTripTemporalState: () => ({ status: "active", day: 1, daysUntilStart: null }),
+  getTripTimezone: () => "Europe/Bucharest",
 }));
 
 vi.mock("@/lib/schedule", () => ({

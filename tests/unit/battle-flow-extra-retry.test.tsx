@@ -104,7 +104,7 @@ describe("R4: BattleFlow -- an Extra load failure never hides the already-record
     };
 
     const { BattleFlow } = await import("@/components/BattleFlow");
-    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={false} profiles={[participant as never]} />);
+    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={false} profiles={[participant as never]} timeZone="Europe/Bucharest" />);
 
     await click(screen.getByRole("button", { name: "HAI LA BATTLE" }));
     await screen.findByText("Prima intrebare");
@@ -131,7 +131,7 @@ describe("R4-fix4: BattleFlow -- a slow/hanging analytics call never delays show
     trackEvent.mockReturnValue(new Promise(() => {})); // never resolves
 
     const { BattleFlow } = await import("@/components/BattleFlow");
-    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={false} profiles={[participant as never]} />);
+    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={false} profiles={[participant as never]} timeZone="Europe/Bucharest" />);
 
     await click(screen.getByRole("button", { name: "HAI LA BATTLE" }));
     await screen.findByText("Prima intrebare");

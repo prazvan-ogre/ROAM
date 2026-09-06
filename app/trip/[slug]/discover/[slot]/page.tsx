@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sun, Utensils, Check, X, ExternalLink } from "lucide-react";
-import { currentTripDay } from "@/lib/trip";
+import { getTripTemporalState, getTripTimezone } from "@/lib/trip";
 import {
   getDiscoverQuestion,
   getMyResponse,
@@ -69,6 +69,12 @@ export default function DiscoverPage() {
   const [extraFailed, setExtraFailed] = useState(false);
   const [openedAt] = useState(() => Date.now());
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
+  // R6: set instead of closedInfo when the trip ITSELF isn't active
+  // (scheduled or ended) -- a direct navigation here outside the trip's
+  // own run, not just outside today's slot window. Takes priority over
+  // closedInfo's "before/after" messaging, which only makes sense once
+  // the trip is actually under way.
+  const [tripNotActive, setTripNotActive] = useState<"scheduled" | "ended" | null>(null);
 
   // R2 (2026-09-05 review, closure batch): read from a submission's async
   // continuation to detect whether the active profile has since changed --
@@ -96,10 +102,15 @@ export default function DiscoverPage() {
     setExtra(null);
     setExtraFailed(false);
     setWasConflict(false);
+    setTripNotActive(null);
 
     async function load() {
       try {
-        const c = await getDiscoverQuestion(trip!.id, currentTripDay(trip!), discoverSlot);
+        // R6: the trip's own lifecycle state, in its own timezone --
+        // computed once per load, same source record_answer() itself
+        // uses server-side (getTripTemporalState).
+        const temporal = getTripTemporalState(trip!, new Date());
+        const c = await getDiscoverQuestion(trip!.id, temporal.day, discoverSlot);
         if (cancelled) return;
         if (!c) {
           setStep("unavailable");
@@ -110,7 +121,7 @@ export default function DiscoverPage() {
         // and a slow/unavailable analytics endpoint must never delay
         // showing the question.
         void trackEvent(trip!.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
-        await selectProfile(c);
+        await selectProfile(c, temporal.status);
       } catch {
         if (!cancelled) setStep("error");
       }
@@ -121,7 +132,7 @@ export default function DiscoverPage() {
     // own reveal-vs-question state, but the identity handleSubmitAnswer
     // below will submit as, since activeProfile itself is read fresh
     // from the hook on every render, not captured into local state here.
-    async function selectProfile(c: DiscoverQuestion) {
+    async function selectProfile(c: DiscoverQuestion, tripStatus: "scheduled" | "active" | "ended") {
       const existing = await getMyResponse(activeProfile!.id, c.question.id);
       if (cancelled) return;
       if (existing) {
@@ -142,9 +153,20 @@ export default function DiscoverPage() {
         return;
       }
 
+      // R6: a direct navigation here while the trip itself isn't active
+      // (scheduled or ended) never gets as far as a slot-window check --
+      // record_answer() would reject a fresh answer either way, so this
+      // is the same "not right now" outcome the server enforces, just
+      // surfaced before a pointless round trip.
+      if (tripStatus !== "active") {
+        setTripNotActive(tripStatus);
+        setStep("closed");
+        return;
+      }
+
       // Already-answered participants can always review (above); a fresh
       // attempt is only allowed inside this slot's time window.
-      const availability = getSlotAvailability(discoverSlot);
+      const availability = getSlotAvailability(discoverSlot, getTripTimezone(trip!));
       if (availability.status !== "open") {
         setClosedInfo(availability);
         setStep("closed");
@@ -298,7 +320,11 @@ export default function DiscoverPage() {
   if (step === "closed") {
     return (
       <Centered>
-        {closedInfo?.status === "before" ? (
+        {tripNotActive === "scheduled" ? (
+          <p>Călătoria nu a început încă.</p>
+        ) : tripNotActive === "ended" ? (
+          <p>Călătoria s-a încheiat.</p>
+        ) : closedInfo?.status === "before" ? (
           <p>{SLOT_LABEL[discoverSlot]} devine disponibil la {closedInfo.opensAt}.</p>
         ) : (
           <p>{SLOT_LABEL[discoverSlot]} s-a încheiat pentru azi.</p>

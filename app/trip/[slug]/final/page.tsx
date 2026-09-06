@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { currentTripDay } from "@/lib/trip";
+import { getTripTemporalState, getTripTimezone } from "@/lib/trip";
 import { getFinalBattle, getTripBattleWinTally, type BattleContent } from "@/lib/battle";
 import type { Participant } from "@/lib/participant";
 import { BattleFlow } from "@/components/BattleFlow";
@@ -34,8 +34,12 @@ export default function FinalBattlePage() {
 
     // The Final Battle recaps every previous day's content, so it's only
     // playable on the trip's actual last day -- everyone plays it live
-    // then, whether or not this device already went.
-    if (currentTripDay(trip) < trip.duration_days) {
+    // then, whether or not this device already went. R6: this now also
+    // means the trip must be 'active' (not 'ended') -- once the trip has
+    // ended, this page must never reopen the Final Battle for team credit
+    // again, matching record_answer()'s own server-side gate.
+    const temporal = getTripTemporalState(trip, new Date());
+    if (temporal.status !== "active" || temporal.day < trip.duration_days) {
       setContentStep("unavailable");
       return;
     }
@@ -111,9 +115,13 @@ export default function FinalBattlePage() {
   }
 
   if (contentStep === "unavailable") {
+    // R6: distinguishes "not yet" (scheduled, or active but not the last
+    // day) from "not anymore" (ended) -- the Final Battle can never
+    // reopen once the trip has ended.
+    const temporal = getTripTemporalState(trip, new Date());
     return (
       <Centered>
-        <p>Final Battle nu e încă disponibil.</p>
+        <p>{temporal.status === "ended" ? "Călătoria s-a încheiat." : "Final Battle nu e încă disponibil."}</p>
         <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
           Înapoi acasă
         </Link>
@@ -129,6 +137,7 @@ export default function FinalBattlePage() {
         slug={slug}
         isFinal
         profiles={profiles}
+        timeZone={getTripTimezone(trip)}
         onFinished={handleBattleFinished}
       />
     );

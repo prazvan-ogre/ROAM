@@ -129,7 +129,7 @@ describe("R2 regression: a partial Battle resumes at the first unanswered questi
   it("a participant who already answered Q1 is taken straight to Q2, not asked to redo Q1", async () => {
     const { BattleFlow } = await import("@/components/BattleFlow");
 
-    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={false} profiles={[participant as never]} />);
+    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={false} profiles={[participant as never]} timeZone="Europe/Bucharest" />);
 
     await click(screen.getByRole("button", { name: "HAI LA BATTLE" }));
 
@@ -142,7 +142,7 @@ describe("R2 regression: a partial Battle resumes at the first unanswered questi
   it("finishing the resumed Battle reports only the individually-answered question, not a double count", async () => {
     const { BattleFlow } = await import("@/components/BattleFlow");
 
-    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={true} profiles={[participant as never]} />);
+    render(<BattleFlow content={content as never} tripId="trip-1" slug="trip-1" isFinal={true} profiles={[participant as never]} timeZone="Europe/Bucharest" />);
 
     await click(screen.getByRole("button", { name: "HAI LA BATTLE" }));
     await screen.findByText("A doua intrebare");

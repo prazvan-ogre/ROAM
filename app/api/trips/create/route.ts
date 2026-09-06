@@ -99,13 +99,31 @@ async function handleCreate(request: Request): Promise<Response> {
     );
   }
 
-  const start = typeof startDate === "string" ? new Date(startDate) : null;
-  if (!start || Number.isNaN(start.getTime())) {
+  // R6: startDate is a date-only value (no time-of-day, no timezone) --
+  // parsed and validated as literal calendar digits, never through
+  // `new Date(str)`. That constructor DOES parse a bare "YYYY-MM-DD" as
+  // UTC midnight per spec, so start_date itself round-tripped correctly
+  // before this change, but every OTHER thing this route derived from
+  // that Date (tripYear below, the "two years out" comparison) used
+  // local-timezone getters/setters on that UTC instant -- correct only
+  // when the server's own local timezone happens to be UTC. On a
+  // negative-UTC-offset host, a start date landing on the FIRST of a
+  // month (in particular Jan 1st) could read back as the previous
+  // day/year, silently naming the trip "<destination> <year-1>".
+  if (typeof startDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
     return NextResponse.json({ error: "Introdu o dată de start validă." }, { status: 400 });
   }
-  const twoYearsFromNow = new Date();
-  twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2);
-  if (start.getTime() > twoYearsFromNow.getTime()) {
+  const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+  const startUtcMs = Date.UTC(startYear, startMonth - 1, startDay);
+  if (Number.isNaN(startUtcMs) || startMonth < 1 || startMonth > 12 || startDay < 1 || startDay > 31) {
+    return NextResponse.json({ error: "Introdu o dată de start validă." }, { status: 400 });
+  }
+  const twoYearsFromNowUtcMs = Date.UTC(
+    new Date().getUTCFullYear() + 2,
+    new Date().getUTCMonth(),
+    new Date().getUTCDate(),
+  );
+  if (startUtcMs > twoYearsFromNowUtcMs) {
     return NextResponse.json({ error: "Data de start e prea departe în viitor." }, { status: 400 });
   }
 
@@ -163,7 +181,7 @@ async function handleCreate(request: Request): Promise<Response> {
   }
 
   const destinationName = destination.trim();
-  const tripYear = start.getFullYear();
+  const tripYear = startYear;
   const baseSlug = slugify(destinationName) || "calatorie";
   const slug = `${baseSlug}-${tripYear}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -182,8 +200,16 @@ async function handleCreate(request: Request): Promise<Response> {
       slug,
       name: `${destinationName} ${tripYear}`,
       language: "ro",
-      start_date: start.toISOString().slice(0, 10),
+      start_date: startDate,
       duration_days: duration,
+      // R6 (20260907140000_r6_trip_timezone_and_lifecycle.sql): every
+      // trip created through this route stamps its timezone explicitly
+      // -- 'ro' is already the only hardcoded language above, so
+      // Europe/Bucharest is the one real locale this public flow serves
+      // today, not a guess. A trip that genuinely needs a different zone
+      // (e.g. Europe/Athens) is set directly on the row after creation --
+      // there is no timezone picker in this form.
+      timezone: "Europe/Bucharest",
       destination: destinationName,
       created_by_device_id: deviceId,
       created_by_auth_user_id: authUserId,

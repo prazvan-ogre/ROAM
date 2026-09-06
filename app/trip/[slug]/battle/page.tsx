@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { currentTripDay } from "@/lib/trip";
+import { getTripTemporalState, getTripTimezone } from "@/lib/trip";
 import { getDailyBattle, type BattleContent } from "@/lib/battle";
 import { BattleFlow } from "@/components/BattleFlow";
 import { Centered } from "@/components/ui";
 import { useTrip, useProfiles } from "@/lib/hooks";
 
-type ContentStep = "loading" | "error" | "unavailable" | "ready";
+type ContentStep = "loading" | "error" | "unavailable" | "not-active" | "ready";
 
 export default function DailyBattlePage() {
   const { slug } = useParams<{ slug: string }>();
@@ -26,11 +26,21 @@ export default function DailyBattlePage() {
 
     async function load() {
       try {
+        // R6: a direct navigation here while the trip itself isn't active
+        // (scheduled or ended) never gets as far as content -- record_
+        // answer() would reject a fresh answer either way (and Final
+        // Battle specifically must never reopen post-end), so this is
+        // surfaced before even fetching.
+        const temporal = getTripTemporalState(trip!, new Date());
+        if (temporal.status !== "active") {
+          setContentStep("not-active");
+          return;
+        }
         // Final Battle replaces that evening's regular Battle on the
         // trip's last day (product owner spec) -- never even fetched
         // then, regardless of whether content happens to exist for that
         // day; "unavailable" below points to /final instead.
-        const day = currentTripDay(trip!);
+        const day = temporal.day;
         if (day >= trip!.duration_days) {
           setContentStep("unavailable");
           return;
@@ -81,8 +91,20 @@ export default function DailyBattlePage() {
     );
   }
 
+  if (contentStep === "not-active") {
+    const temporal = getTripTemporalState(trip, new Date());
+    return (
+      <Centered>
+        <p>{temporal.status === "scheduled" ? "Călătoria nu a început încă." : "Călătoria s-a încheiat."}</p>
+        <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
+          Înapoi acasă
+        </Link>
+      </Centered>
+    );
+  }
+
   if (contentStep === "unavailable") {
-    const isLastDay = currentTripDay(trip) >= trip.duration_days;
+    const isLastDay = getTripTemporalState(trip, new Date()).day >= trip.duration_days;
     return (
       <Centered>
         <p>{isLastDay ? "În ultima zi joci Battle-ul Final." : "Battle-ul de azi nu e încă disponibil."}</p>
@@ -95,5 +117,14 @@ export default function DailyBattlePage() {
 
   if (!content) return <Centered>Se încarcă...</Centered>;
 
-  return <BattleFlow content={content} tripId={trip.id} slug={slug} isFinal={false} profiles={profiles} />;
+  return (
+    <BattleFlow
+      content={content}
+      tripId={trip.id}
+      slug={slug}
+      isFinal={false}
+      profiles={profiles}
+      timeZone={getTripTimezone(trip)}
+    />
+  );
 }

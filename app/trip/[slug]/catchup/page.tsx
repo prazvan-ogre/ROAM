@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, X, History, ExternalLink } from "lucide-react";
-import { currentTripDay, type Trip } from "@/lib/trip";
+import { getTripTemporalState, getTripTimezone, type Trip } from "@/lib/trip";
 import {
   getCatchUpQuestions,
   submitAnswer,
@@ -18,7 +18,7 @@ import { Btn, FlowHeader, Centered } from "@/components/ui";
 import { SLOT_LABEL, EXTRA_TYPE_LABEL } from "@/lib/constants";
 import { useTrip, useProfiles, useActiveProfile } from "@/lib/hooks";
 
-type Step = "loading" | "error" | "empty" | "question" | "reveal" | "done";
+type Step = "loading" | "error" | "not-active" | "empty" | "question" | "reveal" | "done";
 
 // Reachable any time from the Dashboard, unlike the wizard's own catch-up
 // step which only ever runs once, right when a participant is first
@@ -84,7 +84,15 @@ export default function CatchUpPage() {
     // every render, not captured into local state here.
     async function load(t: Trip) {
       try {
-        const pending = await getCatchUpQuestions(t.id, currentTripDay(t), activeProfile!.id);
+        // R6: catch-up is never actionable while the trip itself isn't
+        // active (scheduled -- nothing to recover yet; ended --
+        // record_answer() would reject any new answer regardless).
+        const temporal = getTripTemporalState(t, new Date());
+        if (temporal.status !== "active") {
+          if (!cancelled) setStep("not-active");
+          return;
+        }
+        const pending = await getCatchUpQuestions(t.id, temporal.day, activeProfile!.id, getTripTimezone(t));
         if (cancelled) return;
         setQuestions(pending);
         setIndex(0);
@@ -218,6 +226,18 @@ export default function CatchUpPage() {
   }
 
   if (step === "loading") return <Centered>Se încarcă...</Centered>;
+
+  if (step === "not-active") {
+    const temporal = getTripTemporalState(trip, new Date());
+    return (
+      <Centered>
+        <p>{temporal.status === "scheduled" ? "Călătoria nu a început încă." : "Călătoria s-a încheiat."}</p>
+        <Link href={`/trip/${slug}`} className="mt-4 inline-block underline">
+          Înapoi acasă
+        </Link>
+      </Centered>
+    );
+  }
 
   if (step === "empty") {
     return (

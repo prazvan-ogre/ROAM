@@ -35,8 +35,12 @@ begin;
 
 insert into auth.users (id) values ('00000000-0000-0000-0000-0000000070a1');
 
-insert into trips (id, slug, name, duration_days, start_date) values
-  ('00000000-0000-0000-0000-000000007001', 'r3-rollback-trip', 'R3 Rollback Trip', 5, current_date);
+-- R6: timezone pinned to 'UTC' so this fixture's `current_date`-based
+-- start_date stays exactly "today" for record_answer's own timezone-aware
+-- day computation, regardless of the wall-clock hour CI runs at -- see
+-- record_answer.test.sql's own fixture comment for the full rationale.
+insert into trips (id, slug, name, duration_days, start_date, timezone) values
+  ('00000000-0000-0000-0000-000000007001', 'r3-rollback-trip', 'R3 Rollback Trip', 5, current_date, 'UTC');
 
 insert into participants (id, trip_id, device_id, display_name, role, auth_user_id) values
   ('00000000-0000-0000-0000-000000007011', '00000000-0000-0000-0000-000000007001', 'dev-rollback', 'Rollback Adult', 'adult', '00000000-0000-0000-0000-0000000070a1');
