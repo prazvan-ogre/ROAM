@@ -162,6 +162,18 @@ export function setStoredActiveProfileId(tripId: string, participantId: string):
   mutate(activeProfileSwrKey(tripId), participantId, { revalidate: false });
 }
 
+// R4 (2026-09-06 batch): a lost confirmation (the insert commits, but the
+// response never reaches the caller -- a dropped connection, a tab
+// backgrounded mid-request) used to mean a retry from the onboarding
+// wizard or Setări's "Adaugă profil copil" created a second child with
+// the same name. There is no natural unique key across (trip, device,
+// name) that would also still legitimately allow two DIFFERENT children
+// sharing a name (twins), so this only recognizes an exact match created
+// by this same device in the last 15 seconds as "this is my own retry",
+// never as a general rule against same-named children. App-level check,
+// no migration or schema change.
+const RETRY_DEDUP_WINDOW_MS = 15_000;
+
 export async function addChildProfile(
   tripId: string,
   displayName: string,
@@ -172,6 +184,21 @@ export async function addChildProfile(
   // Same auth session as the managing adult (same device, same
   // signInAnonymously() call) -- a child never signs in separately.
   const authUserId = await ensureAuthSession();
+
+  let recentMatchQuery = supabase
+    .from("participants")
+    .select("*")
+    .eq("trip_id", tripId)
+    .eq("device_id", deviceId)
+    .eq("role", "child")
+    .eq("display_name", displayName)
+    .gte("created_at", new Date(Date.now() - RETRY_DEDUP_WINDOW_MS).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1);
+  recentMatchQuery = age === null ? recentMatchQuery.is("age", null) : recentMatchQuery.eq("age", age);
+  const { data: recentMatch, error: recentMatchError } = await recentMatchQuery.maybeSingle();
+  if (recentMatchError) throw recentMatchError;
+  if (recentMatch) return recentMatch;
 
   const { data, error } = await supabase
     .from("participants")

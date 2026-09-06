@@ -62,5 +62,18 @@ export async function castPrizeVote(
     prize_option_id: prizeOptionId,
     participant_id: participantId,
   });
-  if (error) throw error;
+  if (error) {
+    // R4 (2026-09-06 batch): `unique (participant_id)` (20260826130000_
+    // prize_vote.sql) is exactly the idempotency signal a retry needs --
+    // a lost confirmation (the insert committed, but the response never
+    // reached the client) used to surface as a hard error on retry,
+    // even though the vote had already been recorded. Postgres code
+    // 23505 = unique_violation: this participant already has a vote on
+    // record (from this exact call succeeding earlier, or a genuine
+    // second attempt), so there is nothing left to do -- never a reason
+    // to change or duplicate the vote, matching the "one vote per
+    // participant, ever" rule this constraint already enforces.
+    if (error.code === "23505") return;
+    throw error;
+  }
 }

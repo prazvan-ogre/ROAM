@@ -34,6 +34,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
 
   const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
   const [selectedPrizeId, setSelectedPrizeId] = useState<string | null>(null);
@@ -82,13 +83,26 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
     }
   }
 
+  // R4 (2026-09-06 batch): a failed vote or a failed onComplete() (e.g.
+  // the follow-up profile refresh) used to leave finishing=false with no
+  // explanation at all -- the button looked clickable again, but nothing
+  // told the user their tap hadn't actually gotten them in. Retrying is
+  // now safe either way: castPrizeVote is idempotent on this
+  // participant's own vote (src/lib/prize.ts), so a vote that already
+  // landed on a previous attempt is never duplicated or errors out again
+  // on retry -- only onComplete() (which never mutates anything itself)
+  // needs to actually rerun.
   async function handleFinish() {
     setFinishing(true);
+    setFinishError(null);
     try {
       if (canVote && selectedPrizeId && participantId) {
         await castPrizeVote(trip.id, participantId, selectedPrizeId);
       }
       await onComplete();
+    } catch (err) {
+      console.error("OnboardingWizard finish failed", err);
+      setFinishError("Nu am putut finaliza. Încearcă din nou.");
     } finally {
       setFinishing(false);
     }
@@ -258,9 +272,12 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
             {submitting ? "..." : "Continuă"}
           </Btn>
         ) : step === "prize" ? (
-          <Btn onClick={handleFinish} disabled={finishing || !prizeStatus || (canVote && !selectedPrizeId)}>
-            {finishing ? "..." : <>{canVote ? "Votează și " : ""}Hai să începem <ArrowRight size={16} /></>}
-          </Btn>
+          <>
+            {finishError && <p className="mb-3 text-center text-[13px] text-destructive">{finishError}</p>}
+            <Btn onClick={handleFinish} disabled={finishing || !prizeStatus || (canVote && !selectedPrizeId)}>
+              {finishing ? "..." : <>{canVote ? "Votează și " : ""}Hai să începem <ArrowRight size={16} /></>}
+            </Btn>
+          </>
         ) : (
           <Btn onClick={goNext} disabled={step === "name" && !name.trim()}>
             Continuă <ArrowRight size={16} />

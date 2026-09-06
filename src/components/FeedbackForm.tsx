@@ -34,6 +34,7 @@ export function FeedbackForm({
   const [wouldUseAgain, setWouldUseAgain] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const canSubmit =
     learnedNew !== null &&
@@ -42,9 +43,16 @@ export function FeedbackForm({
     anticipatedNext !== null &&
     wouldUseAgain !== null;
 
+  // R4 (2026-09-06 batch): submitFeedback is now idempotent on
+  // (trip_id, participant_id) (src/lib/feedback.ts) -- a retry after a
+  // lost confirmation safely recognizes feedback already on record
+  // instead of erroring or creating a duplicate. onSubmitted() (which
+  // marks this trip's feedback as given, app/trip/[slug]/final/page.tsx)
+  // only ever runs after the save itself is confirmed -- never before.
   async function handleSubmit() {
-    if (!canSubmit) return;
+    if (!canSubmit || submitting) return;
     setSubmitting(true);
+    setError(null);
     try {
       await submitFeedback({
         trip_id: tripId,
@@ -56,8 +64,14 @@ export function FeedbackForm({
         would_use_again: wouldUseAgain as "sigur" | "probabil" | "probabil_nu" | "nu",
         comment: comment.trim() || null,
       });
+      // trackEvent (src/lib/analytics.ts) never throws -- an analytics
+      // hiccup here must never hide feedback that already saved
+      // successfully.
       await trackEvent(tripId, "feedback_submitted", participantId ?? undefined);
       onSubmitted();
+    } catch (err) {
+      console.error("submitFeedback failed", err);
+      setError("Nu am putut trimite răspunsurile. Verifică-ți conexiunea și încearcă din nou.");
     } finally {
       setSubmitting(false);
     }
@@ -119,8 +133,9 @@ export function FeedbackForm({
         />
       </div>
 
+      {error && <p className="text-center text-[13px] text-destructive">{error}</p>}
       <Btn onClick={handleSubmit} disabled={!canSubmit || submitting}>
-        {submitting ? "..." : "TRIMITE"}
+        {submitting ? "..." : error ? "ÎNCEARCĂ DIN NOU" : "TRIMITE"}
       </Btn>
     </main>
   );
