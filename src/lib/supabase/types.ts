@@ -43,6 +43,13 @@ export interface Database {
           language: string;
           start_date: string | null;
           duration_days: number;
+          // R6 (20260907140000_r6_trip_timezone_and_lifecycle.sql):
+          // nullable IANA zone (e.g. 'Europe/Bucharest') the trip's own
+          // day/window calculations are computed in -- null only for a
+          // pre-R6 row (never backfilled; see that migration's header for
+          // the runtime fallback used instead). Every trip created since
+          // stamps this explicitly (app/api/trips/create/route.ts).
+          timezone: string | null;
           destination: string | null;
           location_info: string | null;
           prize: string | null;
@@ -331,6 +338,8 @@ export interface Database {
         is_active: boolean;
         is_demo: boolean;
         created_at: string;
+        // R6: see the base `trips` table's own `timezone` column comment.
+        timezone: string | null;
       }>;
     };
     Functions: {

@@ -1,5 +1,6 @@
 import { supabase } from "./supabase/client";
 import { getSlotAvailability } from "./schedule";
+import { DEFAULT_TRIP_TIMEZONE } from "./timezone";
 import type { Database, ParticipantRole, QuestionSlot } from "./supabase/types";
 
 export type Question = Database["public"]["Tables"]["questions"]["Row"];
@@ -227,6 +228,7 @@ export async function getCatchUpQuestions(
   tripId: string,
   currentDay: number,
   participantId: string,
+  timeZone: string = DEFAULT_TRIP_TIMEZONE,
 ): Promise<CatchUpQuestion[]> {
   const { data: finalBattle, error: finalBattleError } = await supabase
     .from("battles")
@@ -246,9 +248,9 @@ export async function getCatchUpQuestions(
   if (!questions || questions.length === 0) return [];
 
   const todayWindowClosed = {
-    morning: getSlotAvailability("morning").status === "after",
-    lunch: getSlotAvailability("lunch").status === "after",
-    battle: getSlotAvailability("battle").status === "after",
+    morning: getSlotAvailability("morning", timeZone).status === "after",
+    lunch: getSlotAvailability("lunch", timeZone).status === "after",
+    battle: getSlotAvailability("battle", timeZone).status === "after",
   };
 
   const eligible = questions.filter((q) => {

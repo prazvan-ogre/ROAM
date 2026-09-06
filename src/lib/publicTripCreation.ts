@@ -5,6 +5,9 @@ export interface CreateTripInput {
   destination: string;
   startDate: string;
   durationDays: number;
+  // R6 follow-up: the destination's own IANA timezone (app/page.tsx's
+  // picker) -- never derived from this device's browser/Intl timezone.
+  timezone: string;
   website: string;
   requestId: string;
 }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2, Sparkles } from "lucide-react";
 import { createPublicTrip } from "@/lib/publicTripCreation";
+import { COMMON_DESTINATION_TIMEZONES, suggestTimezoneForDestination } from "@/lib/ianaTimezones";
 
 const MIN_DURATION_DAYS = 3;
 const MAX_DURATION_DAYS = 10;
@@ -25,6 +26,12 @@ export default function HomePage() {
   const [destination, setDestination] = useState("");
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [durationDays, setDurationDays] = useState(5);
+  // R6 follow-up: the trip's timezone belongs to the DESTINATION, not to
+  // whoever fills in this form -- starts empty (never the browser's own
+  // Intl-resolved zone) so submitting requires an explicit choice, and
+  // the <select required> below blocks a silent empty/default value from
+  // ever reaching the server.
+  const [timezone, setTimezone] = useState("");
   const [website, setWebsite] = useState(""); // honeypot -- see route.ts
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,9 +44,24 @@ export default function HomePage() {
   // is never mistaken for a retry of the old input.
   const requestIdRef = useRef<string | null>(null);
 
+  // Once the person has touched the timezone select directly, the
+  // destination-keyword auto-suggestion below stops overwriting it --
+  // a suggestion pre-selects an option for convenience, it never fights
+  // an explicit correction.
+  const timezoneTouchedRef = useRef(false);
+
   function handleDestinationChange(v: string) {
     requestIdRef.current = null;
     setDestination(v);
+    if (!timezoneTouchedRef.current) {
+      const suggested = suggestTimezoneForDestination(v);
+      if (suggested) setTimezone(suggested);
+    }
+  }
+  function handleTimezoneChange(v: string) {
+    requestIdRef.current = null;
+    timezoneTouchedRef.current = true;
+    setTimezone(v);
   }
   function handleStartDateChange(v: string) {
     requestIdRef.current = null;
@@ -53,6 +75,10 @@ export default function HomePage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (submitting) return;
+    if (!timezone) {
+      setError("Alege fusul orar al destinației.");
+      return;
+    }
     if (!requestIdRef.current) requestIdRef.current = crypto.randomUUID();
     setError(null);
     setSubmitting(true);
@@ -61,6 +87,7 @@ export default function HomePage() {
         destination,
         startDate,
         durationDays,
+        timezone,
         website,
         requestId: requestIdRef.current,
       });
@@ -98,6 +125,31 @@ export default function HomePage() {
             maxLength={80}
             className="w-full rounded-2xl border border-border bg-card px-5 py-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
           />
+        </div>
+
+        <div>
+          <label htmlFor="timezone" className="mb-1.5 block text-[13px] font-medium text-muted-foreground">
+            Fusul orar al destinației
+          </label>
+          <select
+            id="timezone"
+            value={timezone}
+            onChange={(e) => handleTimezoneChange(e.target.value)}
+            required
+            className="w-full rounded-2xl border border-border bg-card px-4 py-4 text-[15px] text-foreground outline-none transition-colors focus:border-primary"
+          >
+            <option value="" disabled>
+              Alege fusul orar...
+            </option>
+            {COMMON_DESTINATION_TIMEZONES.map((tz) => (
+              <option key={tz.value} value={tz.value}>
+                {tz.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-[12px] text-disabled">
+            Zilele și ferestrele Dimineață/Prânz/Battle se calculează în ora destinației, nu a telefonului tău.
+          </p>
         </div>
 
         <div className="flex gap-3">

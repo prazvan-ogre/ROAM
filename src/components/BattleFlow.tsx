@@ -29,6 +29,7 @@ export function BattleFlow({
   slug,
   isFinal,
   profiles,
+  timeZone,
   onFinished,
 }: {
   content: BattleContent;
@@ -36,6 +37,11 @@ export function BattleFlow({
   slug: string;
   isFinal: boolean;
   profiles: Participant[];
+  // R6: the trip's own IANA timezone -- only actually consulted for the
+  // daily Battle's time-of-day window below (isFinal skips that check
+  // entirely, so the Final Battle page passes this along too, just never
+  // uses it).
+  timeZone: string;
   onFinished?: () => void;
 }) {
   const router = useRouter();
@@ -108,7 +114,7 @@ export function BattleFlow({
     // window -- the Final Battle has no such window (it's gated to the
     // trip's last day instead, by the /final page).
     if (!isFinal) {
-      const availability = getSlotAvailability("battle");
+      const availability = getSlotAvailability("battle", timeZone);
       if (availability.status !== "open") {
         setClosedInfo(availability);
         setStep("closed");
@@ -309,7 +315,9 @@ export function BattleFlow({
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 text-center">
         {closedInfo?.status === "before" ? (
-          <p className="text-muted-foreground">Battle-ul devine disponibil la {closedInfo.opensAt}.</p>
+          <p className="text-muted-foreground">
+            Battle-ul devine disponibil la {closedInfo.opensAt} (ora destinației, {timeZone}).
+          </p>
         ) : (
           <p className="text-muted-foreground">Battle-ul s-a încheiat pentru azi.</p>
         )}

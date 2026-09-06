@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { slugify } from "@/lib/slug";
 import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit";
 import { resolveBearerAuthUserId } from "@/lib/security/session";
+import { isValidIanaTimezone } from "@/lib/timezone";
 
 // Needs the Node runtime for the service-role Supabase client -- not
 // edge-compatible.
@@ -51,7 +52,7 @@ async function handleCreate(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
   }
 
-  const { destination, startDate, durationDays, deviceId, requestId, website } = (body ?? {}) as Record<
+  const { destination, startDate, durationDays, timezone, deviceId, requestId, website } = (body ?? {}) as Record<
     string,
     unknown
   >;
@@ -99,13 +100,46 @@ async function handleCreate(request: Request): Promise<Response> {
     );
   }
 
-  const start = typeof startDate === "string" ? new Date(startDate) : null;
-  if (!start || Number.isNaN(start.getTime())) {
+  // R6 follow-up: the DESTINATION's timezone, explicitly chosen in
+  // app/page.tsx's own picker -- required, and re-validated here as a
+  // real IANA zone identifier (isValidIanaTimezone, the same check
+  // Postgres's own is_valid_iana_timezone() constraint performs at the
+  // database layer) rather than trusted as an opaque client string. There
+  // is deliberately no fallback to any client-derived value here (no
+  // browser/Intl timezone, no header, nothing read from localStorage) --
+  // a request with this field missing or invalid is rejected outright,
+  // never silently defaulted, so a trip's timezone always reflects an
+  // actual choice made about the destination, not the creator's own
+  // device.
+  if (typeof timezone !== "string" || !isValidIanaTimezone(timezone)) {
+    return NextResponse.json({ error: "Alege un fus orar valid pentru destinație." }, { status: 400 });
+  }
+
+  // R6: startDate is a date-only value (no time-of-day, no timezone) --
+  // parsed and validated as literal calendar digits, never through
+  // `new Date(str)`. That constructor DOES parse a bare "YYYY-MM-DD" as
+  // UTC midnight per spec, so start_date itself round-tripped correctly
+  // before this change, but every OTHER thing this route derived from
+  // that Date (tripYear below, the "two years out" comparison) used
+  // local-timezone getters/setters on that UTC instant -- correct only
+  // when the server's own local timezone happens to be UTC. On a
+  // negative-UTC-offset host, a start date landing on the FIRST of a
+  // month (in particular Jan 1st) could read back as the previous
+  // day/year, silently naming the trip "<destination> <year-1>".
+  if (typeof startDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
     return NextResponse.json({ error: "Introdu o dată de start validă." }, { status: 400 });
   }
-  const twoYearsFromNow = new Date();
-  twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2);
-  if (start.getTime() > twoYearsFromNow.getTime()) {
+  const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+  const startUtcMs = Date.UTC(startYear, startMonth - 1, startDay);
+  if (Number.isNaN(startUtcMs) || startMonth < 1 || startMonth > 12 || startDay < 1 || startDay > 31) {
+    return NextResponse.json({ error: "Introdu o dată de start validă." }, { status: 400 });
+  }
+  const twoYearsFromNowUtcMs = Date.UTC(
+    new Date().getUTCFullYear() + 2,
+    new Date().getUTCMonth(),
+    new Date().getUTCDate(),
+  );
+  if (startUtcMs > twoYearsFromNowUtcMs) {
     return NextResponse.json({ error: "Data de start e prea departe în viitor." }, { status: 400 });
   }
 
@@ -163,7 +197,7 @@ async function handleCreate(request: Request): Promise<Response> {
   }
 
   const destinationName = destination.trim();
-  const tripYear = start.getFullYear();
+  const tripYear = startYear;
   const baseSlug = slugify(destinationName) || "calatorie";
   const slug = `${baseSlug}-${tripYear}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -182,8 +216,15 @@ async function handleCreate(request: Request): Promise<Response> {
       slug,
       name: `${destinationName} ${tripYear}`,
       language: "ro",
-      start_date: start.toISOString().slice(0, 10),
+      start_date: startDate,
       duration_days: duration,
+      // R6 follow-up: the destination's own timezone, validated above --
+      // no longer hardcoded to Europe/Bucharest regardless of where the
+      // trip actually is. trips.timezone itself and its IANA CHECK
+      // constraint already exist from
+      // 20260907140000_r6_trip_timezone_and_lifecycle.sql; only this
+      // route's own value changed, not the schema.
+      timezone,
       destination: destinationName,
       created_by_device_id: deviceId,
       created_by_auth_user_id: authUserId,

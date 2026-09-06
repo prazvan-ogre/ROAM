@@ -36,6 +36,7 @@ const trip = {
   language: "ro",
   duration_days: 5,
   start_date: null,
+  timezone: null,
   destination: "Halkidiki",
   location_info: null,
   content_status: "ready" as const,

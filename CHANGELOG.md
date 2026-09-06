@@ -1168,6 +1168,101 @@
     impersonation risk this batch closes elsewhere. This is a real,
     still-open product decision, not an oversight.
 
+- R6 (calendar/timezone/lifecycle review, `claude/r6-calendar-timezone-states`):
+  `trips` gains a nullable `timezone` IANA column, validated against
+  Postgres's own tzdata (`is_valid_iana_timezone()`,
+  `20260907140000_r6_trip_timezone_and_lifecycle.sql`), and every trip's
+  Dashboard now shows a real **scheduled / active / ended** lifecycle
+  instead of always reading as some clamped day between 1 and
+  `duration_days` (a future trip previously showed "Ziua 1"; a trip long
+  over stayed stuck on its last day forever). `src/lib/trip.ts`'s
+  `currentTripDay()` — previously `new Date(start_date)`'s local getters
+  compared against the DEVICE's own local calendar day, silently wrong by
+  a day in a negative-UTC-offset device and unaware of any trip timezone
+  at all — is replaced by `getTripTemporalState()`, computed in the
+  trip's own IANA zone via `Intl.DateTimeFormat` (new
+  `src/lib/timezone.ts`), never the device's; `currentTripDay()` itself
+  stays as a thin back-compat wrapper. `src/lib/schedule.ts`'s Morning/
+  Lunch/Battle windows are now computed in that same trip timezone too
+  (an explicit `timeZone` parameter), replacing the device-local clock its
+  own header previously described as a deliberate design choice — the UI
+  and the server now share one temporal source instead of two
+  independently-computed ones. Server-side, `record_answer()` now derives
+  the trip's own "today" from `now() AT TIME ZONE
+  coalesce(trip.timezone, 'Europe/Bucharest')` (was plain UTC calendar-date
+  arithmetic) and rejects a **new** answer outright on a trip that isn't
+  currently `active` — a scheduled or ended trip can no longer have its
+  Discover/Battle/Catchup content answered at all, and the Final Battle
+  specifically can never reopen its team-score window on a later visit
+  once the trip has ended. An idempotent retry of an answer already on
+  record (from while the trip WAS active) still resolves normally even
+  after the trip ends, so nothing already answered becomes unreadable.
+  `app/trip/[slug]/page.tsx` renders three distinct states (scheduled:
+  start date/countdown, no actions; active: unchanged day/window UI, now
+  timezone-correct, re-derived every 30s so an open screen picks up a day
+  rollover or a scheduled→active/active→ended transition on its own;
+  ended: no new-answer actions, Final Battle shows "not played" instead of
+  a reopen CTA, recap/leaderboard untouched), and Discover/Battle/Final/
+  Catchup all redirect a direct navigation outside their allowed period
+  back to a "not available" message instead of attempting the flow.
+  `app/api/trips/create/route.ts`'s date-only `startDate` parsing is
+  rewritten to split literal calendar digits instead of `new
+  Date(str).getFullYear()` (a real, if minor, local-getters-on-a-
+  UTC-instant bug on a negative-offset host), and every newly created trip
+  stamps `timezone: 'Europe/Bucharest'` explicitly (the only locale this
+  public flow serves — `language: 'ro'` is already hardcoded the same
+  way). **Fallback for pre-R6 trips**: `timezone` is nullable and NOT
+  backfilled onto any existing row — `'Europe/Bucharest'` is a *runtime*
+  fallback only, in both `record_answer()` and `getTripTimezone()`, never
+  written back onto the row; see `docs/DATABASE.md` point 13 and the R6
+  report for the full write-up and the product decision this still
+  leaves open for any specific pre-R6 trip that turns out to need a
+  different zone. Verified with a new Vitest suite
+  (`tests/unit/r6-trip-timezone-lifecycle.test.ts`, 33 cases: DST spring-
+  forward/fall-back, positive/negative UTC offsets, day/window boundaries,
+  device-timezone independence, date-only parsing) and a new SQL
+  regression file (`supabase/tests/r6_trip_timezone_lifecycle.test.sql`,
+  `npm run test:sql:r6-timezone-lifecycle`, wired into CI) covering IANA
+  validation, the scheduled/ended reject-vs-idempotent-retry contract, the
+  Final Battle's permanent post-end lock, and that eligibility genuinely
+  comes from each trip's own declared zone (a UTC+14 and a UTC-12 fixture
+  trip each correctly open their own battle day). All pre-existing SQL/
+  Vitest regressions re-verified green against the same local Postgres 16
+  instance (`record_answer.test.sql` and its two siblings now pin
+  `timezone = 'UTC'` on their fixture trips so their own `current_date`-
+  based day arithmetic keeps agreeing with the new timezone-aware
+  computation regardless of what wall-clock hour CI runs at).
+- R6 follow-up (destination-owned timezone, `claude/r6-calendar-timezone-states`):
+  the first R6 cut stamped every newly-created trip with a hardcoded
+  `'Europe/Bucharest'` regardless of where the trip actually was --
+  fine only because the pilot itself was in Romania. `app/page.tsx`'s
+  public creation form now has an explicit "Fusul orar al destinației"
+  picker (`src/lib/ianaTimezones.ts`, a curated MVP list of common IANA
+  zones, not a geocoding service), defaulting to nothing selected --
+  never to the browser's own `Intl`-resolved timezone, which is the
+  creator's device, not the destination. A recognized destination keyword
+  pre-selects a matching option as a convenience
+  (`suggestTimezoneForDestination()`) but never overrides an explicit
+  choice and never submits on its own. `app/api/trips/create/route.ts`
+  re-validates the submitted value server-side as a real IANA zone
+  (`isValidIanaTimezone()`, new in `src/lib/timezone.ts`) and rejects the
+  request outright if it's missing or invalid -- no fallback to any
+  client-derived value at this layer. Settings ("Configurare") now shows
+  the trip's own timezone, and every "available at HH:MM" message
+  (Dashboard, Discover's and Battle's "closed" screens) is labeled as the
+  destination's own time. Documented as a deliberate single-timezone-per-
+  trip decision for this batch (a trip that itself crosses zones is out
+  of scope), and that nothing in the app ever changes an existing trip's
+  stored timezone automatically -- not a device's location/clock
+  changing, not a bulk rewrite of historical trips -- see
+  `docs/DATABASE.md` point 13's own follow-up paragraph. Verified with
+  new Vitest coverage (a Bucharest-device creator submitting a trip in
+  Europe/Athens/America/New_York/Asia/Tokyo stores exactly that zone, not
+  the device's), new API tests (missing/invalid/valid timezone), a named-
+  zone SQL scenario alongside the existing UTC+14/UTC-12 one, and a UI
+  test for the destination-time labeling; all pre-existing regressions
+  re-verified green.
+
 ### Known limitations
 - Participation is still registration-free and device-based (see
   `docs/DATABASE.md` "Security model") -- R1 backs this with a real
