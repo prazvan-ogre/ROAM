@@ -3,24 +3,26 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Plus, MapPin, Calendar, Clock, Trophy, Eye, EyeOff } from "lucide-react";
+import { Plus, MapPin, Calendar, Clock, Trophy, Eye, EyeOff, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 import { getTripTimezone, type Trip } from "@/lib/trip";
 import { addChildProfile, updateParticipant, deleteParticipant, type Participant } from "@/lib/participant";
 import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
 import { getAccountDetails, getStoredAccountId, getTripsForCurrentAccount, updateAccountDetails } from "@/lib/creatorAccount";
+import { validateTripContent, publishTrip, type ContentValidationIssue, type PublishTripResult } from "@/lib/adminContent";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { TripsList } from "@/components/TripsList";
 import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Tab = "trips" | "config" | "users" | "info";
+type Tab = "trips" | "config" | "users" | "info" | "publish";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "trips", label: "Toate călătoriile" },
   { id: "config", label: "Configurare" },
   { id: "users", label: "Utilizatori" },
   { id: "info", label: "Info" },
+  { id: "publish", label: "Publicare" },
 ];
 
 export default function SettingsPage() {
@@ -214,7 +216,7 @@ export default function SettingsPage() {
       <h1 className="mb-4 text-[28px] font-semibold tracking-tight text-foreground">Setări</h1>
 
       <div className="mb-6 flex rounded-xl bg-secondary p-1">
-        {TABS.filter((t) => t.id !== "trips" || hasAccount).map((t) => (
+        {TABS.filter((t) => (t.id !== "trips" || hasAccount) && (t.id !== "publish" || isAdmin)).map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -275,6 +277,15 @@ export default function SettingsPage() {
 
       {tab === "info" && <InfoSection />}
 
+      {/* R7: admin-only (filtered out of the tab strip above for anyone
+          else), and deliberately NOT gated on trip.content_status ===
+          "ready" like Configurare/Utilizatori above -- this tab's whole
+          purpose is to show WHY a pending/failed trip isn't ready yet,
+          and to publish it once it is. Client-side isAdmin only decides
+          what's SHOWN here; app/api/admin/trips/[slug]/{validate,publish}
+          re-verify admin rights server-side regardless. */}
+      {tab === "publish" && isAdmin && trip && <PublishSection trip={trip} />}
+
       <TripNav slug={slug} />
     </main>
   );
@@ -306,6 +317,198 @@ function NotJoinedNotice({ slug }: { slug: string }) {
       <Link href={`/trip/${slug}`} className="mt-3 inline-block text-[14px] font-medium text-primary underline">
         Alătură-te acum
       </Link>
+    </div>
+  );
+}
+
+// R7: check_key prefixes map to a short, non-technical Romanian label --
+// the operator sees "Lipsă Discover Dimineață/Prânz" instead of the raw
+// "discover.missing" the SQL validator returns (those keys stay stable
+// for tooling/tests; this mapping is display-only).
+const ISSUE_LABEL: Record<string, string> = {
+  "trip.name_missing": "Călătoria nu are nume",
+  "trip.destination_missing": "Călătoria nu are destinație",
+  "trip.timezone_missing": "Călătoria nu are fus orar setat",
+  "trip.timezone_invalid": "Fusul orar setat nu e valid",
+  "trip.start_date_missing": "Călătoria nu are dată de start",
+  "trip.duration_days_out_of_range": "Durata călătoriei e în afara intervalului permis",
+  "trip.content_status_inconsistent": "Marcată gata, dar conținutul nu mai e valid",
+  "discover.missing": "Lipsește o întrebare Discover",
+  "discover.not_published": "Întrebare Discover nepublicată/neverificată",
+  "discover.prompt_missing": "Întrebare Discover fără text",
+  "discover.published_without_verification": "Întrebare Discover publicată dar neverificată",
+  "discover.insufficient_options": "Întrebare Discover cu prea puține opțiuni",
+  "discover.correct_option_count": "Întrebare Discover fără exact un răspuns corect",
+  "discover.points_invalid": "Întrebare Discover cu punctaj invalid",
+  "battle.daily_missing": "Lipsește Battle-ul zilei",
+  "battle.daily_empty": "Battle-ul zilei nu are întrebări",
+  "battle.multiple_active_for_day": "Mai multe Battle-uri active în aceeași zi",
+  "battle.final_missing": "Lipsește Battle-ul Final",
+  "battle.final_empty": "Battle-ul Final nu are întrebări",
+  "battle.multiple_final": "Mai multe Battle-uri Finale active",
+  "battle.not_published": "Întrebare Battle nepublicată/neverificată",
+  "battle.question_trip_mismatch": "Întrebare Battle asociată greșit",
+  "battle.duplicate_order_index": "Ordine ambiguă a întrebărilor din Battle",
+  "battle.prompt_missing": "Întrebare Battle fără text",
+  "battle.published_without_verification": "Întrebare Battle publicată dar neverificată",
+  "battle.insufficient_options": "Întrebare Battle cu prea puține opțiuni",
+  "battle.correct_option_count": "Întrebare Battle fără exact un răspuns corect",
+  "battle.points_invalid": "Întrebare Battle cu punctaj invalid",
+  "extra.type_missing": "Extra publicat fără tip",
+  "extra.published_without_verification": "Extra publicat dar neverificat",
+  "extra.trip_mismatch": "Extra asociat greșit",
+  "link.invalid_url": "Link extern invalid",
+  "link.trip_mismatch": "Link extern asociat greșit",
+  "prize.not_configured": "Lipsesc opțiunile pentru votul premiului",
+  "trip.not_found": "Călătoria nu a fost găsită",
+};
+
+function issueLabel(issue: ContentValidationIssue): string {
+  return ISSUE_LABEL[issue.check_key] ?? issue.check_key;
+}
+
+const CONTENT_STATUS_LABEL: Record<string, string> = {
+  pending: "În pregătire",
+  generating: "Se generează",
+  ready: "Publicat",
+  failed: "Eșuat",
+};
+
+type PublishState = "loading" | "loaded" | "error" | "publishing";
+
+function PublishSection({ trip }: { trip: Trip }) {
+  const [state, setState] = useState<PublishState>("loading");
+  const [contentStatus, setContentStatus] = useState<string>(trip.content_status);
+  const [issues, setIssues] = useState<ContentValidationIssue[]>([]);
+  const [publishResult, setPublishResult] = useState<PublishTripResult | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setState("loading");
+    setActionError(null);
+    validateTripContent(trip.slug)
+      .then((result) => {
+        setContentStatus(result.contentStatus);
+        setIssues(result.issues);
+        setState("loaded");
+      })
+      .catch((err) => {
+        console.error("validateTripContent failed", err);
+        setState("error");
+      });
+  }, [trip.slug]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handlePublish() {
+    setState("publishing");
+    setActionError(null);
+    try {
+      const result = await publishTrip(trip.slug);
+      setPublishResult(result);
+      setIssues(result.issues);
+      if (result.status !== "rejected") setContentStatus("ready");
+      setState("loaded");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Nu am putut publica. Încearcă din nou.");
+      setState("loaded");
+    }
+  }
+
+  if (state === "loading") {
+    return <p className="py-8 text-center text-[14px] text-muted-foreground">Se verifică conținutul...</p>;
+  }
+
+  if (state === "error") {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card px-5 py-8 text-center">
+        <p className="text-[15px] text-muted-foreground">Nu am putut verifica conținutul.</p>
+        <button onClick={load} className="text-[14px] font-semibold text-primary underline">
+          Încearcă din nou
+        </button>
+      </div>
+    );
+  }
+
+  const errorIssues = issues.filter((i) => i.severity === "error");
+  const isClean = errorIssues.length === 0;
+  const publishing = state === "publishing";
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-[0_1px_4px_rgba(0,0,0,0.04)]">
+        <div
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+            contentStatus === "ready" ? "bg-accent text-primary" : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          {isClean ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Status conținut</p>
+          <p className="mt-0.5 text-[15px] font-medium text-foreground">
+            {CONTENT_STATUS_LABEL[contentStatus] ?? contentStatus}
+          </p>
+        </div>
+        <button
+          onClick={load}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary"
+          aria-label="Verifică din nou"
+          title="Verifică din nou"
+        >
+          <RefreshCw size={15} />
+        </button>
+      </div>
+
+      {isClean ? (
+        <p className="text-[14px] text-muted-foreground">
+          Toate verificările au trecut -- {errorIssues.length === 0 ? "conținutul e complet." : ""}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <p className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {errorIssues.length} de rezolvat înainte de publicare
+          </p>
+          <div className="flex flex-col gap-2">
+            {errorIssues.map((issue, i) => (
+              <div key={`${issue.check_key}-${issue.day_number ?? ""}-${issue.entity_id ?? i}`} className="rounded-xl bg-secondary px-4 py-3">
+                <p className="text-[14px] font-medium text-foreground">
+                  {issueLabel(issue)}
+                  {issue.day_number != null ? ` -- Ziua ${issue.day_number}` : ""}
+                </p>
+                <p className="mt-0.5 text-[12px] text-muted-foreground">{issue.message}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {actionError && <p className="text-[13px] text-destructive">{actionError}</p>}
+
+      {publishResult && (
+        <p className="text-[13px] text-muted-foreground">
+          {publishResult.status === "published"
+            ? "Publicat cu succes."
+            : publishResult.status === "already_published"
+              ? "Era deja publicată -- nimic de schimbat."
+              : "Publicarea a fost respinsă -- vezi lista de mai sus."}
+        </p>
+      )}
+
+      <button
+        onClick={handlePublish}
+        disabled={!isClean || publishing}
+        className="rounded-2xl bg-primary py-[14px] text-[15px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:opacity-40"
+      >
+        {publishing ? "Se publică..." : contentStatus === "ready" ? "Republică" : "Publică"}
+      </button>
+
+      <p className="text-center text-[12px] leading-relaxed text-disabled">
+        Conținutul (întrebări, Battle-uri, Extra-uri) se editează în continuare din Supabase Studio -- publicarea de
+        aici doar verifică și marchează călătoria ca gata, nu creează sau modifică întrebări.
+      </p>
     </div>
   );
 }

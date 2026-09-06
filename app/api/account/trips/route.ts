@@ -29,7 +29,8 @@ export async function GET(request: Request) {
     if (accountError) throw accountError;
     if (!account) return NextResponse.json({ error: "Contul nu a fost găsit." }, { status: 404 });
 
-    const columns = "id, slug, name, language, start_date, duration_days, destination, location_info, content_status, is_active, is_demo, created_at";
+    const columns =
+      "id, slug, name, language, start_date, duration_days, destination, location_info, content_status, is_active, is_demo, created_at, timezone";
     const query = admin.from("trips").select(columns).order("created_at", { ascending: false });
     const { data: trips, error: tripsError } = account.is_admin
       ? await query
