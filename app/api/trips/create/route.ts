@@ -4,13 +4,12 @@ import { slugify } from "@/lib/slug";
 import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit";
 import { resolveBearerAuthUserId } from "@/lib/security/session";
 import { isValidIanaTimezone } from "@/lib/timezone";
+import { MIN_TRIP_DURATION_DAYS as MIN_DURATION_DAYS, MAX_TRIP_DURATION_DAYS as MAX_DURATION_DAYS } from "@/lib/constants";
 
 // Needs the Node runtime for the service-role Supabase client -- not
 // edge-compatible.
 export const runtime = "nodejs";
 
-const MIN_DURATION_DAYS = 3;
-const MAX_DURATION_DAYS = 10;
 const MAX_TRIPS_PER_DEVICE_PER_DAY = 1;
 // A circuit breaker on top of the per-device limit: this page is public,
 // and every trip it creates lands in a manual content-review queue (see

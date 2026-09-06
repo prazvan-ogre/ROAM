@@ -1262,6 +1262,60 @@
   zone SQL scenario alongside the existing UTC+14/UTC-12 one, and a UI
   test for the destination-time labeling; all pre-existing regressions
   re-verified green.
+- R7 (content publishing pipeline, `claude/r7-content-pipeline`):
+  `content_status` (`pending`/`generating`/`ready`/`failed`) existed since
+  public trip creation, but its own column DEFAULT was `'ready'` (kept
+  for rows that predated the column) -- a bare insert that forgot to set
+  it explicitly, exactly `seed.sql`'s own long-standing pattern, silently
+  became `'ready'` with zero actual content, and nothing ever checked
+  that a `'ready'` trip's Discover/Battle/Extras/prize content was
+  verified, published, and internally consistent before this batch. Adds
+  two SQL functions (`20260908090000_r7_content_publishing_pipeline.sql`,
+  revoked from anon/authenticated at the database level, reachable only
+  via the service-role key after a server-verified `creator_accounts.
+  is_admin` check -- `src/lib/security/adminAuth.ts`, same session
+  mechanism `app/api/account/trips/route.ts` already used, never a
+  client-supplied isAdmin/accountId/deviceId): `validate_trip_content()`
+  checks the real relationships between trip/Discover/Battle/Extras+links/
+  prize content (every required day's Morning+Lunch+Battle exists AND is
+  verified+published, exactly one Final Battle, single_choice questions
+  have exactly one correct option, cross-trip reference integrity,
+  deterministic Battle question order, a real prize vote or a documented
+  fixed prize) and returns a structured issue list rather than a bare
+  pass/fail; `publish_trip()` re-runs that validation inside one
+  transaction (a row lock serializes concurrent publish attempts) and
+  only flips content_status to 'ready' with zero errors -- idempotent,
+  and content_status's own DEFAULT changes to 'pending' (no existing
+  row's stored value changes). Neither function edits content itself --
+  verified/published on individual rows stays a Supabase Studio step, per
+  the current operational model; publish is a gate, not an editor. Two
+  new admin routes (`app/api/admin/trips/[slug]/{validate,publish}`) and
+  a new admin-only "Publicare" tab in Setări show why a trip is pending/
+  failed, a readable issue summary, and a Publică button gated on a clean
+  validation; a CLI companion (`scripts/validate-trip-content.mjs`, `npm
+  run validate-trip -- <slug> [--publish]`) calls the exact same two
+  functions for a terminal/CI workflow. `OnboardingWizard`'s intro step no
+  longer hardcodes Kassandra/Halkidiki mythology text for every trip
+  regardless of destination -- shows `trips.location_info` when set, a
+  neutral fallback otherwise. `seed.sql`'s Kassandra 2026 fixture now
+  stamps `timezone = 'Europe/Athens'` explicitly (simply never set when
+  R6 added the column; the destination's real zone, not a new decision).
+  Verified with a new SQL regression file
+  (`supabase/tests/r7_content_publishing.test.sql`, `npm run
+  test:sql:r7-content-publishing`) covering a fully valid trip, every
+  missing-content case from the spec (Morning/Lunch/daily Battle/Final
+  Battle, wrong correct-option counts, cross-trip relations, unverified/
+  unpublished, invalid timezone, missing prize options), repeated and
+  concurrent publish, a forced mid-transaction failure, and the anon/
+  authenticated permission-denied boundary; new Vitest coverage for the
+  admin routes (admin/non-admin/other-account, via the same
+  fakeSupabaseAdmin harness R5's own route tests use, not mocked
+  permissions), the Publicare tab, the generic onboarding intro, and the
+  CLI script's pure helpers. All pre-existing SQL/Vitest regressions
+  re-verified green on the same local Postgres 16 instance, including
+  against the real Kassandra 2026 seed data end-to-end (seed -> flip
+  verified/published -> validate clean -> publish -> ready -> idempotent
+  re-publish).
 
 ### Known limitations
 - Participation is still registration-free and device-based (see

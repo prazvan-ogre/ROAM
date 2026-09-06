@@ -4,13 +4,27 @@
 -- 13 ("Content Integrity") the verified/published flip is still a
 -- deliberate human step, not something a seed script does on its own.
 -- Everything below is left verified = false, published = false (column
--- defaults). Review, then run:
+-- defaults), and the trip itself starts content_status = 'pending'
+-- (also the column default -- see 20260908090000_r7_content_publishing_
+-- pipeline.sql). Review, then run:
 --
 --   update questions set verified = true, published = true
 --     where trip_id = (select id from trips where slug = 'kassandra-2026');
 --   update extras set verified = true, published = true
 --     where trip_id = (select id from trips where slug = 'kassandra-2026');
 --
+-- Then, once every item above is actually reviewed (not just flipped
+-- sight-unseen), run the R7 publish operation -- it re-validates the
+-- whole trip (every required day's Morning/Lunch/Battle, the Final
+-- Battle, cross-references, the prize vote) and only flips
+-- content_status to 'ready' if nothing is missing; it reports exactly
+-- what's still wrong otherwise, and changes nothing until it's clean:
+--
+--   select (publish_trip((select id from trips where slug = 'kassandra-2026'))).*;
+--
+-- (Or, from the app itself: Setări > Publicare, visible to an admin
+-- account -- see docs/DATABASE.md's R7 section for the full operator
+-- walkthrough and app/api/admin/trips/[slug]/{validate,publish}.)
 -- Each Discover question's 4 "Variante de Explicații & Indicii" become its
 -- Extras pool (one assigned per participant, spec section 11); the
 -- Explicație + Indiciu are combined into a single Extra description.
@@ -34,11 +48,23 @@ delete from trips where slug = 'kassandra-2026';
 
 -- prize is left unset: superseded by the prize_options vote below (the
 -- wizard's prize step), not a fixed value anymore.
-insert into trips (slug, name, language, start_date, duration_days, destination, location_info, is_active, is_demo)
+--
+-- R7: timezone stamped explicitly as Europe/Athens -- the destination
+-- (Kassandra, Halkidiki, Grecia) never had any other real timezone; this
+-- was simply never set when R6 (20260907140000_r6_trip_timezone_and_
+-- lifecycle.sql) added the column, since this trip predates it. Filling
+-- it in here is completing a fact that was always true, not inventing
+-- one -- see the R7 report's "date istorice" section. Explicitly NOT
+-- run against production by this migration or any other (seed.sql is
+-- never auto-applied -- see this file's own header); a live production
+-- Kassandra row, if one still exists with timezone still null, is a
+-- separate, deliberate operational decision, not made here.
+insert into trips (slug, name, language, start_date, duration_days, destination, location_info, timezone, is_active, is_demo)
 values (
   'kassandra-2026', 'Kassandra 2026', 'ro', '2026-09-01', 7,
   'Kassandra, Halkidiki, Grecia',
   'O peninsulă din nordul Greciei, cunoscută pentru plaje, măsline și istorie antică — pe aici au trecut fenicieni, greci și romani cu mii de ani în urmă.',
+  'Europe/Athens',
   true, false
 );
 

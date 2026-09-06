@@ -180,9 +180,15 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
               Vacanța asta explorăm {trip.name}
             </h1>
             <p className="text-[17px] leading-relaxed text-muted-foreground">
-              Halkidiki are trei peninsule întinse în mare ca degetele unei mâini — noi suntem pe
-              prima, Kassandra. Se spune că formele lor vin din legenda tridentului lui Poseidon.
-              Ne așteaptă plaje turcoaz, sate din piatră și câte puțină mitologie la fiecare pas.
+              {/* R7: was hardcoded Kassandra/Halkidiki mythology text,
+                  shown as-is to every trip regardless of destination --
+                  now the trip's own location_info (already collected per
+                  trip, already shown on the Dashboard header) when set,
+                  and a neutral, honest fallback when it isn't. Never
+                  invents destination-specific facts for a trip that
+                  hasn't supplied its own. */}
+              {trip.location_info ??
+                "O nouă aventură ne așteaptă -- descoperiri, provocări de seară și puțină competiție prietenoasă între Părinți și Copii."}
             </p>
             <p className="text-[15px] leading-relaxed text-muted-foreground">
               Restul le descoperim pe parcurs, o zi pe rând. 🌊
