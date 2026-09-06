@@ -100,7 +100,17 @@ function TripsPageInner() {
   const linkNewTripThenRedirect = useCallback(
     async (slug: string) => {
       try {
-        await linkTripToCurrentAccount(slug);
+        const { tripLink } = await linkTripToCurrentAccount(slug);
+        // R5 round 2: "linked" and "already_linked" are the expected
+        // outcomes here; anything else is worth a log line even though the
+        // redirect below still happens either way (this device's own
+        // participant session still has access to the trip regardless of
+        // whether it shows up under this account) -- not a UI change, just
+        // enough to diagnose a real "another account already owns this"
+        // report without guessing.
+        if (tripLink !== "linked" && tripLink !== "already_linked") {
+          console.warn(`Trip linking for ${slug} resolved as "${tripLink}", not a successful claim`);
+        }
       } catch (err) {
         console.error("Linking a new trip to an already logged-in account failed", err);
       }

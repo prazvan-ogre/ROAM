@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveAccountSession, resolveBearerAuthUserId, setAccountSessionCookies } from "@/lib/security/session";
 import { linkCreatorParticipant } from "@/lib/security/participantLink";
-import { linkOwnedTripsToAccount } from "@/lib/security/tripOwnership";
+import { linkOwnedTripsToAccount, resolveTripLinkOutcome, type TripLinkOutcome } from "@/lib/security/tripOwnership";
 import { isSameOriginRequest } from "@/lib/security/csrf";
 
 export const runtime = "nodejs";
@@ -61,13 +61,22 @@ export async function POST(request: Request) {
     // client-supplied deviceId above to created_by_device_id -- that
     // column was only ever a rate-limit key (see the migration's own
     // comment), not proof of ownership. resolveBearerAuthUserId here
-    // verifies THIS request's own bearer token the same way; sweeping up
-    // every trip this exact verified device created and hasn't linked
-    // yet (not just trimmedTripSlug) is what makes this a safe path to
-    // associate after authentication regardless of which trip brought
-    // the person back to /trips.
+    // verifies THIS request's own bearer token the same way.
+    //
+    // R5 round 2: resolveTripLinkOutcome decides the specific, named
+    // tripSlug's fate first (one of the six contract states below) --
+    // linkOwnedTripsToAccount then sweeps up any OTHER trips this device
+    // created and hasn't linked yet, same as before. Order matters: running
+    // the sweep first would make this trip's own outcome always read as
+    // "already_linked" instead of "linked", even on its actual first claim.
     const deviceAuthUserId = await resolveBearerAuthUserId(request);
+    let tripLink: TripLinkOutcome | "device_session_missing" = "device_session_missing";
     if (deviceAuthUserId) {
+      tripLink = await resolveTripLinkOutcome(admin, {
+        tripSlug: trimmedTripSlug,
+        authUserId: deviceAuthUserId,
+        accountId: session.accountId,
+      });
       await linkOwnedTripsToAccount(admin, { authUserId: deviceAuthUserId, accountId: session.accountId });
     }
 
@@ -91,7 +100,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const response = NextResponse.json({ displayName: account?.display_name ?? null });
+    const response = NextResponse.json({ displayName: account?.display_name ?? null, tripLink });
     if (session.refreshed) setAccountSessionCookies(response, session.refreshed);
     return response;
   } catch (err) {

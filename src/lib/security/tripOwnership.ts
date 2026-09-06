@@ -21,6 +21,63 @@ import type { Database } from "@/lib/supabase/types";
 // remembering a particular ?link=<slug> URL. A trip already linked to
 // some account (this one or another) is never touched -- ownership is
 // never implicitly transferred.
+// R5 round 2 (explicit association contract): the six states a request to
+// associate one named trip with an account can land in. "not_owned_by_device"
+// covers both a genuinely unclaimed trip this device didn't create AND any
+// pre-R5 trip with no created_by_auth_user_id at all -- knowing the slug
+// (or a client-supplied deviceId/accountId) never proves ownership, so both
+// cases are refused the same way; recovering one of those old trips is a
+// deliberate, separate, out-of-band process, never this endpoint.
+export type TripLinkOutcome = "linked" | "already_linked" | "linked_to_other" | "not_found" | "not_owned_by_device";
+
+export async function resolveTripLinkOutcome(
+  admin: SupabaseClient<Database>,
+  params: { tripSlug: string; authUserId: string; accountId: string },
+): Promise<TripLinkOutcome> {
+  const { tripSlug, authUserId, accountId } = params;
+
+  const { data: trip, error: selectError } = await admin
+    .from("trips")
+    .select("id, created_by_account_id, created_by_auth_user_id")
+    .eq("slug", tripSlug)
+    .maybeSingle();
+  if (selectError) throw selectError;
+  if (!trip) return "not_found";
+
+  if (trip.created_by_auth_user_id !== authUserId) {
+    // This verified device did not create this trip -- the slug alone
+    // proves nothing. Still worth telling an already-linked caller "you
+    // already have this" rather than a bare refusal, since that can
+    // legitimately happen (e.g. an admin account revisiting its own link).
+    return trip.created_by_account_id === accountId ? "already_linked" : "not_owned_by_device";
+  }
+
+  // This device DID create it -- attempt the same atomic, conditional claim
+  // linkOwnedTripsToAccount uses below. `.select("id")` on the update lets
+  // us tell, from the row count alone, whether THIS call was the one that
+  // won the race.
+  const { data: updated, error: updateError } = await admin
+    .from("trips")
+    .update({ created_by_account_id: accountId })
+    .eq("id", trip.id)
+    .is("created_by_account_id", null)
+    .select("id");
+  if (updateError) throw updateError;
+  if (updated && updated.length > 0) return "linked";
+
+  // Zero rows updated: something else set created_by_account_id between our
+  // SELECT and this UPDATE (a concurrent request, or a retry of a call that
+  // already succeeded). Re-read to report which of the two actually
+  // happened, rather than guessing.
+  const { data: rechecked, error: recheckError } = await admin
+    .from("trips")
+    .select("created_by_account_id")
+    .eq("id", trip.id)
+    .maybeSingle();
+  if (recheckError) throw recheckError;
+  return rechecked?.created_by_account_id === accountId ? "already_linked" : "linked_to_other";
+}
+
 export async function linkOwnedTripsToAccount(
   admin: SupabaseClient<Database>,
   params: { authUserId: string; accountId: string },

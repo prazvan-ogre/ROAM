@@ -208,6 +208,21 @@ export function createFakeAdminClient(
                 nullChecks.push(column);
                 return builder;
               },
+              // Matches supabase-js's `.update(...).eq(...).is(...).select("id")`
+              // (return=representation): the rows matching the filters/guard
+              // AT THIS MOMENT get patched, and only those come back as
+              // `data` -- resolveTripLinkOutcome (src/lib/security/
+              // tripOwnership.ts) relies on an empty array here to detect
+              // that it lost a concurrent race for a specific trip.
+              select(_columns: string) {
+                return {
+                  then(resolve: (v: { data: Array<{ id: string }>; error: null }) => void) {
+                    const rows = matched();
+                    rows.forEach((r) => Object.assign(r, patch));
+                    resolve({ data: rows.map((r) => ({ id: r.id })), error: null });
+                  },
+                };
+              },
               then(resolve: (v: { error: null }) => void) {
                 matched().forEach((r) => Object.assign(r, patch));
                 resolve({ error: null });
