@@ -58,7 +58,7 @@ afterEach(() => {
 
 describe("hypothesis E (fixed): returning creator's new trip linking", () => {
   it("links the newly created trip to the account (server-side) and redirects into it, instead of ignoring linkSlug", async () => {
-    linkTripToCurrentAccount.mockResolvedValue({ displayName: "Andrei" });
+    linkTripToCurrentAccount.mockResolvedValue({ displayName: "Andrei", tripLink: "linked" });
 
     const { default: TripsPage } = await import("../../app/trips/page");
     render(<TripsPage />);

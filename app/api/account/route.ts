@@ -15,7 +15,7 @@ import {
 import { checkLoginLock, recordFailedLogin, resetLoginAttempts } from "@/lib/security/loginRateLimit";
 import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit";
 import { linkCreatorParticipant } from "@/lib/security/participantLink";
-import { linkOwnedTripsToAccount } from "@/lib/security/tripOwnership";
+import { linkOwnedTripsToAccount, resolveTripLinkOutcome, type TripLinkOutcome } from "@/lib/security/tripOwnership";
 import { isSameOriginRequest } from "@/lib/security/csrf";
 
 export const runtime = "nodejs";
@@ -391,7 +391,12 @@ async function handleAccount(request: Request): Promise<Response> {
 
   // Linking is best-effort: a failed or skipped link never fails the
   // whole login -- the account still works, this trip just doesn't show
-  // up in its history.
+  // up in its history. tripLinkOutcome (R5 round 2's six-state contract,
+  // src/lib/security/tripOwnership.ts) is surfaced in the response so a
+  // caller CAN react to "linked_to_other" etc. without a second request --
+  // today's UI (app/trips/page.tsx's handleAuthSubmit) doesn't inspect it,
+  // matching this route's existing best-effort behavior.
+  let tripLinkOutcome: TripLinkOutcome | "device_session_missing" | null = null;
   if (isLinkingNewTrip) {
     const tripSlug = (linkTripSlug as string).trim();
     const trimmedDeviceId = (deviceId as string).trim();
@@ -403,13 +408,20 @@ async function handleAccount(request: Request): Promise<Response> {
     // app/api/trips/create/route.ts), never by comparing the
     // client-supplied deviceId above to created_by_device_id -- that
     // column was only ever a rate-limit key (see the migration's own
-    // comment), not proof of ownership. Sweeping up every trip this
-    // exact verified device created and hasn't linked yet (not just
-    // tripSlug) is what makes this a safe path to associate after
-    // authentication, independent of which specific trip triggered this
-    // login.
+    // comment), not proof of ownership.
+    //
+    // R5 round 2: resolveTripLinkOutcome decides tripSlug's own fate first
+    // (the six-state contract in src/lib/security/tripOwnership.ts), then
+    // linkOwnedTripsToAccount sweeps up any OTHER trips this device created
+    // and hasn't linked yet -- independent of which specific trip triggered
+    // this login. Not surfaced in this response today (a fresh login has no
+    // UI reacting to it), but resolved eagerly so the outcome is available
+    // to callers/tests without a second round trip, and to keep this route
+    // and link-trip's behave identically for the same inputs.
     const deviceAuthUserId = await resolveBearerAuthUserId(request);
+    tripLinkOutcome = "device_session_missing";
     if (deviceAuthUserId) {
+      tripLinkOutcome = await resolveTripLinkOutcome(admin, { tripSlug, authUserId: deviceAuthUserId, accountId });
       await linkOwnedTripsToAccount(admin, { authUserId: deviceAuthUserId, accountId });
     }
 
@@ -439,7 +451,10 @@ async function handleAccount(request: Request): Promise<Response> {
   }
 
   return withRefreshedCookies(
-    setAccountSessionCookiesOnJson({ accountId, isAdmin, displayName: resultDisplayName }, signInData.session),
+    setAccountSessionCookiesOnJson(
+      { accountId, isAdmin, displayName: resultDisplayName, tripLink: tripLinkOutcome },
+      signInData.session,
+    ),
     undefined,
   );
 }

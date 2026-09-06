@@ -65,10 +65,19 @@ export interface AuthenticateInput {
   expectExisting?: boolean;
 }
 
+// R5 round 2: the six-state contract for "did this trip get associated"
+// (src/lib/security/tripOwnership.ts's TripLinkOutcome), plus
+// "device_session_missing" when this device had no verifiable bearer
+// token to check ownership with at all. Not consumed by any UI yet --
+// exposed for callers/tests that need to distinguish these outcomes
+// without a second request.
+export type TripLinkOutcome = "linked" | "already_linked" | "linked_to_other" | "not_found" | "not_owned_by_device";
+
 export interface AuthenticateResult {
   accountId: string;
   isAdmin: boolean;
   displayName: string | null;
+  tripLink: TripLinkOutcome | "device_session_missing" | null;
 }
 
 export async function authenticateCreatorAccount(input: AuthenticateInput): Promise<AuthenticateResult> {
@@ -87,11 +96,17 @@ export async function authenticateCreatorAccount(input: AuthenticateInput): Prom
   // httpOnly session cookie this account's identity now rests on
   // (Set-Cookie on the same response, handled by the browser directly).
   setStoredAccountId(accountId);
-  return { accountId, isAdmin: Boolean(body.isAdmin), displayName: body.displayName ?? null };
+  return {
+    accountId,
+    isAdmin: Boolean(body.isAdmin),
+    displayName: body.displayName ?? null,
+    tripLink: body.tripLink ?? null,
+  };
 }
 
 export interface LinkTripResult {
   displayName: string | null;
+  tripLink: TripLinkOutcome | "device_session_missing";
 }
 
 // app/trips/page.tsx: an already logged-in device (session cookie
@@ -111,7 +126,7 @@ export async function linkTripToCurrentAccount(tripSlug: string): Promise<LinkTr
   if (!response.ok) {
     throw new Error(body?.error ?? "Nu am putut lega călătoria de cont.");
   }
-  return { displayName: body?.displayName ?? null };
+  return { displayName: body?.displayName ?? null, tripLink: body?.tripLink ?? "device_session_missing" };
 }
 
 export interface AccountDetails {
