@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Plus, MapPin, Calendar, Trophy, Check, Eye, EyeOff } from "lucide-react";
@@ -32,9 +32,18 @@ export default function SettingsPage() {
   const [showAddChild, setShowAddChild] = useState(false);
   const [childName, setChildName] = useState("");
   const [childAge, setChildAge] = useState("");
+  const [addChildSubmitting, setAddChildSubmitting] = useState(false);
+  const [addChildError, setAddChildError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
-  const [accountTrips, setAccountTrips] = useState<Trip[]>([]);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // R4 (2026-09-06 batch): "loading" (null) is distinct from "loaded, no
+  // options yet" ([]) and from "failed to load" ("error") -- getPrizeStatus
+  // used to collapse a genuine fetch failure into permanent null (shown as
+  // "Se încarcă..." forever, since nothing ever retries or reports it).
+  const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null | "error">(null);
+  // Same distinction for the account's trip list: a failed fetch used to
+  // be indistinguishable from "this account genuinely has zero trips".
+  const [accountTrips, setAccountTrips] = useState<Trip[] | "error">([]);
   const [isAdmin, setIsAdmin] = useState(false);
 
   // "Toate călătoriile" tab is only shown to whoever is logged into
@@ -42,16 +51,23 @@ export default function SettingsPage() {
   // participants just join a trip by device id and never create that
   // account, so this stays hidden for them.
   const hasAccount = getStoredAccountId() !== null;
-  useEffect(() => {
+  const loadAccountTrips = useCallback(() => {
     if (!hasAccount) return;
     getTripsForCurrentAccount()
       .then(({ isAdmin, trips }) => {
         setIsAdmin(isAdmin);
         setAccountTrips(trips);
       })
-      .catch(() => setAccountTrips([]));
-    // Only ever needs to run once per mount -- hasAccount doesn't change
-    // while this page is open.
+      .catch((err) => {
+        console.error("getTripsForCurrentAccount failed", err);
+        setAccountTrips("error");
+      });
+  }, [hasAccount]);
+  useEffect(() => {
+    loadAccountTrips();
+    // Only ever needs to run once per mount (plus whenever the retry
+    // button below calls loadAccountTrips directly) -- hasAccount doesn't
+    // change while this page is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -60,10 +76,18 @@ export default function SettingsPage() {
   // -- prize status is meaningless before that. Keyed on trip id/status
   // alone (not profiles), so adding/editing a child on this same page
   // doesn't needlessly refetch it.
-  useEffect(() => {
+  const loadPrizeStatus = useCallback(() => {
     if (!trip || trip.content_status !== "ready") return;
-    getPrizeStatus(trip.id).then(setPrizeStatus).catch(() => undefined);
+    getPrizeStatus(trip.id)
+      .then(setPrizeStatus)
+      .catch((err) => {
+        console.error("getPrizeStatus failed", err);
+        setPrizeStatus("error");
+      });
   }, [trip]);
+  useEffect(() => {
+    loadPrizeStatus();
+  }, [loadPrizeStatus]);
 
   // Defaults the tab strip once per trip -- to Toate călătoriile when
   // this device has an account but hasn't joined this particular trip
@@ -82,30 +106,77 @@ export default function SettingsPage() {
     setTab(hasAccount && (trip.content_status !== "ready" || !joined) ? "trips" : "users");
   }, [trip, profiles, hasAccount]);
 
-  async function handleAddChild(e: FormEvent) {
-    e.preventDefault();
-    if (!trip || !childName.trim() || !profiles) return;
-    const adult = profiles.find((p) => p.role === "adult");
-    if (!adult) return;
-    await addChildProfile(trip.id, childName.trim(), childAge ? Number(childAge) : null, adult.id);
-    setChildName("");
-    setChildAge("");
-    setShowAddChild(false);
-    await mutateProfiles();
+  // R4 correction (2026-09-06 batch, round 2): addChildProfile now keys
+  // off a real idempotency key (client_request_id) instead of a time
+  // window -- generated once per distinct attempt here, kept across a
+  // retry of THAT attempt, and reset (null) whenever the person actually
+  // changes the name/age (a correction, not a retry -- see
+  // handleChildNameChange/handleChildAgeChange below) or after a
+  // successful add (the next add is a new attempt).
+  const addChildRequestIdRef = useRef<string | null>(null);
+
+  function handleChildNameChange(v: string) {
+    addChildRequestIdRef.current = null;
+    setChildName(v);
+  }
+  function handleChildAgeChange(v: string) {
+    addChildRequestIdRef.current = null;
+    setChildAge(v);
   }
 
+  async function handleAddChild(e: FormEvent) {
+    e.preventDefault();
+    if (!trip || !childName.trim() || !profiles || addChildSubmitting) return;
+    const adult = profiles.find((p) => p.role === "adult");
+    if (!adult) return;
+    if (!addChildRequestIdRef.current) addChildRequestIdRef.current = crypto.randomUUID();
+    setAddChildSubmitting(true);
+    setAddChildError(null);
+    try {
+      await addChildProfile(
+        trip.id,
+        childName.trim(),
+        childAge ? Number(childAge) : null,
+        addChildRequestIdRef.current,
+        adult.id,
+      );
+      addChildRequestIdRef.current = null;
+      setChildName("");
+      setChildAge("");
+      setShowAddChild(false);
+      await mutateProfiles();
+    } catch (err) {
+      console.error("addChildProfile failed", err);
+      setAddChildError("Nu am putut adăuga profilul. Încearcă din nou.");
+    } finally {
+      setAddChildSubmitting(false);
+    }
+  }
+
+  // R4 (2026-09-06 batch): no longer closes the form itself (setEditingId
+  // used to run here, right after this step) -- EditProfileForm may still
+  // have a second, separate save (account phone/PIN) to attempt after
+  // this one, and closing here meant that second save's own failure was
+  // invisible: the form was already gone by the time it could show an
+  // error. EditProfileForm now closes itself, only once every step it
+  // actually needs has succeeded.
   async function handleSaveEdit(id: string, displayName: string, role: ParticipantRole, age: number | null) {
     if (!trip) return;
     await updateParticipant(id, displayName, role, age);
-    setEditingId(null);
     await mutateProfiles();
   }
 
   async function handleDelete(id: string) {
     if (!trip) return;
     if (!window.confirm("Sigur ștergi acest profil?")) return;
-    await deleteParticipant(id);
-    await mutateProfiles();
+    setDeleteError(null);
+    try {
+      await deleteParticipant(id);
+      await mutateProfiles();
+    } catch (err) {
+      console.error("deleteParticipant failed", err);
+      setDeleteError("Nu am putut șterge profilul. Încearcă din nou.");
+    }
   }
 
   if (tripError || profilesError) {
@@ -156,7 +227,9 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {tab === "trips" && <TripsSection trips={accountTrips} isAdmin={isAdmin} currentSlug={slug} />}
+      {tab === "trips" && (
+        <TripsSection trips={accountTrips} isAdmin={isAdmin} currentSlug={slug} onRetry={loadAccountTrips} />
+      )}
 
       {tab === "config" && trip && (
         trip.content_status !== "ready" ? (
@@ -164,7 +237,7 @@ export default function SettingsPage() {
         ) : profiles.length === 0 ? (
           <NotJoinedNotice slug={slug} />
         ) : (
-          <ConfigSection trip={trip} prizeStatus={prizeStatus} />
+          <ConfigSection trip={trip} prizeStatus={prizeStatus} onRetryPrize={loadPrizeStatus} />
         )
       )}
 
@@ -181,14 +254,21 @@ export default function SettingsPage() {
             onCancelEdit={() => setEditingId(null)}
             onSaveEdit={handleSaveEdit}
             onDelete={handleDelete}
+            deleteError={deleteError}
             showAddChild={showAddChild}
             onShowAddChild={() => setShowAddChild(true)}
-            onCancelAddChild={() => setShowAddChild(false)}
+            onCancelAddChild={() => {
+              setShowAddChild(false);
+              setAddChildError(null);
+              addChildRequestIdRef.current = null;
+            }}
             childName={childName}
-            onChildNameChange={setChildName}
+            onChildNameChange={handleChildNameChange}
             childAge={childAge}
-            onChildAgeChange={setChildAge}
+            onChildAgeChange={handleChildAgeChange}
             onAddChild={handleAddChild}
+            addChildSubmitting={addChildSubmitting}
+            addChildError={addChildError}
           />
         )
       )}
@@ -241,12 +321,25 @@ function TripsSection({
   trips,
   isAdmin,
   currentSlug,
+  onRetry,
 }: {
-  trips: Trip[];
+  trips: Trip[] | "error";
   isAdmin: boolean;
   currentSlug: string;
+  onRetry: () => void;
 }) {
   const [pendingTrip, setPendingTrip] = useState<Trip | null>(null);
+
+  if (trips === "error") {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card px-5 py-8 text-center">
+        <p className="text-[15px] text-muted-foreground">Nu am putut încărca lista de călătorii.</p>
+        <button onClick={onRetry} className="text-[14px] font-semibold text-primary underline">
+          Încearcă din nou
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -318,14 +411,25 @@ function TripsSection({
   );
 }
 
-function ConfigSection({ trip, prizeStatus }: { trip: Trip; prizeStatus: PrizeStatus | null }) {
-  const prizeValue = !prizeStatus
-    ? "Se încarcă..."
-    : prizeStatus.options.length === 0
-      ? "Nu a fost stabilit încă"
-      : !prizeStatus.votingOpen && prizeStatus.winner
-        ? prizeStatus.winner.title
-        : "Se stabilește prin vot (fiecare participant votează la înscriere)";
+function ConfigSection({
+  trip,
+  prizeStatus,
+  onRetryPrize,
+}: {
+  trip: Trip;
+  prizeStatus: PrizeStatus | null | "error";
+  onRetryPrize: () => void;
+}) {
+  const prizeValue =
+    prizeStatus === null
+      ? "Se încarcă..."
+      : prizeStatus === "error"
+        ? "Nu am putut încărca"
+        : prizeStatus.options.length === 0
+          ? "Nu a fost stabilit încă"
+          : !prizeStatus.votingOpen && prizeStatus.winner
+            ? prizeStatus.winner.title
+            : "Se stabilește prin vot (fiecare participant votează la înscriere)";
 
   return (
     <div className="flex flex-col gap-3">
@@ -336,6 +440,11 @@ function ConfigSection({ trip, prizeStatus }: { trip: Trip; prizeStatus: PrizeSt
         value={`${trip.duration_days} zile`}
       />
       <ConfigRow icon={<Trophy size={17} />} label="Premiul competiției" value={prizeValue} />
+      {prizeStatus === "error" && (
+        <button onClick={onRetryPrize} className="self-start text-[13px] font-semibold text-primary underline">
+          Încearcă din nou
+        </button>
+      )}
     </div>
   );
 }
@@ -361,6 +470,7 @@ function UsersSection({
   onCancelEdit,
   onSaveEdit,
   onDelete,
+  deleteError,
   showAddChild,
   onShowAddChild,
   onCancelAddChild,
@@ -369,6 +479,8 @@ function UsersSection({
   childAge,
   onChildAgeChange,
   onAddChild,
+  addChildSubmitting,
+  addChildError,
 }: {
   profiles: Participant[];
   editingId: string | null;
@@ -376,6 +488,7 @@ function UsersSection({
   onCancelEdit: () => void;
   onSaveEdit: (id: string, displayName: string, role: ParticipantRole, age: number | null) => Promise<void>;
   onDelete: (id: string) => void;
+  deleteError: string | null;
   showAddChild: boolean;
   onShowAddChild: () => void;
   onCancelAddChild: () => void;
@@ -384,12 +497,15 @@ function UsersSection({
   childAge: string;
   onChildAgeChange: (v: string) => void;
   onAddChild: (e: FormEvent) => void;
+  addChildSubmitting: boolean;
+  addChildError: string | null;
 }) {
   const adult = profiles.find((p) => p.role === "adult");
 
   return (
     <div className="flex flex-col gap-2">
       <p className="mb-2 text-[15px] text-muted-foreground">Profiluri de pe acest dispozitiv</p>
+      {deleteError && <p className="mb-2 text-[13px] text-destructive">{deleteError}</p>}
 
       {profiles.map((p) =>
         editingId === p.id ? (
@@ -426,6 +542,7 @@ function UsersSection({
               placeholder="Numele copilului"
               value={childName}
               onChange={(e) => onChildNameChange(e.target.value)}
+              disabled={addChildSubmitting}
             />
             <input
               className="rounded-xl border border-border bg-background px-4 py-3 text-[15px] text-foreground outline-none transition-colors placeholder:text-disabled focus:border-primary"
@@ -435,20 +552,24 @@ function UsersSection({
               max={17}
               value={childAge}
               onChange={(e) => onChildAgeChange(e.target.value)}
+              disabled={addChildSubmitting}
             />
+            {addChildError && <p className="text-[13px] text-destructive">{addChildError}</p>}
             <div className="flex gap-2 pt-1">
               <button
                 type="button"
                 onClick={onCancelAddChild}
-                className="flex-1 rounded-xl bg-secondary py-3 text-[14px] font-semibold text-muted-foreground"
+                disabled={addChildSubmitting}
+                className="flex-1 rounded-xl bg-secondary py-3 text-[14px] font-semibold text-muted-foreground disabled:opacity-60"
               >
                 Anulează
               </button>
               <button
                 type="submit"
-                className="flex-1 rounded-xl bg-primary py-3 text-[14px] font-semibold text-primary-foreground"
+                disabled={addChildSubmitting || !childName.trim()}
+                className="flex-1 rounded-xl bg-primary py-3 text-[14px] font-semibold text-primary-foreground disabled:opacity-60"
               >
-                Adaugă
+                {addChildSubmitting ? "..." : "Adaugă"}
               </button>
             </div>
           </form>
@@ -481,6 +602,15 @@ function EditProfileForm({
   const [role, setRole] = useState<ParticipantRole>(profile.role);
   const [age, setAge] = useState(profile.age?.toString() ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  // R4 (2026-09-06 batch): the profile fields and the account phone/PIN
+  // are two separate writes (updateParticipant, then updateAccountDetails)
+  // that cannot be treated as one transaction -- once the first succeeds,
+  // a retry must never repeat it (harmless here since it's a plain update
+  // by id, but pointless and would mask which half actually still needs
+  // retrying). Tracks that distinction so the error message says exactly
+  // what saved and what didn't.
+  const [profileSaved, setProfileSaved] = useState(false);
 
   // Only the specific adult profile this device's "Călătoriile mele"
   // account actually created (profile.account_id, set server-side after
@@ -509,20 +639,67 @@ function EditProfileForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // R4-fix6 (2026-09-06 batch, review round 2): a stale save for THIS
+  // profile that resolves after the person has already switched to
+  // editing a DIFFERENT profile (parent unmounts this instance by
+  // changing editingId, per-profile `key`) used to still call onCancel()
+  // -- a plain closure into the parent's setEditingId(null), unaffected
+  // by this component's own unmount -- and silently close whichever
+  // OTHER profile's form was now open, discarding anything typed into
+  // it. React already no-ops this component's own setState calls after
+  // unmount, but onCancel reaches into the PARENT, so it needs its own
+  // guard.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // R4 (2026-09-06 batch): closes the form itself (onCancel), only after
+  // every step it actually needs has succeeded -- previously onSave alone
+  // closed it (see handleSaveEdit above), before the account-details save
+  // below even ran, so that second save's own failure was invisible. On
+  // retry, a profile save that already succeeded is skipped (profileSaved)
+  // -- only the account-details save (the part that actually failed)
+  // runs again.
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || submitting) return;
+    setSubmitting(true);
     setError(null);
+    // React state setters don't update their own variable's binding
+    // within the same function call (only on the next render) -- this
+    // local mirrors profileSaved for the DURATION of this one call, so
+    // the catch block below knows correctly whether THIS call's own
+    // profile save just succeeded, not last render's stale value.
+    let profileJustSaved = profileSaved;
     try {
-      await onSave(profile.id, name.trim(), role, role === "child" ? Number(age) || null : null);
+      if (!profileSaved) {
+        await onSave(profile.id, name.trim(), role, role === "child" ? Number(age) || null : null);
+        profileJustSaved = true;
+        if (mountedRef.current) setProfileSaved(true);
+      }
       if (showAccountFields && accountId) {
         await updateAccountDetails({
           phoneNumber: phoneNumber.trim(),
           pin: pin.trim() ? pin.trim() : undefined,
         });
       }
+      // Only ever close THIS form if it's still the one open -- a switch
+      // to a different profile while this save was in flight must not
+      // close that other, now-open form out from under the person using
+      // it.
+      if (mountedRef.current) onCancel();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nu s-a putut salva. Încearcă din nou.");
+      const message = err instanceof Error ? err.message : "Nu s-a putut salva. Încearcă din nou.";
+      if (mountedRef.current) {
+        setError(profileJustSaved ? `Profilul a fost salvat, dar detaliile contului nu: ${message}` : message);
+      } else {
+        console.error("EditProfileForm save failed after switching away", err);
+      }
+    } finally {
+      if (mountedRef.current) setSubmitting(false);
     }
   }
 
@@ -536,6 +713,7 @@ function EditProfileForm({
         value={name}
         onChange={(e) => setName(e.target.value)}
         autoFocus
+        disabled={submitting || profileSaved}
       />
 
       <div className="flex rounded-[10px] bg-secondary p-1">
@@ -544,7 +722,8 @@ function EditProfileForm({
             key={r}
             type="button"
             onClick={() => setRole(r)}
-            className={`flex-1 rounded-[7px] py-2 text-[14px] font-semibold transition-all duration-200 ${
+            disabled={submitting || profileSaved}
+            className={`flex-1 rounded-[7px] py-2 text-[14px] font-semibold transition-all duration-200 disabled:opacity-60 ${
               role === r ? "bg-card text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.10)]" : "text-muted-foreground"
             }`}
           >
@@ -562,6 +741,7 @@ function EditProfileForm({
           max={17}
           value={age}
           onChange={(e) => setAge(e.target.value)}
+          disabled={submitting || profileSaved}
         />
       )}
 
@@ -578,6 +758,7 @@ function EditProfileForm({
             type="tel"
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value)}
+            disabled={submitting}
           />
           <div className="relative">
             <input
@@ -588,6 +769,7 @@ function EditProfileForm({
               pattern="[0-9]{4,6}"
               value={pin}
               onChange={(e) => setPin(e.target.value)}
+              disabled={submitting}
             />
             <button
               type="button"
@@ -607,12 +789,17 @@ function EditProfileForm({
         <button
           type="button"
           onClick={onCancel}
-          className="flex-1 rounded-xl bg-secondary py-3 text-[14px] font-semibold text-muted-foreground"
+          disabled={submitting}
+          className="flex-1 rounded-xl bg-secondary py-3 text-[14px] font-semibold text-muted-foreground disabled:opacity-60"
         >
           Anulează
         </button>
-        <button type="submit" className="flex-1 rounded-xl bg-primary py-3 text-[14px] font-semibold text-primary-foreground">
-          Salvează
+        <button
+          type="submit"
+          disabled={submitting || !name.trim()}
+          className="flex-1 rounded-xl bg-primary py-3 text-[14px] font-semibold text-primary-foreground disabled:opacity-60"
+        >
+          {submitting ? "..." : "Salvează"}
         </button>
       </div>
     </form>

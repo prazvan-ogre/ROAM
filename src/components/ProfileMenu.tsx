@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, UserRoundPlus, UsersRound } from "lucide-react";
+import { Check, LogOut, UserRoundPlus, UsersRound } from "lucide-react";
 import { setStoredActiveProfileId } from "@/lib/participant";
+import { clearStoredAccountId, getStoredAccountId } from "@/lib/creatorAccount";
 import { useTrip, useProfiles, useActiveProfile } from "@/lib/hooks";
 
 type View = "menu" | "switch";
@@ -27,6 +28,17 @@ export function ProfileMenu({ slug }: { slug: string }) {
   const active = useActiveProfile(tripId ?? undefined, profiles);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("menu");
+  // R4 (2026-09-06 batch): this device may or may not have a "Călătoriile
+  // mele" account -- most participants never create one, and this menu
+  // used to always offer "Creează cont" regardless, even for a device
+  // that already has one (which makes no sense: you can't create a
+  // second account for yourself here, and there was no way to log out
+  // from this menu at all -- only from deep inside /trips). Read once at
+  // mount (not reactive to storage changes from elsewhere -- there's no
+  // other place in the app that logs this device in/out except this
+  // menu's own handleLogout below and /trips' own equivalent, neither of
+  // which needs this component to notice a change made somewhere else).
+  const [hasAccount, setHasAccount] = useState(() => getStoredAccountId() !== null);
 
   const closeMenu = useCallback(() => {
     setOpen(false);
@@ -82,6 +94,23 @@ export function ProfileMenu({ slug }: { slug: string }) {
     router.push(`/trips?link=${slug}&name=${encodeURIComponent(active!.display_name)}`);
   }
 
+  // R4 (2026-09-06 batch): the app works fine with no account at all (the
+  // whole point of device-based participation) -- this only ever appears
+  // once this device already has one, as the counterpart to
+  // handleCreateAccount above. clearStoredAccountId (src/lib/creatorAccount.ts)
+  // is the same best-effort mechanism /trips' own "Ieși din cont" already
+  // uses: clears the local "looks logged in" flag immediately and
+  // fire-and-forgets a server-side session revoke, never blocking on it.
+  // Participant profiles and their answers are entirely untouched by
+  // this -- only the separate "Călătoriile mele" creator-account session
+  // ends.
+  function handleLogout() {
+    if (!window.confirm("Te deconectezi de la cont? Poți continua să joci pe acest dispozitiv fără cont.")) return;
+    clearStoredAccountId();
+    setHasAccount(false);
+    closeMenu();
+  }
+
   return (
     // Constrained to the same centered max-w-md column as TripNav (not
     // the raw viewport edge), so it lines up with page content instead
@@ -115,13 +144,23 @@ export function ProfileMenu({ slug }: { slug: string }) {
                     Schimbă profilul
                   </button>
                 )}
-                <button
-                  onClick={handleCreateAccount}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-[14px] font-medium text-foreground transition-colors hover:bg-secondary active:bg-secondary"
-                >
-                  <UserRoundPlus size={17} className="shrink-0 text-muted-foreground" />
-                  Creează cont
-                </button>
+                {hasAccount ? (
+                  <button
+                    onClick={handleLogout}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-[14px] font-medium text-destructive transition-colors hover:bg-secondary active:bg-secondary"
+                  >
+                    <LogOut size={17} className="shrink-0" />
+                    Deconectare cont
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleCreateAccount}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-[14px] font-medium text-foreground transition-colors hover:bg-secondary active:bg-secondary"
+                  >
+                    <UserRoundPlus size={17} className="shrink-0 text-muted-foreground" />
+                    Creează cont
+                  </button>
+                )}
               </>
             ) : (
               profiles.map((p) => (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { getOrCreateAdultParticipant, addChildProfile } from "@/lib/participant";
 import { getPrizeStatus, castPrizeVote, type PrizeStatus } from "@/lib/prize";
@@ -34,22 +34,43 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
+  // R4 correction (round 2): a vote that lands on a DIFFERENT option than
+  // the one the participant just picked here (a real conflict, e.g. an
+  // earlier attempt from this same device already went through for
+  // option A, and this attempt just tried B) must not be silently
+  // reported as "your pick was saved" -- see handleFinish.
+  const [voteConflict, setVoteConflict] = useState(false);
 
-  const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null>(null);
+  // R4 correction (round 2): the child-join request id is a real
+  // idempotency key (client_request_id, see src/lib/participant.ts) --
+  // generated once per distinct attempt, kept stable across a retry of
+  // THAT attempt, and reset only when the person actually changes what
+  // they're submitting (role or age -- name can't change here, this step
+  // has no back nav to the "name" step).
+  const joinRequestIdRef = useRef<string | null>(null);
+
+  const [prizeStatus, setPrizeStatus] = useState<PrizeStatus | null | "error">(null);
   const [selectedPrizeId, setSelectedPrizeId] = useState<string | null>(null);
 
-  useEffect(() => {
+  // R4 correction (round 2): a load failure used to silently fall back to
+  // "no prize options", which let the wizard finish as if there were
+  // nothing to vote for -- indistinguishable from a trip that genuinely
+  // has no prize configured. That could cost a participant their vote
+  // over a network hiccup, with no indication anything went wrong.
+  // Extracted so the "prize" step's own retry button can call it again.
+  const loadPrizeStatus = useCallback(() => {
     getPrizeStatus(trip.id)
       .then(setPrizeStatus)
       .catch((err) => {
-        // Falls back to "no options" rather than blocking the wizard --
-        // but log it, since this hides real causes (e.g. the
-        // prize_options/prize_votes migration not applied yet) behind an
-        // empty-looking prize step.
         console.error("getPrizeStatus failed", err);
-        setPrizeStatus({ options: [], votingOpen: false, winner: null, closesAt: null });
+        setPrizeStatus("error");
       });
   }, [trip.id]);
+
+  useEffect(() => {
+    loadPrizeStatus();
+  }, [loadPrizeStatus]);
 
   const stepIndex = STEP_ORDER.indexOf(step);
 
@@ -58,20 +79,34 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
     if (next) setStep(next);
   }
 
+  function handleRoleSelect(r: ParticipantRole) {
+    joinRequestIdRef.current = null;
+    setRole(r);
+  }
+  function handleAgeChange(v: string) {
+    joinRequestIdRef.current = null;
+    setAge(v);
+  }
+
   async function handleJoin() {
     if (participantId) {
       goNext();
       return;
     }
     if (!role || !name.trim()) return;
+    if (!joinRequestIdRef.current) joinRequestIdRef.current = crypto.randomUUID();
     setSubmitting(true);
     setError(null);
     try {
       const participant =
         role === "adult"
           ? await getOrCreateAdultParticipant(trip.id, name.trim())
-          : await addChildProfile(trip.id, name.trim(), age ? Number(age) : null);
-      await trackEvent(trip.id, "trip_joined", participant.id);
+          : await addChildProfile(trip.id, name.trim(), age ? Number(age) : null, joinRequestIdRef.current);
+      // Fire-and-forget: trackEvent never rejects (src/lib/analytics.ts),
+      // and a slow/unavailable analytics endpoint must never delay
+      // showing the next step for a join that already succeeded.
+      void trackEvent(trip.id, "trip_joined", participant.id);
+      joinRequestIdRef.current = null;
       setParticipantId(participant.id);
       goNext();
     } catch (err) {
@@ -82,19 +117,47 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
     }
   }
 
+  // R4 (2026-09-06 batch; corrected round 2): a failed vote or a failed
+  // onComplete() (e.g. the follow-up profile refresh) used to leave
+  // finishing=false with no explanation at all -- the button looked
+  // clickable again, but nothing told the user their tap hadn't actually
+  // gotten them in.
+  //
+  // castPrizeVote (src/lib/prize.ts) returns a 3-way status, same shape
+  // as record_answer()'s: "recorded" | "already_recorded" | "conflict".
+  // "conflict" means this participant already has a vote on record for a
+  // DIFFERENT option than the one just picked here -- that must never be
+  // reported as "your pick was saved" (it wasn't; the original stands).
+  // Surfaced as a one-time notice the person acknowledges before
+  // finishing, rather than silently continuing as if nothing happened.
   async function handleFinish() {
     setFinishing(true);
+    setFinishError(null);
     try {
+      if (voteConflict) {
+        // Already saw the notice and chose to continue -- the vote is
+        // resolved either way (their original pick stands), no need to
+        // re-attempt it.
+        await onComplete();
+        return;
+      }
       if (canVote && selectedPrizeId && participantId) {
-        await castPrizeVote(trip.id, participantId, selectedPrizeId);
+        const result = await castPrizeVote(trip.id, participantId, selectedPrizeId);
+        if (result === "conflict") {
+          setVoteConflict(true);
+          return;
+        }
       }
       await onComplete();
+    } catch (err) {
+      console.error("OnboardingWizard finish failed", err);
+      setFinishError("Nu am putut finaliza. Încearcă din nou.");
     } finally {
       setFinishing(false);
     }
   }
 
-  const canVote = !!prizeStatus && prizeStatus.votingOpen && prizeStatus.options.length > 0;
+  const canVote = !!prizeStatus && prizeStatus !== "error" && prizeStatus.votingOpen && prizeStatus.options.length > 0;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-6 pb-12 pt-16">
@@ -152,7 +215,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
               {(["adult", "child"] as const).map((r) => (
                 <button
                   key={r}
-                  onClick={() => setRole(r)}
+                  onClick={() => handleRoleSelect(r)}
                   className={`rounded-2xl border px-4 py-4 text-center text-[16px] font-medium transition-all ${
                     role === r ? "border-primary bg-accent text-foreground" : "border-border bg-card text-foreground"
                   }`}
@@ -169,7 +232,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
                 min={0}
                 max={17}
                 value={age}
-                onChange={(e) => setAge(e.target.value)}
+                onChange={(e) => handleAgeChange(e.target.value)}
               />
             )}
             {error && <p className="text-center text-[13px] text-destructive">{error}</p>}
@@ -189,7 +252,14 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
 
         {step === "prize" && (
           <div className="flex flex-1 flex-col justify-center gap-4">
-            {!prizeStatus ? (
+            {prizeStatus === "error" ? (
+              <div className="text-center">
+                <p className="text-[15px] text-muted-foreground">Nu am putut încărca premiul.</p>
+                <button onClick={loadPrizeStatus} className="mt-3 text-[14px] font-semibold text-primary underline">
+                  Încearcă din nou
+                </button>
+              </div>
+            ) : !prizeStatus ? (
               <p className="text-center text-[15px] text-muted-foreground">Se încarcă...</p>
             ) : prizeStatus.options.length === 0 ? (
               <div className="text-center">
@@ -258,9 +328,26 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
             {submitting ? "..." : "Continuă"}
           </Btn>
         ) : step === "prize" ? (
-          <Btn onClick={handleFinish} disabled={finishing || !prizeStatus || (canVote && !selectedPrizeId)}>
-            {finishing ? "..." : <>{canVote ? "Votează și " : ""}Hai să începem <ArrowRight size={16} /></>}
-          </Btn>
+          <>
+            {voteConflict && (
+              <p className="mb-3 text-center text-[13px] text-secondary-foreground">
+                Aveai deja un vot înregistrat pentru altă opțiune — acela rămâne cel valabil.
+              </p>
+            )}
+            {finishError && <p className="mb-3 text-center text-[13px] text-destructive">{finishError}</p>}
+            <Btn
+              onClick={handleFinish}
+              disabled={finishing || !prizeStatus || prizeStatus === "error" || (canVote && !selectedPrizeId)}
+            >
+              {finishing ? (
+                "..."
+              ) : voteConflict ? (
+                <>Am înțeles, continuă <ArrowRight size={16} /></>
+              ) : (
+                <>{canVote ? "Votează și " : ""}Hai să începem <ArrowRight size={16} /></>
+              )}
+            </Btn>
+          </>
         ) : (
           <Btn onClick={goNext} disabled={step === "name" && !name.trim()}>
             Continuă <ArrowRight size={16} />

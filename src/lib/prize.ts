@@ -52,15 +52,45 @@ export async function getPrizeStatus(tripId: string): Promise<PrizeStatus> {
   return { options: opts, votingOpen: false, winner, closesAt };
 }
 
+// "recorded": this insert is what's on record now. "already_recorded":
+// a 23505 retry, but the row already there is for the SAME option this
+// call just tried -- a true idempotent retry (lost confirmation), same
+// outcome either way. "conflict": a 23505 retry where the row already
+// there is for a DIFFERENT option -- this call's choice was NOT saved;
+// the original vote stands (matches the "one vote per participant,
+// ever" rule `unique (participant_id)` already enforces, unchanged).
+export type PrizeVoteResult = "recorded" | "already_recorded" | "conflict";
+
 export async function castPrizeVote(
   tripId: string,
   participantId: string,
   prizeOptionId: string,
-): Promise<void> {
+): Promise<PrizeVoteResult> {
   const { error } = await supabase.from("prize_votes").insert({
     trip_id: tripId,
     prize_option_id: prizeOptionId,
     participant_id: participantId,
   });
-  if (error) throw error;
+  if (!error) return "recorded";
+
+  // R4 (2026-09-06 batch; corrected round 2): 23505 alone only says
+  // *a* vote is on record for this participant -- not that it's the one
+  // just attempted. Blindly treating every 23505 as success used to let
+  // a genuine conflict (this participant already voted for a different
+  // option before) report "your pick was saved" when it wasn't. Reconcile
+  // by reading back which option is actually on record: prize_votes'
+  // "trip members (or legacy trips) can read prize votes" SELECT policy
+  // (20260907090000_batch2_trip_activity_rls.sql) already permits this --
+  // no new access granted for this check.
+  if (error.code === "23505") {
+    const { data: existing, error: selectError } = await supabase
+      .from("prize_votes")
+      .select("prize_option_id")
+      .eq("participant_id", participantId)
+      .single();
+    if (selectError) throw selectError;
+    return existing.prize_option_id === prizeOptionId ? "already_recorded" : "conflict";
+  }
+
+  throw error;
 }

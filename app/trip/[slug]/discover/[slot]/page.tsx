@@ -58,6 +58,15 @@ export default function DiscoverPage() {
   // just clicked. True for "accepted"/"already_recorded" (same answer
   // either way) but misleading for "conflict".
   const [wasConflict, setWasConflict] = useState(false);
+  // R4 (2026-09-06 batch): getOrAssignExtra can fail independently of the
+  // answer it's attached to -- a response the server already accepted
+  // must still show (setStep("reveal") below no longer waits on this),
+  // and a failure here gets its own small retry instead of either
+  // silently vanishing or (the previous bug) taking the whole page down
+  // through the outer load() effect's catch, which used to turn a pure
+  // Extra failure into "could not load the question" for an
+  // already-answered participant reopening it.
+  const [extraFailed, setExtraFailed] = useState(false);
   const [openedAt] = useState(() => Date.now());
   const [closedInfo, setClosedInfo] = useState<SlotAvailability | null>(null);
 
@@ -85,6 +94,7 @@ export default function DiscoverPage() {
     setSubmitError(false);
     setMyResponse(null);
     setExtra(null);
+    setExtraFailed(false);
     setWasConflict(false);
 
     async function load() {
@@ -96,7 +106,10 @@ export default function DiscoverPage() {
           return;
         }
         setContent(c);
-        await trackEvent(trip!.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
+        // Fire-and-forget: trackEvent never rejects (src/lib/analytics.ts),
+        // and a slow/unavailable analytics endpoint must never delay
+        // showing the question.
+        void trackEvent(trip!.id, "question_opened", undefined, { question_id: c.question.id, slot: discoverSlot });
         await selectProfile(c);
       } catch {
         if (!cancelled) setStep("error");
@@ -113,10 +126,19 @@ export default function DiscoverPage() {
       if (cancelled) return;
       if (existing) {
         setMyResponse(existing);
-        const assignedExtra = await getOrAssignExtra(activeProfile!.id, activeProfile!.role, c.question.id);
-        if (cancelled) return;
-        setExtra(assignedExtra);
         setStep("reveal");
+        // Own try/catch, deliberately outside load()'s: an Extra failure
+        // must not be treated as "the question failed to load" for a
+        // response the server has already accepted (see extraFailed
+        // above).
+        try {
+          const assignedExtra = await getOrAssignExtra(activeProfile!.id, activeProfile!.role, c.question.id);
+          if (cancelled) return;
+          setExtra(assignedExtra);
+        } catch (err) {
+          console.error("getOrAssignExtra failed", err);
+          if (!cancelled) setExtraFailed(true);
+        }
         return;
       }
 
@@ -184,7 +206,10 @@ export default function DiscoverPage() {
             void trackEvent(tripId, "extra_viewed", submittedProfileId, { extra_id: assignedExtra.id });
           }
         })
-        .catch((err) => console.error("getOrAssignExtra failed", err));
+        .catch((err) => {
+          console.error("getOrAssignExtra failed", err);
+          if (activeProfileIdRef.current === submittedProfileId) setExtraFailed(true);
+        });
 
       void trackEvent(tripId, "answer_submitted", submittedProfileId, {
         question_id: questionId,
@@ -205,9 +230,27 @@ export default function DiscoverPage() {
     }
   }
 
-  async function handleExploreClick(linkId: string) {
+  function handleExploreClick(linkId: string) {
     if (!trip) return;
-    await trackEvent(trip.id, "explore_clicked", activeProfile?.id, { explore_link_id: linkId });
+    // Fire-and-forget: the <a target="_blank"> below navigates natively,
+    // unaffected by how long this takes -- but nothing here should ever
+    // await analytics regardless.
+    void trackEvent(trip.id, "explore_clicked", activeProfile?.id, { explore_link_id: linkId });
+  }
+
+  function retryExtra() {
+    if (!content || !activeProfile) return;
+    const profileId = activeProfile.id;
+    setExtraFailed(false);
+    getOrAssignExtra(profileId, activeProfile.role, content.question.id)
+      .then((assignedExtra) => {
+        if (activeProfileIdRef.current !== profileId) return;
+        setExtra(assignedExtra);
+      })
+      .catch((err) => {
+        console.error("getOrAssignExtra retry failed", err);
+        if (activeProfileIdRef.current === profileId) setExtraFailed(true);
+      });
   }
 
   function goHome() {
@@ -346,6 +389,15 @@ export default function DiscoverPage() {
               </span>
               <p className="text-[15px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
             </div>
+          )}
+
+          {extraFailed && (
+            <p className="text-[13px] text-muted-foreground">
+              Nu am putut încărca Extra.{" "}
+              <button onClick={retryExtra} className="font-semibold text-primary underline">
+                Încearcă din nou
+              </button>
+            </p>
           )}
 
           {content.exploreLinks.length > 0 && (

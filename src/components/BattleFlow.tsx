@@ -50,6 +50,10 @@ export function BattleFlow({
   // R3 (2026-09-05 review, closure batch): same "conflict" distinction as
   // Discover -- see that page's wasConflict for the full rationale.
   const [wasConflict, setWasConflict] = useState(false);
+  // R4 (2026-09-06 batch): same distinction as Discover's extraFailed --
+  // an Extra failure must never hide the already-accepted answer reveal,
+  // and gets its own small retry instead of silently vanishing.
+  const [extraFailed, setExtraFailed] = useState(false);
   const [correctOptionId, setCorrectOptionId] = useState<string | null>(null);
   const [passCorrect, setPassCorrect] = useState(0);
   const [passAnswered, setPassAnswered] = useState(0);
@@ -64,7 +68,10 @@ export function BattleFlow({
   }
 
   async function handleStart() {
-    await trackEvent(tripId, "battle_opened", undefined, { battle_id: content.battle.id });
+    // Fire-and-forget: trackEvent never rejects (src/lib/analytics.ts),
+    // and a slow/unavailable analytics endpoint must never delay
+    // showing the profile picker / first question.
+    void trackEvent(tripId, "battle_opened", undefined, { battle_id: content.battle.id });
     // Product owner request: use the profile picked top-right (the
     // global ProfileMenu, src/components/ProfileMenu.tsx) instead of
     // asking "Cine răspunde?" here -- same resolution it uses (stored
@@ -113,6 +120,7 @@ export function BattleFlow({
     setSelectedOption(null);
     setMyResponse(null);
     setExtra(null);
+    setExtraFailed(false);
     setCorrectOptionId(null);
     setSubmitError(false);
     setWasConflict(false);
@@ -148,7 +156,10 @@ export function BattleFlow({
 
       getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id)
         .then(setExtra)
-        .catch((err) => console.error("getOrAssignExtra failed", err));
+        .catch((err) => {
+          console.error("getOrAssignExtra failed", err);
+          setExtraFailed(true);
+        });
       void trackEvent(tripId, "battle_answered", activeProfile.id, {
         battle_id: content.battle.id,
         question_id: current.question.id,
@@ -180,11 +191,23 @@ export function BattleFlow({
       setSelectedOption(null);
       setMyResponse(null);
       setExtra(null);
+      setExtraFailed(false);
       setCorrectOptionId(null);
       setSubmitError(false);
       setWasConflict(false);
       setStep("question");
     }
+  }
+
+  function retryExtra() {
+    if (!activeProfile || !current) return;
+    setExtraFailed(false);
+    getOrAssignExtra(activeProfile.id, activeProfile.role, current.question.id)
+      .then(setExtra)
+      .catch((err) => {
+        console.error("getOrAssignExtra retry failed", err);
+        setExtraFailed(true);
+      });
   }
 
   async function goToDone() {
@@ -204,7 +227,9 @@ export function BattleFlow({
       console.error("goToDone score lookup failed", err);
     }
     if (isFinal) {
-      await trackEvent(tripId, "final_battle_completed", activeProfile?.id, {
+      // Fire-and-forget -- a slow/unavailable analytics endpoint must
+      // never delay showing the final score screen.
+      void trackEvent(tripId, "final_battle_completed", activeProfile?.id, {
         battle_id: content.battle.id,
       });
     }
@@ -376,6 +401,15 @@ export function BattleFlow({
               </span>
               <p className="text-[15px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
             </div>
+          )}
+
+          {extraFailed && (
+            <p className="text-[13px] text-muted-foreground">
+              Nu am putut încărca Extra.{" "}
+              <button onClick={retryExtra} className="font-semibold text-primary underline">
+                Încearcă din nou
+              </button>
+            </p>
           )}
 
           {current.exploreLinks.length > 0 && (

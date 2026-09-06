@@ -158,6 +158,11 @@ export interface Database {
           auth_user_id: string | null;
           created_at: string;
           last_seen_at: string;
+          // R4 (20260907110000_r4_participant_client_request_id.sql):
+          // client-generated idempotency key for a single add-child
+          // attempt -- see addChildProfile (src/lib/participant.ts).
+          // null for every row not created through that path.
+          client_request_id: string | null;
         },
         "trip_id" | "device_id" | "display_name" | "role"
       >;
@@ -208,6 +213,10 @@ export interface Database {
           would_use_again: "sigur" | "probabil" | "probabil_nu" | "nu" | null;
           comment: string | null;
           created_at: string;
+          // R4 (20260907120000_r4_feedback_request_id_idempotency.sql):
+          // client-generated idempotency key for a single submission
+          // attempt -- see submitFeedback (src/lib/feedback.ts).
+          client_request_id: string | null;
         },
         "trip_id"
       >;

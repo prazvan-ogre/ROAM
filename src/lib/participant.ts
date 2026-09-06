@@ -162,10 +162,33 @@ export function setStoredActiveProfileId(tripId: string, participantId: string):
   mutate(activeProfileSwrKey(tripId), participantId, { revalidate: false });
 }
 
+// R4 correction (2026-09-06 batch, review round 2): a lost confirmation
+// (the insert commits, but the response never reaches the caller -- a
+// dropped connection, a tab backgrounded mid-request) means a retry from
+// the onboarding wizard or Setări's "Adaugă profil copil" must not
+// create a second child. The previous fix recognized an exact name+age
+// match created by this device in the last 15 seconds as "this is my own
+// retry" -- replaced here because that's wrong on both ends: a retry
+// slower than 15s still duplicated, and two honestly-separate identical
+// adds (twins) submitted close together could be wrongly collapsed into
+// one.
+//
+// requestId is a real idempotency key: the caller (Settings' add-child
+// form, OnboardingWizard's child-join step) generates it once per
+// distinct ATTEMPT and keeps it stable across a retry of that same
+// attempt -- see the callers for exactly when it's allowed to change.
+// unique index participants_client_request_id_key (20260907110000_r4_
+// participant_client_request_id.sql) is what actually makes this safe
+// under real concurrency: two literally simultaneous calls with the same
+// requestId both attempt the insert, the DB lets exactly one through,
+// and the loser reconciles onto the winner's row below instead of
+// erroring or creating a duplicate. A different requestId, however
+// identical the name/age, always gets its own row.
 export async function addChildProfile(
   tripId: string,
   displayName: string,
   age: number | null,
+  requestId: string,
   managingAdultId?: string,
 ): Promise<Participant> {
   const deviceId = getDeviceId();
@@ -183,10 +206,27 @@ export async function addChildProfile(
       age,
       managed_by_participant_id: managingAdultId ?? null,
       auth_user_id: authUserId,
+      client_request_id: requestId,
     })
     .select()
     .single();
 
-  if (error) throw error;
-  return data;
+  if (!error) return data;
+
+  if (error.code === "23505") {
+    // This exact requestId already has a row -- either this same call
+    // racing itself (concurrent double-tap) or an earlier attempt that
+    // committed but never confirmed back to the caller. Either way,
+    // that row IS the result of this attempt: fetch and return it
+    // instead of erroring or inserting again.
+    const { data: existing, error: selectError } = await supabase
+      .from("participants")
+      .select("*")
+      .eq("client_request_id", requestId)
+      .single();
+    if (selectError) throw selectError;
+    return existing;
+  }
+
+  throw error;
 }

@@ -60,6 +60,10 @@ export default function CatchUpPage() {
   // R3 (2026-09-05 review, closure batch): same "conflict" distinction as
   // Discover -- see that page's wasConflict for the full rationale.
   const [wasConflict, setWasConflict] = useState(false);
+  // R4 (2026-09-06 batch): same distinction as Discover's extraFailed --
+  // an Extra failure must never hide the already-accepted answer reveal,
+  // and gets its own small retry instead of silently vanishing.
+  const [extraFailed, setExtraFailed] = useState(false);
 
   // R2 (2026-09-05 review, closure batch): same guard as Discover's
   // activeProfileIdRef -- kept in sync every render so handleSubmit's async
@@ -89,6 +93,7 @@ export default function CatchUpPage() {
         setExtra(null);
         setSubmitError(false);
         setWasConflict(false);
+        setExtraFailed(false);
         setStep(pending.length === 0 ? "empty" : "question");
       } catch {
         if (!cancelled) setStep("error");
@@ -132,7 +137,10 @@ export default function CatchUpPage() {
           if (activeProfileIdRef.current !== submittedProfileId) return;
           setExtra(assignedExtra);
         })
-        .catch((err) => console.error("getOrAssignExtra failed", err));
+        .catch((err) => {
+          console.error("getOrAssignExtra failed", err);
+          if (activeProfileIdRef.current === submittedProfileId) setExtraFailed(true);
+        });
     } catch (err) {
       console.error("submitAnswer failed", err);
       if (activeProfileIdRef.current === submittedProfileId) {
@@ -145,11 +153,29 @@ export default function CatchUpPage() {
     }
   }
 
+  function retryExtra() {
+    if (!activeProfile) return;
+    const current = questions[index];
+    if (!current) return;
+    const profileId = activeProfile.id;
+    setExtraFailed(false);
+    getOrAssignExtra(profileId, activeProfile.role, current.question.id)
+      .then((assignedExtra) => {
+        if (activeProfileIdRef.current !== profileId) return;
+        setExtra(assignedExtra);
+      })
+      .catch((err) => {
+        console.error("getOrAssignExtra retry failed", err);
+        if (activeProfileIdRef.current === profileId) setExtraFailed(true);
+      });
+  }
+
   function handleAdvance() {
     const nextIndex = index + 1;
     setSelected(null);
     setResponse(null);
     setExtra(null);
+    setExtraFailed(false);
     setSubmitError(false);
     setWasConflict(false);
     if (nextIndex >= questions.length) {
@@ -304,6 +330,15 @@ export default function CatchUpPage() {
             </span>
             <p className="text-[15px] leading-relaxed text-foreground">{extra.description ?? extra.title}</p>
           </div>
+        )}
+
+        {extraFailed && (
+          <p className="text-[13px] text-muted-foreground">
+            Nu am putut încărca Extra.{" "}
+            <button onClick={retryExtra} className="font-semibold text-primary underline">
+              Încearcă din nou
+            </button>
+          </p>
         )}
 
         {current.exploreLinks.length > 0 && (

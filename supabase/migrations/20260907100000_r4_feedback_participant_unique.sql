@@ -1,0 +1,18 @@
+-- R4 (2026-09-06 batch, "stări clare pentru operațiile de salvare și
+-- recuperare după erori"): submitFeedback (src/lib/feedback.ts) is a
+-- plain insert with no idempotency key -- a lost confirmation (the
+-- insert commits, the response never reaches the client) used to mean a
+-- retry from the "TRIMITE" button created a second feedback row for the
+-- same participant. The product already only ever asks once per trip
+-- (app/trip/[slug]/final/page.tsx tracks this in localStorage,
+-- feedbackStorageKey), so a second row for the same participant on the
+-- same trip is never an intentional, wanted state -- this constraint
+-- just makes that existing intent safe to retry into, the same way
+-- prize_votes' own unique(participant_id) already does for prize voting.
+--
+-- A nullable participant_id (anonymous feedback, when no adult profile
+-- resolves) is unaffected: Postgres treats every NULL as distinct for
+-- uniqueness purposes, so any number of anonymous rows can still coexist
+-- per trip -- only a genuine, identified participant is limited to one
+-- row per trip.
+alter table feedback add constraint feedback_trip_participant_unique unique (trip_id, participant_id);
