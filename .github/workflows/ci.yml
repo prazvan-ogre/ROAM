@@ -142,6 +142,7 @@ jobs:
           npm run test:sql:batch2-battle-authz
           npm run test:sql:r5-trip-ownership
           npm run test:sql:r6-timezone-lifecycle
+          npm run test:sql:r7-content-publishing
 
   unit-tests:
     runs-on: ubuntu-latest

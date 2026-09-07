@@ -134,6 +134,7 @@ identitate (Supabase Auth session)
 | `extra_assignments` / `prize_votes` | — | read within trip (needed for load-balancing/tallying); write only as self | — | same as any participant | — | — |
 | `feedback` / `analytics_events` | — | write only as self, within trip; never read back | — | same as any participant | — | — |
 | `battle_team_score()` / `trip_battle_win_tally()` (aggregate RPCs) | — | callable for trips it's a member of | rejected (`42501`) | same as any participant | — | — |
+| `trips.content_status` (write) / `validate_trip_content()` / `publish_trip()` | — | — | — | — | read (validate)/write (publish), via `/api/admin/trips/[slug]/*` only, `is_admin` re-checked server-side every call | rejected (`42501` — revoked from anon/authenticated at the database level) |
 
 "Same trip" access for a still-**legacy** participant (a row created
 before the relevant migration, `auth_user_id is null`) keeps its old,
@@ -430,6 +431,90 @@ what a newly-created row gets.
     only source of truth for both the individual leaderboard and the
     team score going forward, closing that divergence without touching
     any already-seeded `points` value.
+14. **A real content-publishing pipeline
+    (`20260908090000_r7_content_publishing_pipeline.sql`, R7)**:
+    `content_status` (`pending`/`generating`/`ready`/`failed`) existed
+    since public trip creation, but nothing ever checked that a `'ready'`
+    trip's content was actually complete, and the column's own DEFAULT
+    was `'ready'` (kept from before the column existed, for pre-existing
+    rows) — a bare `insert into trips (...)` that forgot to set it
+    explicitly (exactly `seed.sql`'s own pattern) silently became
+    `'ready'` with zero verified/published content. The DEFAULT is now
+    `'pending'` (only ever affects a future insert that omits the column
+    — no existing row's stored value changes). Two new functions, both
+    revoked from anon/authenticated at the database level (reachable only
+    via the service-role key, after the same server-verified
+    `creator_accounts.is_admin` check as everything else admin-only in
+    this file — never a client-supplied flag):
+    - `validate_trip_content(trip_id)` — read-only, checks the real
+      relationships between `trips`/`questions`/`answer_options`/
+      `battles`/`extras`/`explore_links`/`prize_options` (not just "does
+      a row exist"): every required day 1..`duration_days` has a
+      verified+published Morning and Lunch Discover question; every day
+      1..(`duration_days`-1) has exactly one active daily Battle with at
+      least one verified+published question; exactly one active Final
+      Battle exists trip-wide, also fully verified+published; every
+      `single_choice` question has ≥2 options and exactly 1 correct one;
+      a Battle's own questions have unique `order_index` values (a
+      deterministic play order); every published Extra is verified and
+      has a type; every Extra/link's `question_id`/`extra_id` actually
+      belongs to the SAME trip (not just any trip — the same cross-trip-
+      reference bug class R1 batch 2 already closed for reads); the trip
+      itself has a name/destination/valid IANA timezone/start date/
+      duration in range; and either ≥2 `prize_options` exist or
+      `trips.prize` (the legacy fixed-prize text column, superseded as
+      the *default* mechanism by the vote but still a valid "no vote for
+      this trip, documented" declaration) is set — never both empty. A
+      trip already `'ready'` that no longer (or never did) actually pass
+      is flagged as its own issue (`trip.content_status_inconsistent`)
+      rather than left for an operator to notice on their own.
+    - `publish_trip(trip_id)` — re-runs that same validation inside one
+      transaction (`select ... for update` locks the trip row, so two
+      concurrent publish attempts serialize instead of racing) and only
+      flips `content_status` to `'ready'` if there are zero errors; any
+      error rejects the whole call outright, `content_status` untouched,
+      full issue list returned. Idempotent: publishing an already-`'ready'`
+      trip that's still valid is a safe no-op (`'already_published'`),
+      never a second write.
+    Neither function changes what's authored or how — `verified`/
+    `published` on individual rows stays a Supabase Studio (or seed-
+    migration) step, same as before this migration; `publish_trip` is a
+    **gate**, not a content editor. Exposed to operators two ways: Setări
+    → Publicare (admin-only tab, `app/api/admin/trips/[slug]/{validate,
+    publish}`, `src/lib/security/adminAuth.ts` for the auth check) and
+    `scripts/validate-trip-content.mjs` (`npm run validate-trip -- <slug>
+    [--publish]`) for a terminal/CI workflow, both calling the exact same
+    two functions — there is only ever one set of validation rules.
+    **Onboarding no longer hardcodes Kassandra-specific content**:
+    `OnboardingWizard`'s intro step used to show fixed Halkidiki/Poseidon
+    mythology text to every trip regardless of destination; it now shows
+    `trips.location_info` (already a real, per-trip column, already
+    displayed on the Dashboard header) when set, and a neutral, honest
+    fallback otherwise — never invented destination facts for a trip that
+    hasn't supplied its own.
+
+### Existing trips under the R7 pipeline
+
+`validate_trip_content`/`publish_trip` are opt-in: nothing re-validates
+an existing `'ready'` trip on its own, and the new `content_status`
+DEFAULT only ever applies to a future bare insert. Audited against a
+scratch database seeded from `seed.sql` (Kassandra 2026, the only trip
+this repository has real content for) before writing the checks above:
+before R7, that insert relied on the (wrong) `'ready'` DEFAULT and never
+set `timezone` at all; `seed.sql` now sets both explicitly
+(`content_status` implicitly via the new `'pending'` DEFAULT, `timezone`
+= `Europe/Athens` — the destination's real zone, simply never recorded
+when R6 added the column, not a new decision). Running
+`validate_trip_content` against that seed confirms it now correctly
+reports every Discover/Battle question as `not_published` until the
+documented review step runs, and reports nothing once it does — see this
+repo's R7 report for the exact commands. Any OTHER already-`'ready'` trip
+(a real deployed one, not covered by this repository's own fixtures)
+keeps behaving exactly as it did before this migration unless someone
+explicitly calls `publish_trip` on it — which would either confirm it's
+still fine (`'already_published'`) or surface, for the first time,
+whatever the `trip.content_status_inconsistent` check above is for. No
+such re-check is triggered automatically by this migration.
 
 ### Admin bootstrap and credential rotation
 
@@ -562,6 +647,8 @@ batch describes, and neither is silently reclaimed or deleted:
 - `supabase/migrations/20260907092000_batch2_battle_aggregate_authz.sql` — adds a trip-membership authorization check to `battle_team_score()`/`trip_battle_win_tally()` (previously callable with any battle/trip id by anyone); the scoring formula itself is unchanged.
 - `supabase/migrations/20260907093000_batch2_creator_account_auth.sql` — `creator_accounts.auth_user_id` (nullable, `pin_hash` now nullable too) — see "Security model" point 7 above and `src/lib/security/session.ts`.
 - `supabase/migrations/20260907094000_batch2_ip_rate_limits.sql` — `ip_rate_limits` (service-role only), backing an IP-keyed rate limit on new-trip and new-account creation alongside the existing per-device/per-phone checks.
+- `supabase/migrations/20260907140000_r6_trip_timezone_and_lifecycle.sql` — R6: `trips.timezone` (nullable IANA zone, `is_valid_iana_timezone()` CHECK), `trips_public` now exposes it, `record_answer()` computes the trip's own day in that zone and rejects a new answer on a scheduled/ended trip. See "Security model" point 13 above.
+- `supabase/migrations/20260908090000_r7_content_publishing_pipeline.sql` — R7: `content_status`'s DEFAULT changes from `'ready'` to `'pending'` (no existing row's stored value changes); adds `validate_trip_content()`/`publish_trip()`, both revoked from anon/authenticated. See "Security model" point 14 above.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

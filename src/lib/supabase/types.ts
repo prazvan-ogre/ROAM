@@ -405,6 +405,34 @@ export interface Database {
         Args: { p_question_ids: string[] };
         Returns: { question_id: string; correct_option_id: string }[];
       };
+      // R7 (20260908090000_r7_content_publishing_pipeline.sql): read-only
+      // relational validation of one trip's content -- see
+      // src/lib/contentValidation.ts and app/api/admin/trips/[slug]/
+      // validate/route.ts. Revoked from anon/authenticated at the
+      // database level; only ever called via the service-role client.
+      validate_trip_content: {
+        Args: { p_trip_id: string };
+        Returns: {
+          check_key: string;
+          severity: string;
+          message: string;
+          day_number: number | null;
+          entity_id: string | null;
+        }[];
+      };
+      // R7: the one atomic, idempotent publish operation -- re-validates
+      // via validate_trip_content() and only flips content_status to
+      // 'ready' if there are zero errors. Same access restriction as
+      // validate_trip_content above.
+      publish_trip: {
+        Args: { p_trip_id: string };
+        Returns: {
+          status: "published" | "already_published" | "rejected";
+          error_count: number;
+          warning_count: number;
+          issues: unknown;
+        };
+      };
     };
   };
 }
