@@ -42,6 +42,17 @@ const validBody = {
   deviceId: "device-1",
   requestId: "req-1",
   website: "",
+  // Trip editorial brief (20260909090000_trip_editorial_brief.sql): the
+  // route validates this on every request now, same as every other
+  // field -- a valid default here isolates this file's own ownership
+  // assertions from that unrelated check.
+  difficulty: "medium",
+  style: "fun",
+  narratorCharacterName: "",
+  themeHistory: 25,
+  themePlaces: 25,
+  themeFood: 25,
+  themeCuriosities: 25,
 };
 
 describe("R5 regression: POST /api/trips/create requires a verified identity, not a client-supplied one", () => {

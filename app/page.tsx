@@ -6,7 +6,19 @@ import Link from "next/link";
 import { Loader2, Sparkles } from "lucide-react";
 import { createPublicTrip } from "@/lib/publicTripCreation";
 import { COMMON_DESTINATION_TIMEZONES, suggestTimezoneForDestination } from "@/lib/ianaTimezones";
-import { MIN_TRIP_DURATION_DAYS, MAX_TRIP_DURATION_DAYS } from "@/lib/constants";
+import {
+  MIN_TRIP_DURATION_DAYS,
+  MAX_TRIP_DURATION_DAYS,
+  DEFAULT_TRIP_DIFFICULTY,
+  DEFAULT_TRIP_QUESTION_STYLE,
+  DEFAULT_THEME_DISTRIBUTION,
+} from "@/lib/constants";
+import { validateEditorialBrief, type EditorialBriefFieldErrors } from "@/lib/editorialBrief";
+import {
+  EditorialBriefFields,
+  themeDefaultsAsStrings,
+  type EditorialBriefFieldsValue,
+} from "@/components/EditorialBriefFields";
 
 const DURATION_OPTIONS = Array.from(
   { length: MAX_TRIP_DURATION_DAYS - MIN_TRIP_DURATION_DAYS + 1 },
@@ -34,6 +46,21 @@ export default function HomePage() {
   const [website, setWebsite] = useState(""); // honeypot -- see route.ts
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Trip editorial brief (20260909090000_trip_editorial_brief.sql):
+  // visible, editable starting proposals -- medium difficulty, an equal
+  // 25/25/25/25 theme split, the "fun" style -- never a claim about any
+  // existing trip's preferences, just this form's own defaults. Kept as
+  // one EditorialBriefFieldsValue object so both this form and the
+  // Settings edit form (app/trip/[slug]/settings/page.tsx) share the
+  // exact same shape and the same <EditorialBriefFields> component.
+  const [brief, setBrief] = useState<EditorialBriefFieldsValue>({
+    difficulty: DEFAULT_TRIP_DIFFICULTY,
+    style: DEFAULT_TRIP_QUESTION_STYLE,
+    narratorCharacterName: "",
+    ...themeDefaultsAsStrings(DEFAULT_THEME_DISTRIBUTION),
+  });
+  const [briefErrors, setBriefErrors] = useState<EditorialBriefFieldErrors>({});
 
   // R5: requestId is a real idempotency key for trip creation
   // (src/lib/publicTripCreation.ts) -- generated once per distinct
@@ -70,6 +97,10 @@ export default function HomePage() {
     requestIdRef.current = null;
     setDurationDays(v);
   }
+  function handleBriefChange(next: EditorialBriefFieldsValue) {
+    requestIdRef.current = null;
+    setBrief(next);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -78,6 +109,12 @@ export default function HomePage() {
       setError("Alege fusul orar al destinației.");
       return;
     }
+    const validatedBrief = validateEditorialBrief(brief);
+    if (!validatedBrief.ok) {
+      setBriefErrors(validatedBrief.errors);
+      return;
+    }
+    setBriefErrors({});
     if (!requestIdRef.current) requestIdRef.current = crypto.randomUUID();
     setError(null);
     setSubmitting(true);
@@ -89,6 +126,7 @@ export default function HomePage() {
         timezone,
         website,
         requestId: requestIdRef.current,
+        brief: validatedBrief.value,
       });
       router.push(`/trips?link=${result.slug}`);
     } catch (err) {
@@ -182,6 +220,11 @@ export default function HomePage() {
               ))}
             </select>
           </div>
+        </div>
+
+        <div className="border-t border-border pt-5">
+          <p className="mb-4 text-[13px] font-semibold uppercase tracking-wide text-primary">Brief editorial</p>
+          <EditorialBriefFields value={brief} onChange={handleBriefChange} errors={briefErrors} disabled={submitting} />
         </div>
 
         {/* Honeypot: invisible to a real visitor (off-screen, never
