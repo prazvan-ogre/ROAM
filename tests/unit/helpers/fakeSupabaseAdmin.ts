@@ -39,6 +39,16 @@ export interface FakeAuthOptions {
   validTokens?: Record<string, string>;
 }
 
+// R7: admin.rpc(fnName, params) -- validate_trip_content/publish_trip are
+// plain Postgres functions, not table rows, so there's nothing for the
+// select/insert/update builders above to simulate. A test wires in exactly
+// the function(s) its own route under test calls; an rpc name with no
+// handler here throws loudly (same "unexpected table" failure mode as
+// .from() below) rather than silently resolving to nothing, so a typo'd
+// function name fails the test instead of masking a real bug.
+export type FakeRpcHandler = (params: Record<string, unknown>) => { data: unknown; error: unknown };
+export type FakeRpcHandlers = Record<string, FakeRpcHandler>;
+
 function matchesFilters(row: Record<string, unknown>, filters: Record<string, unknown>): boolean {
   return Object.entries(filters).every(([key, value]) => row[key] === value);
 }
@@ -105,12 +115,18 @@ export function createFakeAdminClient(
   authOptions: FakeAuthOptions = {},
   trips: FakeTripRow[] = [],
   loginAttempts: FakeLoginAttemptRow[] = [],
+  rpcHandlers: FakeRpcHandlers = {},
 ) {
   const validTokens = authOptions.validTokens ?? {};
   let nextCreatedId = 1;
   let nextTripId = 1;
 
   return {
+    async rpc(fnName: string, params: Record<string, unknown> = {}) {
+      const handler = rpcHandlers[fnName];
+      if (!handler) throw new Error(`fake admin client: unexpected rpc "${fnName}"`);
+      return handler(params);
+    },
     auth: {
       async getUser(token: string) {
         const userId = validTokens[token];

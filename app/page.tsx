@@ -6,12 +6,11 @@ import Link from "next/link";
 import { Loader2, Sparkles } from "lucide-react";
 import { createPublicTrip } from "@/lib/publicTripCreation";
 import { COMMON_DESTINATION_TIMEZONES, suggestTimezoneForDestination } from "@/lib/ianaTimezones";
+import { MIN_TRIP_DURATION_DAYS, MAX_TRIP_DURATION_DAYS } from "@/lib/constants";
 
-const MIN_DURATION_DAYS = 3;
-const MAX_DURATION_DAYS = 10;
 const DURATION_OPTIONS = Array.from(
-  { length: MAX_DURATION_DAYS - MIN_DURATION_DAYS + 1 },
-  (_, i) => MIN_DURATION_DAYS + i,
+  { length: MAX_TRIP_DURATION_DAYS - MIN_TRIP_DURATION_DAYS + 1 },
+  (_, i) => MIN_TRIP_DURATION_DAYS + i,
 );
 
 function defaultStartDate(): string {
