@@ -206,7 +206,11 @@ export interface GetEditorialBriefResult {
   readOnly: boolean;
 }
 
-function toEditorialBrief(row: Database["public"]["Tables"]["trip_editorial_briefs"]["Row"]): EditorialBrief {
+// Exported for src/lib/questionGeneration.ts, which shows the same
+// brief shape (read-only, "what was this trip's brief") alongside a
+// generation run's own state -- one mapper, not two independently
+// maintained copies.
+export function toEditorialBrief(row: Database["public"]["Tables"]["trip_editorial_briefs"]["Row"]): EditorialBrief {
   return {
     difficulty: row.difficulty,
     style: row.style,

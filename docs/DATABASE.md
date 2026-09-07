@@ -38,10 +38,12 @@ Everything else maps 1:1 to the spec's entity list.
 | `prize_options` / `prize_votes` | The prize choices for a trip (≥2 distinct, non-blank options — enforced by constraints; see point 15 below) and each participant's single, unchangeable vote (`unique(participant_id)`) for their favourite. Written only via `cast_prize_vote()` — see Setări > Configurare and the onboarding wizard's prize step. |
 | `prize_results` | One row per trip, written exactly once by `get_prize_status()` once voting closes (end of the trip's first day, in its own destination timezone) — the resolved winner, permanently. Never recomputed once written. |
 | `battles` | A themed group of Battle questions for a given day; `is_final` marks the Final Battle. |
-| `questions` | Discover or Battle questions (`kind` discriminates). `battle_id`/`slot` set only for their respective kind. Carries the full Discover content shape: `common_core`, `one_thing`, `correct_reveal_message`/`alternative_reveal_message`, `sources`, `verified`, `published`. |
+| `questions` | Discover or Battle questions (`kind` discriminates). `battle_id`/`slot` set only for their respective kind. Carries the full Discover content shape: `common_core`, `one_thing`, `correct_reveal_message`/`alternative_reveal_message`, `sources`, `verified`, `published`. R9 adds `theme_category`/`difficulty` (nullable -- only ever set on a question promoted from an accepted generated draft) and `source` (`manual`/`generated`/`edited`, default `manual`). |
 | `answer_options` | Options for a question; `is_correct` marks the right one(s). |
 | `extras` | Bonus content tied to one question (`question_id`) -- Discover or Battle alike, product owner request -- typed (`extra_type`: know/think/connect/ask/explore) and scoped by `audience` (all/adult/child). Also carries `sources`/`verified`/`published`. |
 | `explore_links` | External "rabbit hole" links, attached to a question and/or an extra. |
+| `trip_question_generation_runs` | R9: one row per AI-assisted question-generation attempt for a trip -- who requested it, when, which brief version, how many questions were asked for, and its outcome (`generating`/`succeeded`/`failed`). See "Security model" point 17 below. |
+| `trip_generated_question_drafts` | R9: one row per candidate question an AI generation run proposed -- always a draft (`pending_review`/`accepted`/`rejected`/`invalidated`) until a human accepts (optionally editing it first) or rejects it. Never shown to a participant. See point 17 below. |
 
 ### Activity (participant-generated, written under the caller's own verified identity, scoped to trip membership — see "Security model" below)
 
@@ -140,6 +142,7 @@ identitate (Supabase Auth session)
 | `battle_team_score()` / `trip_battle_win_tally()` (aggregate RPCs) | — | callable for trips it's a member of | rejected (`42501`) | same as any participant | — | — |
 | `trips.content_status` (write) / `validate_trip_content()` / `publish_trip()` | — | — | — | — | read (validate)/write (publish), via `/api/admin/trips/[slug]/*` only, `is_admin` re-checked server-side every call | rejected (`42501` — revoked from anon/authenticated at the database level) |
 | `trip_editorial_briefs` (read/write) | read/write own trip, only before publish, via `/api/trips/[slug]/brief` only | — (not exposed to participants at all) | — | — | read/write any trip, same route/before-publish rule | rejected (`42501` — RLS enabled, zero anon/authenticated policies) |
+| `trip_question_generation_runs` / `trip_generated_question_drafts` (read/write) | start generation, accept/edit/reject a draft on own trip, only before publish, via `/api/trips/[slug]/generate*` only | — (never shown to participants) | — | — | same, on any trip | rejected (`42501` — RLS enabled, zero anon/authenticated policies) |
 
 "Same trip" access for a still-**legacy** participant (a row created
 before the relevant migration, `auth_user_id is null`) keeps its old,
@@ -698,6 +701,165 @@ such re-check is triggered automatically by this migration.
       workflow a later batch decides on — this batch only leaves the
       caution note, not an enforced review-state machine).
 
+17. **AI-assisted question generation** (`20260910090000_r9_question_
+    generation.sql`, R9): the trip's creator or an admin can generate a
+    batch of candidate Discover questions from the trip's editorial
+    brief (point 16 above) — always a **draft**, never verified/
+    published automatically; a human must accept (optionally editing
+    it first) or reject each one before the trip can publish.
+    **Scope**: this batch generates Discover questions only
+    (`kind = 'discover'`, `single_choice`) — Battle-question generation
+    would need a further, unspecified product decision about auto-
+    creating/attaching `battles` rows, and is left out entirely rather
+    than guessed at.
+    - **Data model, and why two tables**:
+      `trip_question_generation_runs` is the async JOB (one row per
+      attempt — who requested it, when, which brief version, how many
+      questions were asked for, its outcome); `trip_generated_question_
+      drafts` is the CONTENT that job proposed (one row per candidate
+      question, reviewed individually, never deleted — the audit trail).
+      Splitting them keeps "is a job already running for this trip" a
+      cheap single-row lookup independent of how many drafts exist.
+      Neither is a generic "content draft" system — this batch has
+      exactly one draftable shape, same posture the editorial brief
+      migration already took for the same reason.
+    - **Reuses `trips.content_status` for the job's own state, rather
+      than inventing a new column**: the product request explicitly
+      asks for exactly the four states R7 already defined
+      (`pending`/`generating`/`ready`/`failed`) — "Folosește stările
+      existente ale pipeline-ului". This migration is the first thing
+      that actually transitions a trip into `generating`/`failed` (R7
+      only ever defined those values). `ready` is still set **only** by
+      `publish_trip()` — a successful generation returns content_status
+      to `pending` (drafts exist, awaiting review), a failed one to
+      `failed`; generated content never becomes verified/published on
+      its own.
+    - `start_trip_question_generation(trip_id, account_id, requested_
+      count)` claims the right to run a job, atomically. Takes the
+      IDENTICAL `select ... for update` lock on `trips` that
+      `publish_trip()`/`save_trip_editorial_brief()` already take — so
+      starting a generation, saving the brief, and publishing are all
+      mutually exclusive for one trip. A concurrent second start
+      request while one is already running returns that SAME run's
+      current state (never a duplicate job) — backed by a real unique
+      partial index (`trip_question_generation_runs` on `trip_id` where
+      `status = 'generating'`), not just the status check on its own.
+      Rejects outright (no job started, `trips` untouched) when: the
+      trip has no brief (`no_brief`) — **a legacy trip without one
+      cannot start generation until an admin completes it first**,
+      exactly as the product request asks; the trip is already
+      published (`already_published` — generation, like brief edits,
+      is only ever allowed before publish); or a real, simple rate
+      limit trips (`rate_limited` — at most one attempt per trip every
+      30 seconds, **except** immediately after a failure, which is
+      always allowed — "Retry-ul ... după eșec" must be instant, not
+      gated behind the same cooldown meant for rapid-fire clicking).
+      **Recoverable on crash**: a run still `generating` more than 3
+      minutes after it started (far past the provider call's own 45s
+      timeout) is treated as abandoned — reclaimed as `failed` and a
+      fresh run started in the very same call, so a killed request (a
+      platform timeout, a dropped connection) never leaves a trip
+      stuck in `generating` forever — "Eșecul trebuie să lase trip-ul
+      într-o stare recuperabilă."
+    - `finish_trip_question_generation(run_id, success, error_message,
+      draft_count, rejected_count)` — called once the provider call and
+      per-item validation have actually completed, success or not.
+      Idempotent: finishing an already-finished run is a safe no-op
+      (defends against a slow, late-arriving request racing a stale-run
+      reclaim above — see that logic's own comment for the accepted,
+      documented edge case this leaves: the late request's own drafts,
+      if any, still insert and stay fully reviewable, only that run
+      row's own bookkeeping stays stale).
+    - `accept_generated_question_draft(draft_id, account_id, ...fields,
+      edited)` is the human review step — the ONLY way a draft becomes
+      a real `questions`/`answer_options` row, inserted with
+      `verified = true, published = true` directly (accepting IS the
+      verification pass this schema already requires for every other
+      question — see "Content integrity" above — not a second, later
+      Supabase-Studio-flip step). Re-validates everything procedurally
+      (exactly one correct option, no duplicate labels, day within
+      `duration_days`, length limits) as the actual, non-bypassable
+      last line of defense, even though the same rules already gate the
+      admin UI's own submit button (`src/lib/generatedQuestions.ts`) —
+      a CHECK constraint can't express "exactly one correct option"
+      without a subquery, which Postgres forbids in CHECK, so this is
+      procedural, not declarative, unlike most of this schema's other
+      constraints. `source` is set to `'generated'` or `'edited'`
+      (whichever differs from the draft's own stored values) — never
+      overwrites the draft row's own fields, which stay the original AI
+      proposal for audit; the promoted `questions` row is the one place
+      the accepted (possibly edited) version actually lives. Rejects
+      (no write) when: the draft was already resolved
+      (`already_processed`); the trip published in the meantime
+      (`trip_published`); or — the concurrency guarantee this section
+      exists for — **the brief changed since this draft was generated**
+      (`stale_brief`, compared via a captured `brief_version` timestamp
+      against the trip's current one).
+    - **A brief change invalidates old, unreviewed drafts**: extends
+      `save_trip_editorial_brief()` (same signature, same revoke) so a
+      successful save marks every still-`pending_review` draft for that
+      trip `'invalidated'` — a distinct terminal status from
+      `'rejected'` (an admin's own decision), purely for audit clarity.
+      Never touches an already-`'accepted'` draft (it's already a real
+      question by then, independent of the brief). This is the primary
+      UX signal for "Dacă brief-ul este modificat înainte de finalizarea
+      generării, invalidează rezultatul vechi"; `accept_generated_
+      question_draft`'s own `stale_brief` check above is the
+      independent defense-in-depth backstop, in case a future code path
+      ever bypasses this cascade.
+    - `reject_generated_question_draft(draft_id)` — an explicit "don't
+      use this" decision. Never deletes the row.
+    - **Publish is blocked while any draft awaits review**:
+      `validate_trip_content()` (same function R7 defined, extended
+      again here) gains one more structural check — any
+      `trip_generated_question_drafts` row still `pending_review` for
+      the trip is an error (`generation.review_pending`), so
+      `publish_trip()` itself refuses (never just the admin UI's own
+      client-side gate). `'rejected'`/`'invalidated'` drafts don't
+      block — both are resolved, terminal states. Like point 16's own
+      `brief.narrator_name_missing` check, this is structural only —
+      never a claim that a question's difficulty/tone/facts were
+      actually verified; that remains exactly what accepting (or
+      editing then accepting) a draft means.
+    - **AI provider isolation** (`src/lib/ai/questionGenerationProvider.ts`):
+      one `QuestionGenerationProvider` interface, two implementations.
+      `AnthropicQuestionGenerationProvider` calls the Anthropic Messages
+      API (`claude-opus-5`) — `ANTHROPIC_API_KEY` is read from
+      `process.env` in this one file only, never sent to the browser,
+      never stored in the database (matches `SUPABASE_SERVICE_ROLE_KEY`'s
+      own contract). `FakeQuestionGenerationProvider` is deterministic
+      (no network call, no credentials) and is the **default** whenever
+      no key is configured or `AI_PROVIDER=fake` is set — generation
+      development, browser verification, and this batch's entire
+      automated test suite all run against it; nothing here ever blocks
+      on a missing key. Neither provider is ever sent participant
+      personal data — a generation request carries only destination,
+      the brief's own preferences, and which day/slot/category/
+      difficulty each candidate question should cover (see
+      `GenerationRequest` in that file) — there is no participant/
+      profile field to accidentally forward. Provider errors are mapped
+      to one of `timeout`/`rate_limited`/`provider_error`/
+      `not_configured`; the raw SDK error message/body is deliberately
+      never included in what's logged or returned to the client — only
+      this safe, generic reason and (server-side only) the error kind.
+    - **Rate limiting and cost**: the 30-second per-trip cooldown above,
+      plus a hard cap of `MAX_GENERATED_QUESTIONS_PER_REQUEST = 10`
+      questions per request (`src/lib/constants.ts`, mirrored by a
+      `requested_count between 1 and 10` CHECK on
+      `trip_question_generation_runs` — the actual non-bypassable
+      floor). See the R9 report for the estimated per-request cost at
+      that cap and the documented timeout/rate-limit/provider-error
+      behavior.
+    - **Authorization**: every RPC above is reachable only via the
+      service-role key (revoked from anon/authenticated/PUBLIC); the
+      Next.js routes (`app/api/trips/[slug]/generate*`) re-derive
+      "creator or admin" themselves via the same
+      `src/lib/security/tripAuthorAccess.ts` the brief routes already
+      use — never a client-supplied flag. Both new tables carry RLS
+      enabled with **zero** anon/authenticated policies — participants
+      never see a draft or an intermediate result, matching
+      `trip_editorial_briefs`/`creator_accounts`.
+
 ### Admin bootstrap and credential rotation
 
 `creator_accounts.is_admin` was seeded by two already-applied migrations
@@ -833,6 +995,7 @@ batch describes, and neither is silently reclaimed or deleted:
 - `supabase/migrations/20260908090000_r7_content_publishing_pipeline.sql` — R7: `content_status`'s DEFAULT changes from `'ready'` to `'pending'` (no existing row's stored value changes); adds `validate_trip_content()`/`publish_trip()`, both revoked from anon/authenticated. See "Security model" point 14 above.
 - `supabase/migrations/20260908090000_r8_prize_voting_rules.sql` — R8: `prize_options` gains non-blank-title and unique-title-per-trip constraints; new `prize_results` table (one row per trip, written once); `prize_voting_closes_at()`, `cast_prize_vote()`, `get_prize_status()`, all three revoked-by-default and explicitly granted to anon/authenticated; `prize_votes`' old direct-insert RLS policy is dropped. See "Security model" point 15 above.
 - `supabase/migrations/20260909090000_trip_editorial_brief.sql` — trip editorial brief: `trip_editorial_briefs` (one row per trip, RLS enabled with zero policies — service-role only), the `trip_difficulty`/`trip_question_style` enums, `save_trip_editorial_brief()` (reuses `publish_trip`'s own row lock so edit-vs-publish can't race, revoked from anon/authenticated), and one added check inside `validate_trip_content()`. See "Security model" point 16 above.
+- `supabase/migrations/20260910090000_r9_question_generation.sql` — R9: `trip_question_generation_runs`/`trip_generated_question_drafts` (RLS enabled with zero policies — service-role only), `questions.theme_category`/`difficulty`/`source`; `start_trip_question_generation()`/`finish_trip_question_generation()`/`accept_generated_question_draft()`/`reject_generated_question_draft()` (all revoked from anon/authenticated); extends `save_trip_editorial_brief()` (invalidates stale drafts on a brief change) and `validate_trip_content()` (blocks publish while a draft awaits review). See "Security model" point 17 above.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

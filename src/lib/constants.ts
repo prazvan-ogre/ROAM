@@ -1,4 +1,4 @@
-import type { QuestionSlot, TripDifficulty, TripQuestionStyle } from "./supabase/types";
+import type { QuestionSlot, QuestionThemeCategory, TripDifficulty, TripQuestionStyle } from "./supabase/types";
 
 // R7: the trip duration bounds every layer that creates or validates a
 // trip must agree on -- app/page.tsx's own duration picker,
@@ -47,3 +47,28 @@ export const MAX_NARRATOR_CHARACTER_NAME_LENGTH = 80;
 export const DEFAULT_TRIP_DIFFICULTY: TripDifficulty = "medium";
 export const DEFAULT_TRIP_QUESTION_STYLE: TripQuestionStyle = "fun";
 export const DEFAULT_THEME_DISTRIBUTION = { history: 25, places: 25, food: 25, curiosities: 25 } as const;
+
+// R9 (20260910090000_r9_question_generation.sql): documented mirrors of
+// the same non-bypassable SQL source of truth, same convention as
+// MIN/MAX_TRIP_DURATION_DAYS above -- trip_question_generation_runs'
+// own `requested_count between 1 and 10` CHECK, and
+// trip_generated_question_drafts' own prompt/explanation length CHECKs.
+export const MAX_GENERATED_QUESTIONS_PER_REQUEST = 10;
+export const MIN_GENERATED_QUESTIONS_PER_REQUEST = 1;
+export const MAX_GENERATED_QUESTION_PROMPT_LENGTH = 500;
+export const MAX_GENERATED_QUESTION_EXPLANATION_LENGTH = 400;
+export const MIN_GENERATED_QUESTION_OPTIONS = 2;
+export const MAX_GENERATED_QUESTION_OPTIONS = 6;
+
+export const QUESTION_THEME_CATEGORIES: readonly QuestionThemeCategory[] = [
+  "history",
+  "places",
+  "food",
+  "curiosities",
+];
+export const THEME_CATEGORY_LABEL: Record<QuestionThemeCategory, string> = {
+  history: "Istorie",
+  places: "Locuri de vizitat",
+  food: "Gastronomie locală",
+  curiosities: "Curiozități locale",
+};

@@ -145,6 +145,7 @@ jobs:
           npm run test:sql:r7-content-publishing
           npm run test:sql:r8-prize-voting
           npm run test:sql:trip-editorial-brief
+          npm run test:sql:r9-question-generation
 
   unit-tests:
     runs-on: ubuntu-latest
