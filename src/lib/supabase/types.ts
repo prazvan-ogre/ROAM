@@ -356,7 +356,7 @@ export interface Database {
         },
         "trip_id" | "prize_option_id" | "participant_id"
       >;
-      // R8 (20260908090000_r8_prize_voting_rules.sql): written exactly
+      // R8 (20260908090001_r8_prize_voting_rules.sql): written exactly
       // once per trip, only by get_prize_status() -- no anon/authenticated
       // insert/update/delete policy at all (same "reachable only through
       // the owning SECURITY DEFINER function" pattern as responses/
@@ -517,7 +517,7 @@ export interface Database {
         Args: { p_question_ids: string[] };
         Returns: { question_id: string; correct_option_id: string }[];
       };
-      // R8 (20260908090000_r8_prize_voting_rules.sql): the only way to
+      // R8 (20260908090001_r8_prize_voting_rules.sql): the only way to
       // write prize_votes -- atomic, idempotent, same retry contract as
       // record_answer (status: 'recorded' | 'already_recorded' |
       // 'conflict'), plus 'voting_closed' (a genuinely new vote attempted

@@ -1,4 +1,4 @@
-// R8 (20260908090000_r8_prize_voting_rules.sql): Setări > Configurare's
+// R8 (20260908090001_r8_prize_voting_rules.sql): Setări > Configurare's
 // prize row now reflects the server-resolved contract (configured/
 // votingOpen/winner/closesAt) instead of the old "options.length === 0"
 // check, and labels the closing instant as the destination's own time

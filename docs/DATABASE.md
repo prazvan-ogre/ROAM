@@ -524,7 +524,7 @@ still fine (`'already_published'`) or surface, for the first time,
 whatever the `trip.content_status_inconsistent` check above is for. No
 such re-check is triggered automatically by this migration.
 15. **Prize voting rules, made a real server-side contract
-    (`20260908090000_r8_prize_voting_rules.sql`, R8)**: `prize_options`/
+    (`20260908090001_r8_prize_voting_rules.sql`, R8)**: `prize_options`/
     `prize_votes` (product owner's original spec) previously had no
     server-side concept of "voting is closed" at all — `getPrizeStatus()`
     (`src/lib/prize.ts`) computed "closes 12h after the first vote, most
@@ -993,7 +993,7 @@ batch describes, and neither is silently reclaimed or deleted:
 - `supabase/migrations/20260907094000_batch2_ip_rate_limits.sql` — `ip_rate_limits` (service-role only), backing an IP-keyed rate limit on new-trip and new-account creation alongside the existing per-device/per-phone checks.
 - `supabase/migrations/20260907140000_r6_trip_timezone_and_lifecycle.sql` — R6: `trips.timezone` (nullable IANA zone, `is_valid_iana_timezone()` CHECK), `trips_public` now exposes it, `record_answer()` computes the trip's own day in that zone and rejects a new answer on a scheduled/ended trip. See "Security model" point 13 above.
 - `supabase/migrations/20260908090000_r7_content_publishing_pipeline.sql` — R7: `content_status`'s DEFAULT changes from `'ready'` to `'pending'` (no existing row's stored value changes); adds `validate_trip_content()`/`publish_trip()`, both revoked from anon/authenticated. See "Security model" point 14 above.
-- `supabase/migrations/20260908090000_r8_prize_voting_rules.sql` — R8: `prize_options` gains non-blank-title and unique-title-per-trip constraints; new `prize_results` table (one row per trip, written once); `prize_voting_closes_at()`, `cast_prize_vote()`, `get_prize_status()`, all three revoked-by-default and explicitly granted to anon/authenticated; `prize_votes`' old direct-insert RLS policy is dropped. See "Security model" point 15 above.
+- `supabase/migrations/20260908090001_r8_prize_voting_rules.sql` — R8: `prize_options` gains non-blank-title and unique-title-per-trip constraints; new `prize_results` table (one row per trip, written once); `prize_voting_closes_at()`, `cast_prize_vote()`, `get_prize_status()`, all three revoked-by-default and explicitly granted to anon/authenticated; `prize_votes`' old direct-insert RLS policy is dropped. See "Security model" point 15 above.
 - `supabase/migrations/20260909090000_trip_editorial_brief.sql` — trip editorial brief: `trip_editorial_briefs` (one row per trip, RLS enabled with zero policies — service-role only), the `trip_difficulty`/`trip_question_style` enums, `save_trip_editorial_brief()` (reuses `publish_trip`'s own row lock so edit-vs-publish can't race, revoked from anon/authenticated), and one added check inside `validate_trip_content()`. See "Security model" point 16 above.
 - `supabase/migrations/20260910090000_r9_question_generation.sql` — R9: `trip_question_generation_runs`/`trip_generated_question_drafts` (RLS enabled with zero policies — service-role only), `questions.theme_category`/`difficulty`/`source`; `start_trip_question_generation()`/`finish_trip_question_generation()`/`accept_generated_question_draft()`/`reject_generated_question_draft()` (all revoked from anon/authenticated); extends `save_trip_editorial_brief()` (invalidates stale drafts on a brief change) and `validate_trip_content()` (blocks publish while a draft awaits review). See "Security model" point 17 above.
 

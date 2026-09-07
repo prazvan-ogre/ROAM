@@ -1,4 +1,4 @@
-// R8 (20260908090000_r8_prize_voting_rules.sql): OnboardingWizard's prize
+// R8 (20260908090001_r8_prize_voting_rules.sql): OnboardingWizard's prize
 // step now has four distinct states per the product rules -- voting
 // available, vote recorded, voting closed (winner shown directly, e.g. to
 // a late joiner), and "not configured" (fewer than 2 real options). This

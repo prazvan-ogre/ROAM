@@ -1322,7 +1322,7 @@
   `order_index`" entirely on the client, on every read. A trip with zero
   votes never closed, and nothing stopped two reads moments apart from
   computing two different "winners" once a random tie-break existed.
-  Adds two SQL functions (`20260908090000_r8_prize_voting_rules.sql`,
+  Adds two SQL functions (`20260908090001_r8_prize_voting_rules.sql`,
   granted to anon/authenticated -- the same participant-level trust as
   `record_answer`, never an admin check): `cast_prize_vote()` is now the
   only way to write `prize_votes` (its old direct-insert RLS policy is

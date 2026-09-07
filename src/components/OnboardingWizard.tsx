@@ -124,7 +124,7 @@ export function OnboardingWizard({ trip, onComplete }: { trip: Trip; onComplete:
     }
   }
 
-  // R8 (20260908090000_r8_prize_voting_rules.sql): a failed vote or a
+  // R8 (20260908090001_r8_prize_voting_rules.sql): a failed vote or a
   // failed onComplete() (e.g. the follow-up profile refresh) used to leave
   // finishing=false with no explanation at all -- the button looked
   // clickable again, but nothing told the user their tap hadn't actually

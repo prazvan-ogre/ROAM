@@ -1,4 +1,4 @@
-// R8 (20260908090000_r8_prize_voting_rules.sql): prize voting state and
+// R8 (20260908090001_r8_prize_voting_rules.sql): prize voting state and
 // the winner are now resolved server-side by cast_prize_vote()/
 // get_prize_status() (both RPCs, SECURITY DEFINER) instead of a direct
 // insert into prize_votes + a client-side "12h after the first vote"

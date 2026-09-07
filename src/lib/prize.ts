@@ -6,7 +6,7 @@ export type PrizeResolutionMethod = Database["public"]["Tables"]["prize_results"
 
 export interface PrizeStatus {
   options: PrizeOption[];
-  // R8 (20260908090000_r8_prize_voting_rules.sql): false when the trip
+  // R8 (20260908090001_r8_prize_voting_rules.sql): false when the trip
   // has fewer than 2 distinct, non-blank prize options -- the product
   // rule that at least 2 real choices must exist before a vote means
   // anything. votingOpen/winner/resolutionMethod are always

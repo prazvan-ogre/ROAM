@@ -387,7 +387,7 @@ function NotJoinedNotice({ slug }: { slug: string }) {
   );
 }
 
-// R8 (20260908090000_r8_prize_voting_rules.sql): voting closes at a
+// R8 (20260908090001_r8_prize_voting_rules.sql): voting closes at a
 // specific instant (end of the trip's first day) rather than "12h after
 // the first vote" -- shown in the trip's own destination timezone, same
 // "ora destinației" labeling rule as every other time this app displays

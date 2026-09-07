@@ -1,5 +1,5 @@
 -- R8 regression: prize voting rules
--- (20260908090000_r8_prize_voting_rules.sql) -- cast_prize_vote() and
+-- (20260908090001_r8_prize_voting_rules.sql) -- cast_prize_vote() and
 -- get_prize_status(), the only way to write/resolve prize_votes/
 -- prize_results now. Sibling test to supabase/tests/record_answer.test.sql
 -- and r6_trip_timezone_lifecycle.test.sql -- same setup requirements (stub
