@@ -25,6 +25,20 @@ export type PrizeVoteStatus =
   | "voting_closed"
   | "invalid_option"
   | "not_configured";
+export type TripDifficulty = "easy" | "medium" | "hard";
+export type TripQuestionStyle = "fun" | "academic" | "narrated_by_character";
+export type QuestionThemeCategory = "history" | "places" | "food" | "curiosities";
+export type QuestionSource = "manual" | "generated" | "edited";
+export type GeneratedQuestionStatus = "pending_review" | "accepted" | "rejected" | "invalidated";
+export type GenerationRunStatus = "generating" | "succeeded" | "failed";
+export type StartGenerationStatus = "started" | "already_running" | "already_published" | "no_brief" | "rate_limited";
+export type AcceptGeneratedDraftStatus =
+  | "accepted"
+  | "not_found"
+  | "already_processed"
+  | "trip_published"
+  | "stale_brief"
+  | "invalid";
 
 type TableDef<Row, InsertRequired extends keyof Row> = {
   Row: Row;
@@ -116,6 +130,13 @@ export interface Database {
           published: boolean;
           is_active: boolean;
           created_at: string;
+          // R9 (20260910090000_r9_question_generation.sql): null for
+          // every row that predates this migration and for anything
+          // hand-authored -- only ever set on a question promoted from
+          // an accepted trip_generated_question_drafts row.
+          theme_category: QuestionThemeCategory | null;
+          difficulty: TripDifficulty | null;
+          source: QuestionSource;
         },
         "trip_id" | "kind" | "prompt"
       >;
@@ -245,6 +266,74 @@ export interface Database {
           client_request_id: string | null;
         },
         "trip_id"
+      >;
+      // Trip editorial brief: one row per trip, written only via
+      // save_trip_editorial_brief() -- see 20260909090000_trip_editorial_
+      // brief.sql. RLS enabled, zero anon/authenticated policies (same
+      // "service-role + verified route only" pattern as creator_accounts)
+      // -- never selected directly from the client; see
+      // src/lib/editorialBrief.ts and app/api/trips/[slug]/brief/route.ts.
+      trip_editorial_briefs: TableDef<
+        {
+          trip_id: string;
+          difficulty: TripDifficulty;
+          style: TripQuestionStyle;
+          narrator_character_name: string | null;
+          theme_history: number;
+          theme_places: number;
+          theme_food: number;
+          theme_curiosities: number;
+          created_at: string;
+          updated_at: string;
+        },
+        "trip_id" | "difficulty" | "style" | "theme_history" | "theme_places" | "theme_food" | "theme_curiosities"
+      >;
+      trip_question_generation_runs: TableDef<
+        {
+          id: string;
+          trip_id: string;
+          requested_by_account_id: string;
+          brief_version: string;
+          requested_count: number;
+          status: GenerationRunStatus;
+          error_message: string | null;
+          draft_count: number;
+          rejected_count: number;
+          started_at: string;
+          finished_at: string | null;
+        },
+        "trip_id" | "requested_by_account_id" | "brief_version" | "requested_count"
+      >;
+      trip_generated_question_drafts: TableDef<
+        {
+          id: string;
+          trip_id: string;
+          generation_run_id: string;
+          brief_version: string;
+          day_number: number;
+          slot: QuestionSlot;
+          theme_category: QuestionThemeCategory;
+          difficulty: TripDifficulty;
+          prompt: string;
+          explanation: string;
+          options: { label: string; is_correct: boolean }[];
+          status: GeneratedQuestionStatus;
+          edited: boolean;
+          resulting_question_id: string | null;
+          accepted_by_account_id: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        | "trip_id"
+        | "generation_run_id"
+        | "brief_version"
+        | "day_number"
+        | "slot"
+        | "theme_category"
+        | "difficulty"
+        | "prompt"
+        | "explanation"
+        | "options"
       >;
       prize_options: TableDef<
         {
@@ -501,6 +590,95 @@ export interface Database {
           warning_count: number;
           issues: unknown;
         };
+      };
+      // The only way to write trip_editorial_briefs -- atomic (one row
+      // lock shared with publish_trip, one upsert) and idempotent.
+      // 'rejected_published'/'rejected_generating' mean the row was NOT
+      // touched -- see 20260909090000_trip_editorial_brief.sql. Revoked
+      // from anon/authenticated; only ever called via the service-role
+      // client, after src/lib/security/tripAuthorAccess.ts's own
+      // creator-or-admin check.
+      save_trip_editorial_brief: {
+        Args: {
+          p_trip_id: string;
+          p_difficulty: TripDifficulty;
+          p_style: TripQuestionStyle;
+          p_narrator_character_name: string | null;
+          p_theme_history: number;
+          p_theme_places: number;
+          p_theme_food: number;
+          p_theme_curiosities: number;
+        };
+        Returns: {
+          status: "saved" | "rejected_published" | "rejected_generating";
+          brief: {
+            trip_id: string;
+            difficulty: TripDifficulty;
+            style: TripQuestionStyle;
+            narrator_character_name: string | null;
+            theme_history: number;
+            theme_places: number;
+            theme_food: number;
+            theme_curiosities: number;
+            created_at: string;
+            updated_at: string;
+          } | null;
+        };
+      };
+      // R9 (20260910090000_r9_question_generation.sql): atomically
+      // claims the right to run a generation job for a trip (same row
+      // lock as publish_trip/save_trip_editorial_brief), or reports why
+      // it can't -- see src/lib/ai/generationService.ts. Revoked from
+      // anon/authenticated.
+      start_trip_question_generation: {
+        Args: { p_trip_id: string; p_account_id: string; p_requested_count: number };
+        Returns: {
+          status: StartGenerationStatus;
+          run: Database["public"]["Tables"]["trip_question_generation_runs"]["Row"] | null;
+        };
+      };
+      // Called once the AI provider call (and per-item validation) has
+      // finished, success or not -- idempotent. Flips content_status
+      // back to 'pending' (success) or 'failed', never 'ready'.
+      finish_trip_question_generation: {
+        Args: {
+          p_run_id: string;
+          p_success: boolean;
+          p_error_message: string | null;
+          p_draft_count: number;
+          p_rejected_count: number;
+        };
+        Returns: Database["public"]["Tables"]["trip_question_generation_runs"]["Row"];
+      };
+      // Promotes ONE draft into a real, verified+published questions/
+      // answer_options row -- the human review step. p_edited=false with
+      // the draft's own original field values back is a plain accept;
+      // any differing value is an edit-then-accept (source becomes
+      // 'edited', not 'generated').
+      accept_generated_question_draft: {
+        Args: {
+          p_draft_id: string;
+          p_account_id: string;
+          p_prompt: string;
+          p_explanation: string;
+          p_options: { label: string; is_correct: boolean }[];
+          p_theme_category: QuestionThemeCategory;
+          p_difficulty: TripDifficulty;
+          p_day_number: number;
+          p_slot: QuestionSlot;
+          p_edited: boolean;
+        };
+        Returns: {
+          status: AcceptGeneratedDraftStatus;
+          draft: Database["public"]["Tables"]["trip_generated_question_drafts"]["Row"] | null;
+          question_id: string | null;
+        };
+      };
+      // The admin explicitly doesn't want this candidate -- never
+      // deletes the row (audit trail).
+      reject_generated_question_draft: {
+        Args: { p_draft_id: string };
+        Returns: Database["public"]["Tables"]["trip_generated_question_drafts"]["Row"];
       };
     };
   };

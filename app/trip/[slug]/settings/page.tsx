@@ -10,12 +10,46 @@ import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
 import { getAccountDetails, getStoredAccountId, getTripsForCurrentAccount, updateAccountDetails } from "@/lib/creatorAccount";
 import { validateTripContent, publishTrip, type ContentValidationIssue, type PublishTripResult } from "@/lib/adminContent";
+import {
+  getTripEditorialBrief,
+  saveTripEditorialBrief,
+  validateEditorialBrief,
+  type EditorialBrief,
+  type EditorialBriefFieldErrors,
+} from "@/lib/editorialBrief";
+import {
+  EditorialBriefFields,
+  themeDefaultsAsStrings,
+  DIFFICULTY_LABEL,
+  STYLE_LABEL,
+  THEME_FIELD_LABELS,
+  type EditorialBriefFieldsValue,
+} from "@/components/EditorialBriefFields";
+import {
+  DEFAULT_THEME_DISTRIBUTION,
+  DEFAULT_TRIP_DIFFICULTY,
+  DEFAULT_TRIP_QUESTION_STYLE,
+  THEME_CATEGORY_LABEL,
+  SLOT_LABEL,
+  MAX_GENERATED_QUESTIONS_PER_REQUEST,
+  MIN_GENERATED_QUESTIONS_PER_REQUEST,
+} from "@/lib/constants";
+import {
+  getGenerationStatus,
+  startGeneration,
+  acceptGeneratedDraft,
+  rejectGeneratedDraft,
+  regenerateGeneratedDraft,
+  type GenerationStatus,
+  type GeneratedDraft,
+  type GeneratedOption,
+} from "@/lib/questionGeneration";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { TripsList } from "@/components/TripsList";
 import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Tab = "trips" | "config" | "users" | "info" | "publish";
+type Tab = "trips" | "config" | "users" | "info" | "publish" | "brief" | "generate";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "trips", label: "Toate călătoriile" },
@@ -23,6 +57,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "users", label: "Utilizatori" },
   { id: "info", label: "Info" },
   { id: "publish", label: "Publicare" },
+  { id: "brief", label: "Brief editorial" },
+  { id: "generate", label: "Generare" },
 ];
 
 export default function SettingsPage() {
@@ -53,6 +89,17 @@ export default function SettingsPage() {
   // participants just join a trip by device id and never create that
   // account, so this stays hidden for them.
   const hasAccount = getStoredAccountId() !== null;
+
+  // Trip editorial brief: "the trip's own authorized creator, or an
+  // admin" -- broader than isAdmin alone (which gates the Publicare tab
+  // above). accountTrips is ALREADY exactly "this account's own trips"
+  // for a non-admin account, or every trip for an admin one
+  // (app/api/account/trips/route.ts's own server-side filter) -- no
+  // separate ownership fetch needed; the same server-verified signal
+  // decides both tabs. The actual write is re-checked server-side
+  // regardless (src/lib/security/tripAuthorAccess.ts), this only
+  // decides what's SHOWN.
+  const isCreatorOrAdmin = accountTrips !== "error" && accountTrips.some((t) => t.slug === slug);
   const loadAccountTrips = useCallback(() => {
     if (!hasAccount) return;
     getTripsForCurrentAccount()
@@ -216,7 +263,13 @@ export default function SettingsPage() {
       <h1 className="mb-4 text-[28px] font-semibold tracking-tight text-foreground">Setări</h1>
 
       <div className="mb-6 flex rounded-xl bg-secondary p-1">
-        {TABS.filter((t) => (t.id !== "trips" || hasAccount) && (t.id !== "publish" || isAdmin)).map((t) => (
+        {TABS.filter(
+          (t) =>
+            (t.id !== "trips" || hasAccount) &&
+            (t.id !== "publish" || isAdmin) &&
+            (t.id !== "brief" || isCreatorOrAdmin) &&
+            (t.id !== "generate" || isCreatorOrAdmin),
+        ).map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -285,6 +338,19 @@ export default function SettingsPage() {
           what's SHOWN here; app/api/admin/trips/[slug]/{validate,publish}
           re-verify admin rights server-side regardless. */}
       {tab === "publish" && isAdmin && trip && <PublishSection trip={trip} />}
+
+      {/* Trip editorial brief: creator-or-admin (not admin-only), also
+          deliberately not gated on content_status === "ready" -- editing
+          before publish is the whole point. BriefSection itself decides
+          editable-vs-read-only from what GET returns (readOnly), never
+          just this client's own trip.content_status snapshot. */}
+      {tab === "brief" && isCreatorOrAdmin && trip && <BriefSection slug={slug} />}
+
+      {/* R9: AI-assisted question generation -- creator-or-admin, same
+          gate as Brief editorial above. GenerateSection itself decides
+          what's actionable (has a brief? already generating? published?)
+          from what GET returns, never a client-side guess. */}
+      {tab === "generate" && isCreatorOrAdmin && trip && <GenerateSection slug={slug} />}
 
       <TripNav slug={slug} />
     </main>
@@ -524,6 +590,608 @@ function PublishSection({ trip }: { trip: Trip }) {
         Conținutul (întrebări, Battle-uri, Extra-uri) se editează în continuare din Supabase Studio -- publicarea de
         aici doar verifică și marchează călătoria ca gata, nu creează sau modifică întrebări.
       </p>
+    </div>
+  );
+}
+
+type BriefLoadState = "loading" | "loaded" | "error";
+type BriefSaveState = "idle" | "saving" | "saved" | "error";
+
+function emptyBriefFormValue(): EditorialBriefFieldsValue {
+  return {
+    difficulty: DEFAULT_TRIP_DIFFICULTY,
+    style: DEFAULT_TRIP_QUESTION_STYLE,
+    narratorCharacterName: "",
+    ...themeDefaultsAsStrings(DEFAULT_THEME_DISTRIBUTION),
+  };
+}
+
+function briefToFormValue(brief: EditorialBrief): EditorialBriefFieldsValue {
+  return {
+    difficulty: brief.difficulty,
+    style: brief.style,
+    narratorCharacterName: brief.narratorCharacterName ?? "",
+    ...themeDefaultsAsStrings(brief.theme),
+  };
+}
+
+// Trip editorial brief tab: creator-or-admin (see the tab strip's own
+// filter above), shown regardless of publish status -- that's the whole
+// point, editing only makes sense BEFORE publish. Loads via GET (which
+// also reports whether the trip is already published); a published
+// trip renders a read-only summary instead of the form, and a trip with
+// no saved brief at all -- legacy, or a creation request that somehow
+// never got one -- shows "Preferințe nespecificate" rather than
+// inventing a value. Never claims a question was generated or adapted
+// from this brief -- there is no such process yet (see docs/DATABASE.md).
+function BriefSection({ slug }: { slug: string }) {
+  const [loadState, setLoadState] = useState<BriefLoadState>("loading");
+  const [readOnly, setReadOnly] = useState(false);
+  const [savedBrief, setSavedBrief] = useState<EditorialBrief | null>(null);
+  const [form, setForm] = useState<EditorialBriefFieldsValue>(emptyBriefFormValue());
+  const [fieldErrors, setFieldErrors] = useState<EditorialBriefFieldErrors>({});
+  const [saveState, setSaveState] = useState<BriefSaveState>("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Shared by the initial load, the "Încearcă din nou" retry, AND the
+  // silent refresh after a rejected save below -- applying a fetched
+  // result never depends on how the fetch was triggered.
+  const applyBrief = useCallback((result: { brief: EditorialBrief | null; readOnly: boolean }) => {
+    setReadOnly(result.readOnly);
+    setSavedBrief(result.brief);
+    // A published trip's read-only summary reads straight off
+    // savedBrief -- the form value here only matters for the
+    // editable (pre-publish) case, pre-filled from the existing
+    // brief, or this form's own visible/editable defaults for a
+    // trip that has none yet.
+    setForm(result.brief ? briefToFormValue(result.brief) : emptyBriefFormValue());
+  }, []);
+
+  const load = useCallback(() => {
+    setLoadState("loading");
+    getTripEditorialBrief(slug)
+      .then((result) => {
+        applyBrief(result);
+        setLoadState("loaded");
+      })
+      .catch((err) => {
+        console.error("getTripEditorialBrief failed", err);
+        setLoadState("error");
+      });
+  }, [slug, applyBrief]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function handleFormChange(next: EditorialBriefFieldsValue) {
+    setForm(next);
+    // A correction after a failed save (or after acknowledging a saved
+    // one) is a fresh attempt -- stop showing the previous outcome.
+    if (saveState !== "saving") {
+      setSaveState("idle");
+      setSaveError(null);
+    }
+  }
+
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    if (saveState === "saving") return;
+    const validated = validateEditorialBrief(form);
+    if (!validated.ok) {
+      setFieldErrors(validated.errors);
+      return;
+    }
+    setFieldErrors({});
+    setSaveState("saving");
+    setSaveError(null);
+    try {
+      const result = await saveTripEditorialBrief(slug, validated.value);
+      if (result.status !== "saved") {
+        // The trip was published (or a generation run started) between
+        // this tab loading and the save attempt -- a real, expected
+        // outcome, not a network failure. Show why, and refresh to the
+        // real current state (the read-only summary, for
+        // rejected_published) in the background -- deliberately NOT via
+        // load(), which would flip loadState back to "loading" in the
+        // very same render batch as this message and hide it before it
+        // ever paints. applyBrief leaves loadState alone, so this
+        // message stays visible for as long as the refresh takes.
+        setSaveError(
+          result.status === "rejected_published"
+            ? "Brief-ul e disponibil doar pentru citire -- călătoria a fost publicată între timp."
+            : "Pregătirea conținutului e în curs -- brief-ul nu poate fi modificat acum.",
+        );
+        setSaveState("error");
+        getTripEditorialBrief(slug)
+          .then(applyBrief)
+          .catch((err) => console.error("getTripEditorialBrief refresh-after-rejection failed", err));
+        return;
+      }
+      setSavedBrief(result.brief);
+      setSaveState("saved");
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Nu am putut salva brief-ul. Încearcă din nou.");
+      setSaveState("error");
+      // Deliberately does NOT reset `form` here -- the person's typed
+      // values stay exactly as entered, so a retry (same button, same
+      // values) doesn't require retyping anything.
+    }
+  }
+
+  if (loadState === "loading") {
+    return <p className="py-8 text-center text-[14px] text-muted-foreground">Se încarcă...</p>;
+  }
+  if (loadState === "error") {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card px-5 py-8 text-center">
+        <p className="text-[15px] text-muted-foreground">Nu am putut încărca brief-ul.</p>
+        <button onClick={load} className="text-[14px] font-semibold text-primary underline">
+          Încearcă din nou
+        </button>
+      </div>
+    );
+  }
+
+  if (readOnly) {
+    if (!savedBrief) {
+      return (
+        <div className="rounded-2xl border border-border bg-card px-5 py-8 text-center">
+          <p className="text-[15px] font-semibold text-foreground">Preferințe nespecificate</p>
+          <p className="mx-auto mt-2 max-w-xs text-[13px] text-muted-foreground">
+            Această călătorie a fost publicată fără un brief editorial înregistrat.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-[13px] text-muted-foreground">
+          Călătoria e publicată -- brief-ul e disponibil doar pentru citire.
+        </p>
+        <BriefSummaryRow label="Dificultate" value={DIFFICULTY_LABEL[savedBrief.difficulty]} />
+        <BriefSummaryRow label="Stil de formulare" value={STYLE_LABEL[savedBrief.style]} />
+        {savedBrief.style === "narrated_by_character" && savedBrief.narratorCharacterName && (
+          <BriefSummaryRow label="Personaj istoric" value={savedBrief.narratorCharacterName} />
+        )}
+        <BriefSummaryRow
+          label="Distribuție tematică"
+          value={`${THEME_FIELD_LABELS.history} ${savedBrief.theme.history}% · ${THEME_FIELD_LABELS.places} ${savedBrief.theme.places}% · ${THEME_FIELD_LABELS.food} ${savedBrief.theme.food}% · ${THEME_FIELD_LABELS.curiosities} ${savedBrief.theme.curiosities}%`}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSave} className="flex flex-col gap-5">
+      {!savedBrief && (
+        <p className="text-[12px] text-disabled">
+          Nicio preferință salvată încă -- valorile de mai jos sunt propuneri inițiale, editabile.
+        </p>
+      )}
+      <EditorialBriefFields value={form} onChange={handleFormChange} errors={fieldErrors} disabled={saveState === "saving"} />
+
+      <p className="text-[12px] leading-relaxed text-disabled">
+        Dacă schimbi aceste preferințe după ce unele întrebări au fost deja pregătite, verifică-le -- ele nu se
+        actualizează automat ca să corespundă noilor preferințe.
+      </p>
+
+      {saveError && <p className="text-[13px] text-destructive">{saveError}</p>}
+      {saveState === "saved" && <p className="text-[13px] text-muted-foreground">Brief-ul a fost salvat.</p>}
+
+      <button
+        type="submit"
+        disabled={saveState === "saving"}
+        className="rounded-2xl bg-primary py-[14px] text-[15px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:opacity-40"
+      >
+        {saveState === "saving" ? "Se salvează..." : "Salvează brief-ul"}
+      </button>
+    </form>
+  );
+}
+
+function BriefSummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4 shadow-[0_1px_4px_rgba(0,0,0,0.04)]">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-0.5 text-[15px] font-medium text-foreground">{value}</p>
+    </div>
+  );
+}
+
+// R9: AI-assisted question generation tab. Loads the trip's current
+// generation state (content_status, the brief actually in effect,
+// every draft) on mount; the button below is disabled/relabeled from
+// that real server state, never a client-side guess about whether
+// generation is allowed. Never shown to a participant -- creator-or-
+// admin gate lives on the tab strip above, re-verified server-side by
+// every route this component calls (src/lib/security/tripAuthorAccess.ts).
+function GenerateSection({ slug }: { slug: string }) {
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
+  const [status, setStatus] = useState<GenerationStatus | null>(null);
+  const [requestedCount, setRequestedCount] = useState("5");
+  const [starting, setStarting] = useState(false);
+  const [startMessage, setStartMessage] = useState<string | null>(null);
+  const [startMessageIsError, setStartMessageIsError] = useState(false);
+  const [draftActionError, setDraftActionError] = useState<Record<string, string>>({});
+  const [draftActionBusy, setDraftActionBusy] = useState<Record<string, boolean>>({});
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{ prompt: string; explanation: string; options: GeneratedOption[] } | null>(null);
+
+  const load = useCallback(() => {
+    setLoadState("loading");
+    getGenerationStatus(slug)
+      .then((s) => {
+        setStatus(s);
+        setLoadState("loaded");
+      })
+      .catch((err) => {
+        console.error("getGenerationStatus failed", err);
+        setLoadState("error");
+      });
+  }, [slug]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleGenerate(e: FormEvent) {
+    e.preventDefault();
+    const count = Number(requestedCount);
+    if (!Number.isInteger(count) || count < MIN_GENERATED_QUESTIONS_PER_REQUEST || count > MAX_GENERATED_QUESTIONS_PER_REQUEST) return;
+    if (!window.confirm(`Generezi ${count} întrebări noi folosind brief-ul editorial curent al călătoriei?`)) return;
+
+    setStarting(true);
+    setStartMessage(null);
+    setStartMessageIsError(false);
+    try {
+      const outcome = await startGeneration(slug, count);
+      if (outcome.status === "succeeded") {
+        setStartMessage(`Generare reușită: ${outcome.draftCount} întrebări noi de verificat${outcome.rejectedCount > 0 ? `, ${outcome.rejectedCount} respinse de validare` : ""}.`);
+        setStartMessageIsError(false);
+      } else if (outcome.status === "failed") {
+        setStartMessage(outcome.reason);
+        setStartMessageIsError(true);
+      } else {
+        setStartMessage(outcome.error);
+        setStartMessageIsError(true);
+      }
+    } catch (err) {
+      setStartMessage(err instanceof Error ? err.message : "Generarea a eșuat neașteptat. Încearcă din nou.");
+      setStartMessageIsError(true);
+    } finally {
+      setStarting(false);
+      load();
+    }
+  }
+
+  async function handleAccept(draft: GeneratedDraft, overrides?: { prompt: string; explanation: string; options: GeneratedOption[] }) {
+    setDraftActionBusy((b) => ({ ...b, [draft.id]: true }));
+    setDraftActionError((e) => ({ ...e, [draft.id]: "" }));
+    try {
+      const result = await acceptGeneratedDraft(slug, draft.id, overrides);
+      if (result.status !== "accepted") {
+        setDraftActionError((e) => ({
+          ...e,
+          [draft.id]:
+            result.status === "stale_brief"
+              ? "Brief-ul s-a schimbat de la generarea acestei întrebări -- regenereaz-o."
+              : result.status === "trip_published"
+                ? "Călătoria e deja publicată."
+                : result.status === "invalid"
+                  ? "Valorile introduse nu sunt valide."
+                  : "Această întrebare a fost deja procesată.",
+        }));
+      } else {
+        setEditingDraftId(null);
+      }
+    } catch (err) {
+      setDraftActionError((e) => ({ ...e, [draft.id]: err instanceof Error ? err.message : "Nu am putut accepta întrebarea." }));
+    } finally {
+      setDraftActionBusy((b) => ({ ...b, [draft.id]: false }));
+      load();
+    }
+  }
+
+  async function handleReject(draft: GeneratedDraft) {
+    setDraftActionBusy((b) => ({ ...b, [draft.id]: true }));
+    setDraftActionError((e) => ({ ...e, [draft.id]: "" }));
+    try {
+      await rejectGeneratedDraft(slug, draft.id);
+    } catch (err) {
+      setDraftActionError((e) => ({ ...e, [draft.id]: err instanceof Error ? err.message : "Nu am putut respinge întrebarea." }));
+    } finally {
+      setDraftActionBusy((b) => ({ ...b, [draft.id]: false }));
+      load();
+    }
+  }
+
+  async function handleRegenerate(draft: GeneratedDraft) {
+    setDraftActionBusy((b) => ({ ...b, [draft.id]: true }));
+    setDraftActionError((e) => ({ ...e, [draft.id]: "" }));
+    try {
+      const outcome = await regenerateGeneratedDraft(slug, draft.id);
+      if (outcome.status === "failed") {
+        setDraftActionError((e) => ({ ...e, [draft.id]: outcome.reason }));
+      } else if (outcome.status !== "succeeded") {
+        setDraftActionError((e) => ({ ...e, [draft.id]: outcome.error }));
+      }
+    } catch (err) {
+      setDraftActionError((e) => ({ ...e, [draft.id]: err instanceof Error ? err.message : "Nu am putut regenera întrebarea." }));
+    } finally {
+      setDraftActionBusy((b) => ({ ...b, [draft.id]: false }));
+      load();
+    }
+  }
+
+  if (loadState === "loading") {
+    return <p className="py-8 text-center text-[14px] text-muted-foreground">Se încarcă...</p>;
+  }
+  if (loadState === "error" || !status) {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card px-5 py-8 text-center">
+        <p className="text-[15px] text-muted-foreground">Nu am putut încărca starea generării.</p>
+        <button onClick={load} className="text-[14px] font-semibold text-primary underline">
+          Încearcă din nou
+        </button>
+      </div>
+    );
+  }
+
+  const pendingDrafts = status.drafts.filter((d) => d.status === "pending_review");
+  const resolvedDrafts = status.drafts.filter((d) => d.status !== "pending_review");
+  const canGenerate = status.contentStatus !== "ready" && status.contentStatus !== "generating";
+
+  return (
+    <div className="flex flex-col gap-5">
+      {!status.brief && (
+        <div className="rounded-2xl border border-border bg-card px-5 py-8 text-center">
+          <p className="text-[15px] font-semibold text-foreground">Brief editorial nespecificat</p>
+          <p className="mx-auto mt-2 max-w-xs text-[13px] text-muted-foreground">
+            Completează brief-ul editorial al călătoriei (tab-ul „Brief editorial”) înainte de a putea porni generarea asistată.
+          </p>
+        </div>
+      )}
+
+      {status.brief && (
+        <div className="flex flex-col gap-3">
+          <p className="text-[13px] font-medium text-muted-foreground">Brief folosit</p>
+          <BriefSummaryRow label="Dificultate" value={DIFFICULTY_LABEL[status.brief.difficulty]} />
+          <BriefSummaryRow label="Stil de formulare" value={STYLE_LABEL[status.brief.style]} />
+          <BriefSummaryRow
+            label="Distribuție tematică"
+            value={`${THEME_FIELD_LABELS.history} ${status.brief.theme.history}% · ${THEME_FIELD_LABELS.places} ${status.brief.theme.places}% · ${THEME_FIELD_LABELS.food} ${status.brief.theme.food}% · ${THEME_FIELD_LABELS.curiosities} ${status.brief.theme.curiosities}%`}
+          />
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-border bg-card p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Stare</p>
+        <p className="mt-0.5 text-[15px] font-medium text-foreground">
+          {status.contentStatus === "pending" && "Pregătire"}
+          {status.contentStatus === "generating" && "Se generează..."}
+          {status.contentStatus === "ready" && "Publicat"}
+          {status.contentStatus === "failed" && "Generare eșuată"}
+        </p>
+        {status.contentStatus === "generating" && (
+          <p className="mt-2 text-[12px] text-muted-foreground">
+            O generare e în desfășurare (pornită acum sau dintr-o altă filă). Poate dura până la un minut.{" "}
+            <button onClick={load} className="font-semibold text-primary underline">
+              Reîncarcă
+            </button>
+          </p>
+        )}
+        {status.contentStatus === "ready" && (
+          <p className="mt-2 text-[12px] text-muted-foreground">Călătoria e publicată -- generarea nu mai este permisă.</p>
+        )}
+      </div>
+
+      {status.brief && canGenerate && (
+        <form onSubmit={handleGenerate} className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4">
+          <label htmlFor="generatedCount" className="text-[13px] font-medium text-muted-foreground">
+            Număr de întrebări de generat
+          </label>
+          <input
+            id="generatedCount"
+            type="number"
+            inputMode="numeric"
+            min={MIN_GENERATED_QUESTIONS_PER_REQUEST}
+            max={MAX_GENERATED_QUESTIONS_PER_REQUEST}
+            step={1}
+            value={requestedCount}
+            onChange={(e) => setRequestedCount(e.target.value)}
+            disabled={starting}
+            className="w-full rounded-xl border border-border bg-card px-3 py-3 text-[15px] text-foreground outline-none transition-colors focus:border-primary disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={starting}
+            className="rounded-2xl bg-primary py-[14px] text-[15px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:opacity-40"
+          >
+            {starting ? "Se generează..." : "Generează întrebări"}
+          </button>
+          {startMessage && (
+            <p className={`text-[13px] ${startMessageIsError ? "text-destructive" : "text-muted-foreground"}`}>{startMessage}</p>
+          )}
+        </form>
+      )}
+
+      {pendingDrafts.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <p className="text-[13px] font-medium text-muted-foreground">De verificat ({pendingDrafts.length})</p>
+          {pendingDrafts.map((draft) => (
+            <GeneratedDraftCard
+              key={draft.id}
+              draft={draft}
+              busy={!!draftActionBusy[draft.id]}
+              error={draftActionError[draft.id]}
+              editing={editingDraftId === draft.id}
+              editForm={editingDraftId === draft.id ? editForm : null}
+              onStartEdit={() => {
+                setEditingDraftId(draft.id);
+                setEditForm({ prompt: draft.prompt, explanation: draft.explanation, options: draft.options });
+              }}
+              onCancelEdit={() => setEditingDraftId(null)}
+              onEditFormChange={setEditForm}
+              onAccept={() => handleAccept(draft)}
+              onSaveEdit={() => editForm && handleAccept(draft, editForm)}
+              onReject={() => handleReject(draft)}
+              onRegenerate={() => handleRegenerate(draft)}
+            />
+          ))}
+        </div>
+      )}
+
+      {resolvedDrafts.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <p className="text-[13px] font-medium text-muted-foreground">Istoric</p>
+          {resolvedDrafts.map((draft) => (
+            <GeneratedDraftCard key={draft.id} draft={draft} busy={false} error={undefined} editing={false} editForm={null} readOnly />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DRAFT_STATUS_LABEL: Record<GeneratedDraft["status"], string> = {
+  pending_review: "DRAFT",
+  accepted: "Acceptat",
+  rejected: "Respins",
+  invalidated: "Invalidat (brief schimbat)",
+};
+
+function GeneratedDraftCard({
+  draft,
+  busy,
+  error,
+  editing,
+  editForm,
+  readOnly,
+  onStartEdit,
+  onCancelEdit,
+  onEditFormChange,
+  onAccept,
+  onSaveEdit,
+  onReject,
+  onRegenerate,
+}: {
+  draft: GeneratedDraft;
+  busy: boolean;
+  error: string | undefined;
+  editing: boolean;
+  editForm: { prompt: string; explanation: string; options: GeneratedOption[] } | null;
+  readOnly?: boolean;
+  onStartEdit?: () => void;
+  onCancelEdit?: () => void;
+  onEditFormChange?: (v: { prompt: string; explanation: string; options: GeneratedOption[] }) => void;
+  onAccept?: () => void;
+  onSaveEdit?: () => void;
+  onReject?: () => void;
+  onRegenerate?: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-4 shadow-[0_1px_4px_rgba(0,0,0,0.04)]">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Ziua {draft.dayNumber} · {SLOT_LABEL[draft.slot]} · {THEME_CATEGORY_LABEL[draft.themeCategory]} · {DIFFICULTY_LABEL[draft.difficulty]}
+        </p>
+        <span
+          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+            draft.status === "pending_review" ? "bg-accent text-primary" : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          {DRAFT_STATUS_LABEL[draft.status]}
+        </span>
+      </div>
+
+      {editing && editForm ? (
+        <div className="flex flex-col gap-2">
+          <textarea
+            value={editForm.prompt}
+            onChange={(e) => onEditFormChange?.({ ...editForm, prompt: e.target.value })}
+            rows={2}
+            className="w-full rounded-xl border border-border bg-card px-3 py-2 text-[14px] text-foreground outline-none focus:border-primary"
+          />
+          {editForm.options.map((opt, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={opt.is_correct}
+                onChange={() =>
+                  onEditFormChange?.({ ...editForm, options: editForm.options.map((o, j) => ({ ...o, is_correct: j === i })) })
+                }
+              />
+              <input
+                value={opt.label}
+                onChange={(e) =>
+                  onEditFormChange?.({ ...editForm, options: editForm.options.map((o, j) => (j === i ? { ...o, label: e.target.value } : o)) })
+                }
+                className="flex-1 rounded-lg border border-border bg-card px-2 py-1.5 text-[13px] text-foreground outline-none focus:border-primary"
+              />
+            </div>
+          ))}
+          <textarea
+            value={editForm.explanation}
+            onChange={(e) => onEditFormChange?.({ ...editForm, explanation: e.target.value })}
+            rows={2}
+            className="w-full rounded-xl border border-border bg-card px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary"
+          />
+        </div>
+      ) : (
+        <>
+          <p className="text-[14px] font-medium text-foreground">{draft.prompt}</p>
+          <ul className="flex flex-col gap-1">
+            {draft.options.map((opt, i) => (
+              <li key={i} className={`text-[13px] ${opt.is_correct ? "font-semibold text-foreground" : "text-muted-foreground"}`}>
+                {opt.is_correct ? "✓ " : "· "}
+                {opt.label}
+              </li>
+            ))}
+          </ul>
+          <p className="text-[12px] text-disabled">{draft.explanation}</p>
+        </>
+      )}
+
+      {error && <p className="text-[12px] text-destructive">{error}</p>}
+
+      {!readOnly && draft.status === "pending_review" && (
+        <div className="mt-1 flex flex-wrap gap-2">
+          {editing ? (
+            <>
+              <button
+                onClick={onSaveEdit}
+                disabled={busy}
+                className="rounded-xl bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground disabled:opacity-40"
+              >
+                Salvează și acceptă
+              </button>
+              <button onClick={onCancelEdit} disabled={busy} className="rounded-xl border border-border px-3 py-1.5 text-[12px] font-semibold text-foreground">
+                Anulează
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={onAccept}
+                disabled={busy}
+                className="rounded-xl bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground disabled:opacity-40"
+              >
+                Acceptă
+              </button>
+              <button onClick={onStartEdit} disabled={busy} className="rounded-xl border border-border px-3 py-1.5 text-[12px] font-semibold text-foreground">
+                Editează
+              </button>
+              <button onClick={onReject} disabled={busy} className="rounded-xl border border-border px-3 py-1.5 text-[12px] font-semibold text-destructive">
+                Respinge
+              </button>
+              <button onClick={onRegenerate} disabled={busy} className="rounded-xl border border-border px-3 py-1.5 text-[12px] font-semibold text-foreground">
+                Regenerează
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -1362,6 +1362,162 @@
   coverage for `src/lib/prize.ts`'s RPC pass-through and every
   OnboardingWizard/Settings prize UI state. All pre-existing SQL/Vitest
   regressions re-verified green on the same local Postgres 16 instance.
+- Trip editorial brief (`claude/trip-editorial-brief`, built on R7): the
+  trip's creator or an admin can now set difficulty (easy/medium/hard), a
+  thematic percent split (istorie/locuri de vizitat/gastronomie locala/
+  curiozitati locale, integers 0-100 summing to exactly 100), and a
+  writing style (fun/academic/narrated by a historical character -- the
+  last requiring a mandatory character-name field) -- a persistent
+  editorial brief for whoever prepares that trip's content, and later for
+  an AI generator to read. Visible, editable initial proposals (medium/
+  equal 25-25-25-25 split/fun), never preferences retroactively assigned
+  to an existing trip. New migration
+  (`20260909090000_trip_editorial_brief.sql`): a dedicated
+  `trip_editorial_briefs` table (one row per trip, RLS enabled with zero
+  anon/authenticated policies -- service-role only, same pattern as
+  `creator_accounts`/`ip_rate_limits`), not a JSONB blob or a generic
+  config/versioning system (see `docs/DATABASE.md` point 15 for the full
+  justification); real CHECK constraints enforce the percent range, the
+  100% total, and the narrator-name-required-for-style rule at the
+  database level. `save_trip_editorial_brief()` (revoked from anon/
+  authenticated) reuses `publish_trip`'s own `select ... for update` row
+  lock, so an edit and a publish for the same trip can't race -- editing
+  is only ever allowed before publish; a published trip's brief is
+  permanently read-only, including server-side, and this never
+  auto-unpublishes or touches an existing question/answer row.
+  `validate_trip_content()` gained one added structural check (a
+  narrated-by-character brief with no name set) -- still never claims to
+  verify difficulty or writing style, only structure. New API routes
+  (`GET`/`PUT /api/trips/[slug]/brief`), gated by a new creator-or-admin
+  helper (`src/lib/security/tripAuthorAccess.ts`) reusing the existing
+  cookie-based creator-account session -- a participant or another
+  trip's creator gets 403/404. Server-side validation
+  (`src/lib/editorialBrief.ts`) re-runs the exact same rules the UI's own
+  submit button checks (allowed values, percent total, required
+  character name, length/whitespace normalization) and only ever forwards
+  the known brief fields onto the row, never arbitrary request fields.
+  The same fields/component (`EditorialBriefFields`) are shared by the
+  public creation form and a new "Brief editorial" tab in Setari
+  (creator-or-admin visibility, reusing the account's own trip list --
+  no new fetch): pre-publish shows the editable form (typed values
+  survive a failed save for retry, without data loss); post-publish shows
+  a read-only summary; a trip with no brief at all (legacy, or a failed
+  initial save) shows "Preferinte nespecificate" rather than inventing a
+  value. Never implies a question was already generated or auto-adapted
+  from the brief. Out of scope for this batch (documented, not built): AI
+  generation/provider connection, automatic regeneration, multiple
+  content versions, changing the brief after publish, and additional
+  options (language/audience/question count) -- `docs/DATABASE.md` point
+  15 documents exactly where a future generation feature would read this
+  table. Verified with a new SQL regression file
+  (`supabase/tests/trip_editorial_brief.test.sql`, `npm run
+  test:sql:trip-editorial-brief`) covering valid save/upsert, invalid
+  percentages/unknown values/missing narrator name, RLS denial for anon,
+  the validator hook, and a same-trip edit-vs-publish race proven against
+  the real `publish_trip()` function (not a simulated update); new Vitest
+  coverage for the validation module, both API routes, the creation
+  form's fields, and the Setari tab (load/read-only summary/legacy
+  "Preferinte nespecificate"/save/reload/retry-after-failure/reject-after-
+  publish). Fixed a bug found while writing that last test: a rejected
+  save used to call the same reload path as the initial page load, which
+  reset the tab to a loading spinner in the same render batch as the
+  rejection message -- masking it before it ever painted; the refresh now
+  updates state directly, without hiding the message during it.
+- R9 (AI-assisted question generation, `claude/r9-question-generation`,
+  built on R7+R8+the trip editorial brief): the trip's creator or an
+  admin can generate a batch of candidate Discover questions from the
+  trip's editorial brief -- always a draft, never verified/published
+  automatically. A human must accept (optionally editing it first) or
+  reject each one before the trip can publish; `publish_trip()` refuses
+  outright while any draft still awaits review. Scoped to Discover
+  questions only this batch -- Battle-question generation needs a
+  further, unspecified decision about auto-attaching `battles` rows,
+  left out rather than guessed at. New migration
+  (`20260910090000_r9_question_generation.sql`): two new tables,
+  `trip_question_generation_runs` (one row per generation attempt --
+  who/when/which brief version/outcome) and
+  `trip_generated_question_drafts` (one row per candidate question,
+  never deleted -- the audit trail), both RLS-enabled with zero anon/
+  authenticated policies, same posture as `trip_editorial_briefs`;
+  `questions` gains `theme_category`/`difficulty`/`source` (nullable/
+  default 'manual', so every existing row stays exactly as valid as
+  before). Deliberately reuses `trips.content_status`'s own
+  pending/generating/ready/failed states for the job itself (the
+  product request's own ask, "Folosește stările existente ale
+  pipeline-ului") -- this is the first migration that actually
+  transitions a trip into generating/failed; 'ready' is still set only
+  by `publish_trip()`. `start_trip_question_generation()` takes the
+  identical row lock `publish_trip`/`save_trip_editorial_brief` already
+  use, so a concurrent second start returns the SAME run (never a
+  duplicate job, backed by a real unique partial index too), rejects
+  outright for a trip with no brief (a legacy trip can't generate until
+  an admin completes its brief) or an already-published one, and
+  enforces a real 30s per-trip cooldown -- except immediately after a
+  failure, which is always allowed, so "retry after failure" is
+  instant, not gated behind the same cooldown meant for rapid-fire
+  clicking. A run still 'generating' more than 3 minutes after it
+  started (well past the provider call's own 45s timeout) is treated as
+  abandoned, reclaimed as 'failed', and a fresh run starts in the same
+  call -- a killed request never leaves a trip stuck in 'generating'
+  forever. `accept_generated_question_draft()` is the human review step
+  and the ONLY way a draft becomes a real, verified+published
+  questions/answer_options row (accepting IS the verification pass this
+  schema already requires for every question -- no second, later
+  Supabase-Studio-flip step); re-validates everything procedurally
+  (exactly one correct option, no duplicate labels, day within
+  duration_days) as the actual non-bypassable backstop, and rejects a
+  stale accept if the brief changed since generation
+  (`brief_version` mismatch). A successful brief save (extends
+  `save_trip_editorial_brief()`, same signature) now also marks every
+  still-unreviewed draft 'invalidated' -- a distinct terminal status
+  from an admin's own 'rejected', for audit clarity; an already-
+  accepted draft is never touched. `validate_trip_content()` (extended
+  again) gains one more structural check -- any trip with a draft still
+  awaiting review can never publish -- never a claim that a question's
+  difficulty/tone/facts were actually verified, only that every
+  candidate has been reviewed. AI provider isolated to one module
+  (`src/lib/ai/questionGenerationProvider.ts`): a real
+  `AnthropicQuestionGenerationProvider` (Anthropic Messages API,
+  claude-opus-5, `ANTHROPIC_API_KEY` read server-side only, never sent
+  to the client or stored in the database) and a deterministic
+  `FakeQuestionGenerationProvider` (no network, no credentials) that is
+  the default whenever no key is configured or `AI_PROVIDER=fake` is
+  set -- local dev, browser verification, and this batch's entire
+  automated test suite all run against the fake provider; nothing here
+  ever blocks on a missing key. No participant personal data is ever
+  sent to the provider -- only destination, the brief's own
+  preferences, and which day/slot/category/difficulty each candidate
+  should cover. A hard cap of 10 questions per request
+  (`MAX_GENERATED_QUESTIONS_PER_REQUEST`, mirrored by a database CHECK)
+  plus the cooldown above are the rate limit; provider errors are
+  mapped to timeout/rate_limited/provider_error/not_configured, with
+  the raw SDK error message/body never logged or returned to the
+  client. Authorization reuses `src/lib/security/tripAuthorAccess.ts`
+  (creator-or-admin) unchanged -- a participant or another trip's
+  creator gets 401/403/404, same as the brief routes. New Setări >
+  "Generare" tab: brief-used summary, a confirm step before starting, a
+  clear pending/generating/ready/failed state, a retry path after
+  failure, and a draft list with per-draft Accept/Edit/Reject/Regenerate
+  actions -- regenerating one question rejects only that draft (kept,
+  not deleted) and runs a fresh single-slot generation, never touching
+  any other draft. Verified with a new SQL regression file
+  (`supabase/tests/trip_question_generation.test.sql`, `npm run
+  test:sql:r9-question-generation`) covering the full state machine
+  (start/finish, concurrent start, rate-limit vs. immediate-retry-after-
+  failure, stale-run reclaim), publish_trip() itself rejecting a trip
+  with an unreviewed draft (proven against the real function, not a
+  simulated update) and accepting once resolved, accept's own content
+  validation (duplicate options, wrong correct-option count, day out of
+  range) and status handling (already-processed, edited-vs-generated
+  source), the brief-change invalidation cascade (and that it never
+  touches an already-accepted draft), a later generation run never
+  disturbing an earlier accepted draft, and the RLS boundary; new Vitest
+  coverage for the validation module, the fake/real provider (including
+  mocked-SDK timeout/rate-limit/error mapping), the deterministic slot-
+  planning helpers, every API route (authorization for creator/admin/
+  another trip's creator/a participant with no session, request
+  validation, RPC-status-to-HTTP mapping), and the Setări tab itself.
+  All pre-existing SQL/Vitest regressions re-verified green.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see
@@ -1408,3 +1564,19 @@
   lowered to 4) on the hosted project before they work at all -- see
   `docs/DATABASE.md` "Rollout order and rollback"; not applied from this
   environment.
+- R9's AI-assisted generation covers Discover questions only -- Battle-
+  question generation is explicitly out of scope (see the R9 entry
+  above for why). No live provider credentials are configured in any
+  environment from this session; every environment (including this
+  one) falls back to the deterministic fake provider until an operator
+  sets `ANTHROPIC_API_KEY` -- see the R9 report's rollout section for
+  the exact steps to enable the real provider in staging/production.
+  Generation runs synchronously inside one API request (same posture as
+  public trip creation) rather than a background job/queue this
+  codebase has no infrastructure for -- a very slow provider response
+  is bounded by the route's own `maxDuration`, not by a retry/poll loop.
+  Regenerating a single question always asks the provider for exactly
+  one item, scoped to that question's own day/slot/category/difficulty
+  -- it does not consider the trip's other already-accepted questions,
+  so nothing currently prevents two accepted questions (generated or
+  manual) from covering very similar ground.

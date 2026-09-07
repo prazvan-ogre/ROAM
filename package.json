@@ -28,10 +28,13 @@
     "test:sql:r6-timezone-lifecycle": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r6_trip_timezone_lifecycle.test.sql",
     "test:sql:r7-content-publishing": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r7_content_publishing.test.sql",
     "test:sql:r8-prize-voting": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r8_prize_voting.test.sql",
+    "test:sql:trip-editorial-brief": "psql -v ON_ERROR_STOP=1 -f supabase/tests/trip_editorial_brief.test.sql",
+    "test:sql:r9-question-generation": "psql -v ON_ERROR_STOP=1 -f supabase/tests/trip_question_generation.test.sql",
     "validate-trip": "node scripts/validate-trip-content.mjs",
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
     "@supabase/supabase-js": "^2.45.4",
     "lucide-react": "^0.446.0",
     "next": "14.2.35",

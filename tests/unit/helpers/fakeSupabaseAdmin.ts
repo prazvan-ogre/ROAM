@@ -110,12 +110,94 @@ interface FakeLoginAttemptRow {
   locked_until: string | null;
 }
 
+export interface FakeBriefRow {
+  trip_id: string;
+  difficulty: string;
+  style: string;
+  narrator_character_name: string | null;
+  theme_history: number;
+  theme_places: number;
+  theme_food: number;
+  theme_curiosities: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// R9: a generic, chainable, awaitable select builder for any of the
+// "just a row store" tables -- .eq() accumulates filters, .maybeSingle()/
+// .single() return one row, and a bare `await` (via .then()) returns
+// every matching row as an array, matching how the real routes read
+// trip_question_generation_runs/trip_generated_question_drafts (a list)
+// alongside trip_editorial_briefs (a single row) with the exact same
+// builder shape supabase-js itself exposes.
+function makeGenericSelectBuilder<T>(rows: T[]) {
+  const filters: Record<string, unknown> = {};
+  function matched(): T[] {
+    return rows.filter((r) => matchesFilters(r as unknown as Record<string, unknown>, filters));
+  }
+  const builder = {
+    eq(column: string, value: unknown) {
+      filters[column] = value;
+      return builder;
+    },
+    async maybeSingle() {
+      return { data: matched()[0] ?? null, error: null };
+    },
+    async single() {
+      const found = matched();
+      if (found.length === 0) return { data: null, error: { code: "PGRST116", message: "no rows" } };
+      return { data: found[0], error: null };
+    },
+    then(resolve: (v: { data: T[]; error: null }) => void) {
+      resolve({ data: matched(), error: null });
+    },
+  };
+  return builder;
+}
+
+export interface FakeGenerationRunRow {
+  id: string;
+  trip_id: string;
+  requested_by_account_id: string;
+  brief_version: string;
+  requested_count: number;
+  status: string;
+  error_message: string | null;
+  draft_count: number;
+  rejected_count: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface FakeGeneratedDraftRow {
+  id: string;
+  trip_id: string;
+  generation_run_id: string;
+  brief_version: string;
+  day_number: number;
+  slot: string;
+  theme_category: string;
+  difficulty: string;
+  prompt: string;
+  explanation: string;
+  options: { label: string; is_correct: boolean }[];
+  status: string;
+  edited: boolean;
+  resulting_question_id: string | null;
+  accepted_by_account_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export function createFakeAdminClient(
   rows: FakeAccountRow[],
   authOptions: FakeAuthOptions = {},
   trips: FakeTripRow[] = [],
   loginAttempts: FakeLoginAttemptRow[] = [],
   rpcHandlers: FakeRpcHandlers = {},
+  tripEditorialBriefs: FakeBriefRow[] = [],
+  generationRuns: FakeGenerationRunRow[] = [],
+  generatedDrafts: FakeGeneratedDraftRow[] = [],
 ) {
   const validTokens = authOptions.validTokens ?? {};
   let nextCreatedId = 1;
@@ -311,6 +393,44 @@ export function createFakeAdminClient(
             return builder;
           },
         };
+      }
+
+      // Trip editorial brief: read-only here (app/api/trips/[slug]/
+      // brief/route.ts's GET does a plain select; every write goes
+      // through the save_trip_editorial_brief RPC instead, same as the
+      // real app -- see this file's own rpc() above).
+      if (table === "trip_editorial_briefs") {
+        return {
+          select(_columns: string) {
+            const filters: Record<string, unknown> = {};
+            const builder = {
+              eq(column: string, value: unknown) {
+                filters[column] = value;
+                return builder;
+              },
+              async maybeSingle() {
+                const row = tripEditorialBriefs.find((r) => matchesFilters(r as unknown as Record<string, unknown>, filters)) ?? null;
+                return { data: row, error: null };
+              },
+            };
+            return builder;
+          },
+        };
+      }
+
+      // R9: generation runs and generated question drafts. Only reads
+      // are simulated here -- every write in the real app goes through
+      // the RPCs above (start/finish_trip_question_generation,
+      // accept/reject_generated_question_draft), same as trip_
+      // editorial_briefs above; the "insert drafts" step inside
+      // src/lib/ai/generationService.ts is exercised by the SQL
+      // regression suite (supabase/tests/trip_question_generation.
+      // test.sql) against a real Postgres instance instead, not here.
+      if (table === "trip_question_generation_runs") {
+        return { select: (_columns: string) => makeGenericSelectBuilder(generationRuns) };
+      }
+      if (table === "trip_generated_question_drafts") {
+        return { select: (_columns: string) => makeGenericSelectBuilder(generatedDrafts) };
       }
 
       throw new Error(`fake admin client: unexpected table "${table}"`);

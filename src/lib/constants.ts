@@ -1,4 +1,4 @@
-import type { QuestionSlot } from "./supabase/types";
+import type { QuestionSlot, QuestionThemeCategory, TripDifficulty, TripQuestionStyle } from "./supabase/types";
 
 // R7: the trip duration bounds every layer that creates or validates a
 // trip must agree on -- app/page.tsx's own duration picker,
@@ -27,4 +27,48 @@ export const EXTRA_TYPE_LABEL: Record<string, string> = {
   connect: "CONEXIUNE",
   ask: "ÎNTREABĂ",
   explore: "EXPLOREAZĂ",
+};
+
+// Trip editorial brief (20260909090000_trip_editorial_brief.sql): the
+// allowed value sets and length limit both the client form and
+// src/lib/editorialBrief.ts's server-side validation check against --
+// trip_editorial_briefs' own trip_difficulty/trip_question_style enums
+// and its narrator-name length CHECK are the actual, non-bypassable
+// source of truth; these are documented mirrors, same convention as
+// MIN/MAX_TRIP_DURATION_DAYS above (SQL can't import a TS constant).
+export const TRIP_DIFFICULTIES: readonly TripDifficulty[] = ["easy", "medium", "hard"];
+export const TRIP_QUESTION_STYLES: readonly TripQuestionStyle[] = ["fun", "academic", "narrated_by_character"];
+export const MAX_NARRATOR_CHARACTER_NAME_LENGTH = 80;
+
+// Visible, editable starting proposals shown on a fresh creation-form
+// brief -- never a claim about any existing trip's actual preferences
+// (see app/page.tsx and app/trip/[slug]/settings/page.tsx: a trip with
+// no saved brief row shows "Preferințe nespecificate", not these).
+export const DEFAULT_TRIP_DIFFICULTY: TripDifficulty = "medium";
+export const DEFAULT_TRIP_QUESTION_STYLE: TripQuestionStyle = "fun";
+export const DEFAULT_THEME_DISTRIBUTION = { history: 25, places: 25, food: 25, curiosities: 25 } as const;
+
+// R9 (20260910090000_r9_question_generation.sql): documented mirrors of
+// the same non-bypassable SQL source of truth, same convention as
+// MIN/MAX_TRIP_DURATION_DAYS above -- trip_question_generation_runs'
+// own `requested_count between 1 and 10` CHECK, and
+// trip_generated_question_drafts' own prompt/explanation length CHECKs.
+export const MAX_GENERATED_QUESTIONS_PER_REQUEST = 10;
+export const MIN_GENERATED_QUESTIONS_PER_REQUEST = 1;
+export const MAX_GENERATED_QUESTION_PROMPT_LENGTH = 500;
+export const MAX_GENERATED_QUESTION_EXPLANATION_LENGTH = 400;
+export const MIN_GENERATED_QUESTION_OPTIONS = 2;
+export const MAX_GENERATED_QUESTION_OPTIONS = 6;
+
+export const QUESTION_THEME_CATEGORIES: readonly QuestionThemeCategory[] = [
+  "history",
+  "places",
+  "food",
+  "curiosities",
+];
+export const THEME_CATEGORY_LABEL: Record<QuestionThemeCategory, string> = {
+  history: "Istorie",
+  places: "Locuri de vizitat",
+  food: "Gastronomie locală",
+  curiosities: "Curiozități locale",
 };
