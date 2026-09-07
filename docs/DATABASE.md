@@ -34,6 +34,7 @@ Everything else maps 1:1 to the spec's entity list.
 | Table | Purpose |
 |---|---|
 | `trips` | One row per pilot trip (e.g. Kassandra 2026). `is_demo` flags seed/demo trips. `destination`/`location_info` back the Home dashboard's location blurb. `prize` is unused (superseded by `prize_options`/`prize_votes`, left in place rather than dropped). |
+| `trip_editorial_briefs` | One row per trip (`trip_id` primary key, `on delete cascade`), holding the creator/admin's editorial preferences for that trip's Discover/Battle content — difficulty, thematic percent split, writing style, optional narrator character name. See "Security model" point 15 below for the full contract (why this shape, who can write it, how it interacts with R7 publishing). |
 | `prize_options` / `prize_votes` | The 3 prize choices for a trip, and each participant's single vote (`unique(participant_id)`) for their favourite. The option with the most votes 12h after the first vote is the competition prize, computed on read (`getPrizeStatus`) — see Setări > Configurare and the onboarding wizard's prize step. |
 | `battles` | A themed group of Battle questions for a given day; `is_final` marks the Final Battle. |
 | `questions` | Discover or Battle questions (`kind` discriminates). `battle_id`/`slot` set only for their respective kind. Carries the full Discover content shape: `common_core`, `one_thing`, `correct_reveal_message`/`alternative_reveal_message`, `sources`, `verified`, `published`. |
@@ -135,6 +136,7 @@ identitate (Supabase Auth session)
 | `feedback` / `analytics_events` | — | write only as self, within trip; never read back | — | same as any participant | — | — |
 | `battle_team_score()` / `trip_battle_win_tally()` (aggregate RPCs) | — | callable for trips it's a member of | rejected (`42501`) | same as any participant | — | — |
 | `trips.content_status` (write) / `validate_trip_content()` / `publish_trip()` | — | — | — | — | read (validate)/write (publish), via `/api/admin/trips/[slug]/*` only, `is_admin` re-checked server-side every call | rejected (`42501` — revoked from anon/authenticated at the database level) |
+| `trip_editorial_briefs` (read/write) | read/write own trip, only before publish, via `/api/trips/[slug]/brief` only | — (not exposed to participants at all) | — | — | read/write any trip, same route/before-publish rule | rejected (`42501` — RLS enabled, zero anon/authenticated policies) |
 
 "Same trip" access for a still-**legacy** participant (a row created
 before the relevant migration, `auth_user_id is null`) keeps its old,
@@ -493,6 +495,124 @@ what a newly-created row gets.
     fallback otherwise — never invented destination facts for a trip that
     hasn't supplied its own.
 
+15. **Trip editorial brief** (`20260909090000_trip_editorial_brief.sql`):
+    the creator/admin can now set difficulty (`easy`/`medium`/`hard`),
+    a thematic percent split (history/places/food/curiosities, integers
+    0-100 summing to exactly 100), and a writing style
+    (`fun`/`academic`/`narrated_by_character`, the last requiring a
+    non-blank character name), for the person preparing that trip's
+    Discover/Battle content to follow — and, later, for an AI generator
+    to read (see "Where a future generation feature reads this" below).
+    **Data model**: a single dedicated table,
+    `trip_editorial_briefs(trip_id primary key references trips ...
+    on delete cascade, difficulty, style, narrator_character_name,
+    theme_history/theme_places/theme_food/theme_curiosities smallint,
+    created_at, updated_at)`, not a JSONB blob and not a generic
+    key-value settings table. Chosen because the data is exactly one
+    fixed, small set of typed fields per trip — a real CHECK constraint
+    (percent range, percent-sum-to-100, narrator-name-required-for-style,
+    narrator-name length) needs a typed column to constrain, which a
+    JSONB blob can't give without re-deriving the same checks in a
+    trigger; and a generic config/versioning system was explicitly out of
+    scope for this batch (no other consumer needs one, and the R7
+    precedent above already shows this codebase's own pattern for a
+    small, fixed enum-backed shape — a dedicated table plus Postgres
+    `enum` types (`trip_difficulty`, `trip_question_style`), not a
+    generic mechanism). No version history is kept — a save replaces the
+    one row for that trip (`on conflict (trip_id) do update`); Section 5
+    of the request this implements explicitly deferred multiple content
+    versions to a later batch.
+    - `save_trip_editorial_brief(trip_id, ...)` is the only write path
+      (`SECURITY DEFINER`, revoked from anon/authenticated — reachable
+      only via the service-role key, from `/api/trips/[slug]/brief`
+      (PUT) or `/api/trips/create`, after the same creator-or-admin
+      check as everywhere else in this file,
+      `src/lib/security/tripAuthorAccess.ts`). It reuses `publish_trip`'s
+      own `select ... for update` row lock on `trips` — the exact
+      mechanism, not a new one — so a concurrent "save the brief" and
+      "publish this trip" for the *same* trip serialize instead of
+      racing: whichever request's transaction commits first decides the
+      outcome for the other (a publish that lands first makes the brief
+      save see `content_status = 'ready'` and reject it; a save that
+      lands first is durably committed before the publish's own
+      validation can run). Returns one of three outcomes instead of
+      raising for the two "no" cases, since both are ordinary, expected
+      states a caller needs to distinguish and react to, not failures:
+      `'saved'`; `'rejected_published'` (the trip's `content_status` is
+      already `'ready'` — edits are permanently blocked from here on,
+      never auto-unpublished, and no question/answer row is ever
+      touched by this migration); `'rejected_generating'` (a content
+      generation run — not yet built, see Section 5's scope limits below
+      — is in progress, so a mid-generation edit is blocked the same
+      way). The API route maps these to HTTP 200 / 409 / 409
+      respectively, and the same real validation module
+      (`src/lib/editorialBrief.ts`'s `validateEditorialBrief`) that gates
+      the UI's own submit button re-runs server-side before the RPC is
+      ever called — allowed difficulty/style values, the percent-sum
+      check, the narrator-name-required-for-style check, and length/
+      whitespace normalization — so a direct API call bypassing the UI
+      still can't write an invalid or out-of-scope field (only the eight
+      known fields are ever read off the request body and forwarded to
+      the RPC by name; nothing from the request is spread onto the row).
+      The database's own CHECK constraints (see the table description
+      above) are the actual last line of defense either way.
+    - `validate_trip_content()` (R7's own function, extended here, not
+      replaced) gained exactly one more check under a new "F. Editorial
+      brief" section: `narrated_by_character` with a blank/missing
+      character name is reported as `brief.narrator_name_missing`. This
+      is normally unreachable (the table's own CHECK already prevents
+      that row from existing) — kept anyway as defense-in-depth, the
+      same posture R7 already takes for `trip.timezone_invalid`. This
+      check (and this whole migration) deliberately does **not** attempt
+      to verify that a trip's actual question text matches its brief's
+      declared difficulty or writing style — R7's validator checks
+      *structural* completeness (a question exists, is verified,
+      published, well-formed), never content quality/tone, and this
+      extension keeps exactly that boundary: whether prepared questions
+      still match a brief that changed after they were written is a
+      judgment call for whoever prepares content, surfaced as a plain
+      Romanian caution note in Setări > Brief editorial ("verifică-le --
+      ele nu se actualizează automat"), never a claim this migration
+      can't actually back up.
+    - **A trip with no brief row at all** (any trip created before this
+      migration, or a creation request whose brief save failed — see
+      the idempotency note below) stays fully functional: `GET
+      /api/trips/[slug]/brief` returns `brief: null` rather than an
+      error, and the UI shows "Preferințe nespecificate" (read-only, once
+      published) or this form's own visible/editable defaults (medium/
+      fun/equal 25-25-25-25 split — pre-publish only) — never a value
+      invented to look like it came from that trip's own history.
+    - **Trip creation** (`app/api/trips/create`) now also validates and
+      saves an initial brief in the same request, via the identical
+      `validateEditorialBrief`/`save_trip_editorial_brief` path the edit
+      route uses (no second, divergent implementation). A brief-save
+      failure is logged and swallowed, never surfaced as a failed trip
+      creation — deliberately, because this route's existing
+      `client_request_id` idempotency short-circuit returns the original
+      trip on a retry *without* re-running any of the creation steps,
+      brief-save included; if the initial save failed and treating that
+      as a hard error, the trip itself would already exist by the time
+      the client retries, and the retry's own short-circuit would return
+      success while the brief silently stayed unsaved forever. The
+      resulting trip is exactly the "no brief row" case above (still
+      fully functional, never blocking, never re-attempted automatically).
+    - **Where a future generation feature reads this** (Section 5 of
+      this batch's request explicitly excludes building AI
+      generation/provider connection, automatic regeneration, and
+      multiple content versions — this is only the documented read
+      point for whenever that batch happens): a generator would read
+      `trip_editorial_briefs` by `trip_id` the same way
+      `src/lib/editorialBrief.ts`'s `getTripEditorialBrief`/
+      `toEditorialBrief` already do — `difficulty`, `style`,
+      `narrator_character_name`, and the four `theme_*` percentages —
+      before drafting a trip's Discover/Battle content, exactly as a
+      human content preparer is meant to read the same row via Setări >
+      Brief editorial today. No new table, column, or API is needed for
+      that to become possible; only the generation logic itself (and,
+      per Section 5, whatever "an edit after generation needs review"
+      workflow a later batch decides on — this batch only leaves the
+      caution note, not an enforced review-state machine).
+
 ### Existing trips under the R7 pipeline
 
 `validate_trip_content`/`publish_trip` are opt-in: nothing re-validates
@@ -649,6 +769,7 @@ batch describes, and neither is silently reclaimed or deleted:
 - `supabase/migrations/20260907094000_batch2_ip_rate_limits.sql` — `ip_rate_limits` (service-role only), backing an IP-keyed rate limit on new-trip and new-account creation alongside the existing per-device/per-phone checks.
 - `supabase/migrations/20260907140000_r6_trip_timezone_and_lifecycle.sql` — R6: `trips.timezone` (nullable IANA zone, `is_valid_iana_timezone()` CHECK), `trips_public` now exposes it, `record_answer()` computes the trip's own day in that zone and rejects a new answer on a scheduled/ended trip. See "Security model" point 13 above.
 - `supabase/migrations/20260908090000_r7_content_publishing_pipeline.sql` — R7: `content_status`'s DEFAULT changes from `'ready'` to `'pending'` (no existing row's stored value changes); adds `validate_trip_content()`/`publish_trip()`, both revoked from anon/authenticated. See "Security model" point 14 above.
+- `supabase/migrations/20260909090000_trip_editorial_brief.sql` — trip editorial brief: `trip_editorial_briefs` (one row per trip, RLS enabled with zero policies — service-role only), the `trip_difficulty`/`trip_question_style` enums, `save_trip_editorial_brief()` (reuses `publish_trip`'s own row lock so edit-vs-publish can't race, revoked from anon/authenticated), and one added check inside `validate_trip_content()`. See "Security model" point 15 above.
 
 Every schema change is a new migration file — never a manual edit in the
 Supabase dashboard. Naming: `<timestamp>_<description>.sql`

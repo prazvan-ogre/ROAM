@@ -1316,6 +1316,67 @@
   against the real Kassandra 2026 seed data end-to-end (seed -> flip
   verified/published -> validate clean -> publish -> ready -> idempotent
   re-publish).
+- Trip editorial brief (`claude/trip-editorial-brief`, built on R7): the
+  trip's creator or an admin can now set difficulty (easy/medium/hard), a
+  thematic percent split (istorie/locuri de vizitat/gastronomie locala/
+  curiozitati locale, integers 0-100 summing to exactly 100), and a
+  writing style (fun/academic/narrated by a historical character -- the
+  last requiring a mandatory character-name field) -- a persistent
+  editorial brief for whoever prepares that trip's content, and later for
+  an AI generator to read. Visible, editable initial proposals (medium/
+  equal 25-25-25-25 split/fun), never preferences retroactively assigned
+  to an existing trip. New migration
+  (`20260909090000_trip_editorial_brief.sql`): a dedicated
+  `trip_editorial_briefs` table (one row per trip, RLS enabled with zero
+  anon/authenticated policies -- service-role only, same pattern as
+  `creator_accounts`/`ip_rate_limits`), not a JSONB blob or a generic
+  config/versioning system (see `docs/DATABASE.md` point 15 for the full
+  justification); real CHECK constraints enforce the percent range, the
+  100% total, and the narrator-name-required-for-style rule at the
+  database level. `save_trip_editorial_brief()` (revoked from anon/
+  authenticated) reuses `publish_trip`'s own `select ... for update` row
+  lock, so an edit and a publish for the same trip can't race -- editing
+  is only ever allowed before publish; a published trip's brief is
+  permanently read-only, including server-side, and this never
+  auto-unpublishes or touches an existing question/answer row.
+  `validate_trip_content()` gained one added structural check (a
+  narrated-by-character brief with no name set) -- still never claims to
+  verify difficulty or writing style, only structure. New API routes
+  (`GET`/`PUT /api/trips/[slug]/brief`), gated by a new creator-or-admin
+  helper (`src/lib/security/tripAuthorAccess.ts`) reusing the existing
+  cookie-based creator-account session -- a participant or another
+  trip's creator gets 403/404. Server-side validation
+  (`src/lib/editorialBrief.ts`) re-runs the exact same rules the UI's own
+  submit button checks (allowed values, percent total, required
+  character name, length/whitespace normalization) and only ever forwards
+  the known brief fields onto the row, never arbitrary request fields.
+  The same fields/component (`EditorialBriefFields`) are shared by the
+  public creation form and a new "Brief editorial" tab in Setari
+  (creator-or-admin visibility, reusing the account's own trip list --
+  no new fetch): pre-publish shows the editable form (typed values
+  survive a failed save for retry, without data loss); post-publish shows
+  a read-only summary; a trip with no brief at all (legacy, or a failed
+  initial save) shows "Preferinte nespecificate" rather than inventing a
+  value. Never implies a question was already generated or auto-adapted
+  from the brief. Out of scope for this batch (documented, not built): AI
+  generation/provider connection, automatic regeneration, multiple
+  content versions, changing the brief after publish, and additional
+  options (language/audience/question count) -- `docs/DATABASE.md` point
+  15 documents exactly where a future generation feature would read this
+  table. Verified with a new SQL regression file
+  (`supabase/tests/trip_editorial_brief.test.sql`, `npm run
+  test:sql:trip-editorial-brief`) covering valid save/upsert, invalid
+  percentages/unknown values/missing narrator name, RLS denial for anon,
+  the validator hook, and a same-trip edit-vs-publish race proven against
+  the real `publish_trip()` function (not a simulated update); new Vitest
+  coverage for the validation module, both API routes, the creation
+  form's fields, and the Setari tab (load/read-only summary/legacy
+  "Preferinte nespecificate"/save/reload/retry-after-failure/reject-after-
+  publish). Fixed a bug found while writing that last test: a rejected
+  save used to call the same reload path as the initial page load, which
+  reset the tab to a loading spinner in the same render batch as the
+  rejection message -- masking it before it ever painted; the refresh now
+  updates state directly, without hiding the message during it.
 
 ### Known limitations
 - Participation is still registration-free and device-based (see

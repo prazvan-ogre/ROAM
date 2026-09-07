@@ -1,5 +1,6 @@
 import { getDeviceId, ensureAuthSession } from "./device";
 import { supabase } from "./supabase/client";
+import type { EditorialBriefValidated } from "./editorialBrief";
 
 export interface CreateTripInput {
   destination: string;
@@ -10,6 +11,11 @@ export interface CreateTripInput {
   timezone: string;
   website: string;
   requestId: string;
+  // The initial editorial brief (difficulty/theme distribution/style),
+  // already validated client-side by validateEditorialBrief -- spread
+  // straight into the request body; app/api/trips/create/route.ts
+  // re-validates it server-side regardless, same as every other field.
+  brief: EditorialBriefValidated;
 }
 
 export interface CreateTripResult {
@@ -32,10 +38,14 @@ export async function createPublicTrip(input: CreateTripInput): Promise<CreateTr
     throw new Error("Nu am putut verifica sesiunea. Încearcă din nou.");
   }
 
+  // Flattened: the route expects difficulty/style/theme* as top-level
+  // request-body keys (matching EditorialBriefRawInput), not nested
+  // under a "brief" object.
+  const { brief, ...rest } = input;
   const response = await fetch("/api/trips/create", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ ...input, deviceId: getDeviceId() }),
+    body: JSON.stringify({ ...rest, ...brief, deviceId: getDeviceId() }),
   });
 
   const body = await response.json().catch(() => null);

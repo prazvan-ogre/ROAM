@@ -27,6 +27,7 @@
     "test:sql:r5-trip-ownership": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r5_trip_creator_ownership.test.sql",
     "test:sql:r6-timezone-lifecycle": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r6_trip_timezone_lifecycle.test.sql",
     "test:sql:r7-content-publishing": "psql -v ON_ERROR_STOP=1 -f supabase/tests/r7_content_publishing.test.sql",
+    "test:sql:trip-editorial-brief": "psql -v ON_ERROR_STOP=1 -f supabase/tests/trip_editorial_brief.test.sql",
     "validate-trip": "node scripts/validate-trip-content.mjs",
     "test": "vitest run"
   },
