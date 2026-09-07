@@ -46,9 +46,14 @@ const trip = {
 };
 
 const prizeWithOptions = {
-  options: [{ id: "opt-1", title: "Prăjitură", description: null }],
+  options: [
+    { id: "opt-1", title: "Prăjitură", description: null },
+    { id: "opt-2", title: "Înghețată", description: null },
+  ],
+  configured: true,
   votingOpen: true,
   winner: null,
+  resolutionMethod: null,
   closesAt: null,
 };
 
@@ -149,6 +154,13 @@ describe("R4: OnboardingWizard finish/vote -- a failed vote doesn't leave the bu
 
     castPrizeVote.mockResolvedValueOnce("recorded");
     await click(retryButton);
+
+    // R8: a recorded vote now shows its own confirmation panel first,
+    // rather than finishing immediately -- see OnboardingWizard's
+    // voteRecorded state.
+    await screen.findByText(/Votul tău a fost înregistrat/i);
+    expect(onComplete).not.toHaveBeenCalled();
+    await click(screen.getByRole("button", { name: /^Continuă/i }));
 
     expect(castPrizeVote).toHaveBeenCalledTimes(2);
     expect(onComplete).toHaveBeenCalledTimes(1);

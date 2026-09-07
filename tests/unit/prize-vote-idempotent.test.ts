@@ -1,83 +1,140 @@
-// R4 regression (2026-09-06 batch; corrected round 2): "confirmare
-// pierdută" + "retry reușit fără duplicare" for prize voting, WITHOUT
-// blindly treating every 23505 as success. castPrizeVote (src/lib/
-// prize.ts) used to surface prize_votes' own `unique (participant_id)`
-// constraint violation as a hard error on any retry -- fixed once to
-// swallow every 23505 as "already voted, done" -- but that was itself
-// wrong: 23505 only proves *a* vote is on record, not that it's the
-// SAME option just attempted. A real conflict (this participant already
-// voted for a DIFFERENT option before) must be reported as a conflict,
-// not confirmed as if the new pick had been saved. castPrizeVote now
-// reconciles by reading back which option is actually on record
-// (permitted by prize_votes' own "trip members can read prize votes"
-// policy -- no new access) and returns a 3-way status.
-import { describe, it, expect, vi } from "vitest";
+// R8 (20260908090000_r8_prize_voting_rules.sql): prize voting state and
+// the winner are now resolved server-side by cast_prize_vote()/
+// get_prize_status() (both RPCs, SECURITY DEFINER) instead of a direct
+// insert into prize_votes + a client-side "12h after the first vote"
+// computation. This file replaces the old direct-insert-based tests
+// (R4, "reconciles a duplicate vote instead of blindly confirming it")
+// with the equivalent RPC-based contract: castPrizeVote/getPrizeStatus
+// (src/lib/prize.ts) now call cast_prize_vote/get_prize_status and pass
+// their result straight through -- these tests prove exactly that
+// pass-through, not the SQL functions' own logic (that's
+// supabase/tests/r8_prize_voting.test.sql, run against a real Postgres
+// instance).
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const insertCalls: unknown[] = [];
-let nextInsertError: { code: string; message: string } | null = null;
-let existingVote: { prize_option_id: string } | null = null;
+const rpcMock = vi.fn();
+const fromMock = vi.fn();
 
 vi.mock("@/lib/supabase/client", () => ({
   supabase: {
-    from: (table: string) => {
-      if (table !== "prize_votes") throw new Error(`unexpected table "${table}"`);
-      return {
-        insert: async (row: unknown) => {
-          insertCalls.push(row);
-          if (nextInsertError) return { error: nextInsertError };
-          return { error: null };
-        },
-        select: (_cols: string) => ({
-          eq: (_column: string, _value: string) => ({
-            single: async () => {
-              if (!existingVote) return { data: null, error: { code: "PGRST116", message: "no rows" } };
-              return { data: existingVote, error: null };
-            },
-          }),
-        }),
-      };
-    },
+    rpc: (...args: unknown[]) => rpcMock(...args),
+    from: (...args: unknown[]) => fromMock(...args),
   },
 }));
 
-describe("R4 regression: castPrizeVote reconciles a duplicate vote instead of blindly confirming it", () => {
-  it("a genuinely new vote succeeds, inserts exactly once, and reports 'recorded'", async () => {
-    const { castPrizeVote } = await import("@/lib/prize");
-    nextInsertError = null;
-    insertCalls.length = 0;
+function makeOptionsQuery(result: { data: unknown; error: unknown }) {
+  return {
+    select: () => ({
+      eq: () => ({
+        order: () => Promise.resolve(result),
+      }),
+    }),
+  };
+}
 
-    await expect(castPrizeVote("trip-1", "participant-1", "option-1")).resolves.toBe("recorded");
-    expect(insertCalls).toHaveLength(1);
+const OPTIONS = [
+  { id: "option-1", trip_id: "trip-1", title: "A", description: null, order_index: 1, created_at: "2026-01-01T00:00:00Z" },
+  { id: "option-2", trip_id: "trip-1", title: "B", description: null, order_index: 2, created_at: "2026-01-01T00:00:00Z" },
+];
+
+beforeEach(() => {
+  rpcMock.mockReset();
+  fromMock.mockReset();
+  fromMock.mockReturnValue(makeOptionsQuery({ data: OPTIONS, error: null }));
+});
+
+describe("R8: castPrizeVote passes cast_prize_vote's status straight through", () => {
+  it("a genuinely new vote reports 'recorded' and calls the RPC with the right args", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: { status: "recorded", vote: { id: "vote-1", trip_id: "trip-1", prize_option_id: "option-1", participant_id: "participant-1", created_at: "2026-01-01T00:00:00Z" } },
+      error: null,
+    });
+    const { castPrizeVote } = await import("@/lib/prize");
+
+    await expect(castPrizeVote("participant-1", "option-1")).resolves.toBe("recorded");
+    expect(rpcMock).toHaveBeenCalledWith("cast_prize_vote", { p_participant_id: "participant-1", p_prize_option_id: "option-1" });
   });
 
-  it("a unique_violation retry for the SAME option (lost confirmation) reports 'already_recorded', not an error", async () => {
+  it.each([
+    ["already_recorded"],
+    ["conflict"],
+    ["voting_closed"],
+    ["invalid_option"],
+    ["not_configured"],
+  ] as const)("passes through status '%s' unchanged", async (status) => {
+    rpcMock.mockResolvedValueOnce({ data: { status, vote: null }, error: null });
     const { castPrizeVote } = await import("@/lib/prize");
-    nextInsertError = { code: "23505", message: "duplicate key value violates unique constraint" };
-    existingVote = { prize_option_id: "option-1" };
 
-    await expect(castPrizeVote("trip-1", "participant-1", "option-1")).resolves.toBe("already_recorded");
+    await expect(castPrizeVote("participant-1", "option-1")).resolves.toBe(status);
   });
 
-  it("a unique_violation retry for a DIFFERENT option reports 'conflict' -- never silently confirmed as saved", async () => {
+  it("an RPC-level error is thrown, never swallowed", async () => {
+    rpcMock.mockResolvedValueOnce({ data: null, error: { code: "500", message: "internal error" } });
     const { castPrizeVote } = await import("@/lib/prize");
-    nextInsertError = { code: "23505", message: "duplicate key value violates unique constraint" };
-    existingVote = { prize_option_id: "option-1" };
 
-    await expect(castPrizeVote("trip-1", "participant-1", "option-2")).resolves.toBe("conflict");
+    await expect(castPrizeVote("participant-1", "option-1")).rejects.toMatchObject({ code: "500" });
+  });
+});
+
+describe("R8: getPrizeStatus maps get_prize_status's result and resolves the winner option", () => {
+  it("voting still open: no winner, closesAt parsed as a Date", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: { configured: true, voting_open: true, closes_at: "2026-06-02T00:00:00Z", winner_option_id: null, resolution_method: null },
+      error: null,
+    });
+    const { getPrizeStatus } = await import("@/lib/prize");
+
+    const status = await getPrizeStatus("trip-1");
+    expect(status.configured).toBe(true);
+    expect(status.votingOpen).toBe(true);
+    expect(status.winner).toBeNull();
+    expect(status.resolutionMethod).toBeNull();
+    expect(status.closesAt).toEqual(new Date("2026-06-02T00:00:00Z"));
+    expect(status.options).toEqual(OPTIONS);
   });
 
-  it("any OTHER insert error still throws -- 23505 is the only code that gets reconciled", async () => {
-    const { castPrizeVote } = await import("@/lib/prize");
-    nextInsertError = { code: "500", message: "internal error" };
+  it("voting closed with a winner: the winner option is resolved from the options list by id", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: { configured: true, voting_open: false, closes_at: null, winner_option_id: "option-2", resolution_method: "plurality" },
+      error: null,
+    });
+    const { getPrizeStatus } = await import("@/lib/prize");
 
-    await expect(castPrizeVote("trip-1", "participant-1", "option-1")).rejects.toMatchObject({ code: "500" });
+    const status = await getPrizeStatus("trip-1");
+    expect(status.votingOpen).toBe(false);
+    expect(status.winner).toEqual(OPTIONS[1]);
+    expect(status.resolutionMethod).toBe("plurality");
+    expect(status.closesAt).toBeNull();
   });
 
-  it("a failure reading back the existing vote (reconciliation itself broken) throws rather than guessing", async () => {
-    const { castPrizeVote } = await import("@/lib/prize");
-    nextInsertError = { code: "23505", message: "duplicate key value violates unique constraint" };
-    existingVote = null; // simulates the reconciliation select itself erroring/finding nothing
+  it("not configured (fewer than 2 options): configured is false, no winner", async () => {
+    rpcMock.mockResolvedValueOnce({
+      data: { configured: false, voting_open: false, closes_at: null, winner_option_id: null, resolution_method: null },
+      error: null,
+    });
+    const { getPrizeStatus } = await import("@/lib/prize");
 
-    await expect(castPrizeVote("trip-1", "participant-1", "option-1")).rejects.toMatchObject({ code: "PGRST116" });
+    const status = await getPrizeStatus("trip-1");
+    expect(status.configured).toBe(false);
+    expect(status.votingOpen).toBe(false);
+    expect(status.winner).toBeNull();
+  });
+
+  it("an options-fetch error is thrown", async () => {
+    fromMock.mockReturnValue(makeOptionsQuery({ data: null, error: { message: "network down" } }));
+    rpcMock.mockResolvedValueOnce({
+      data: { configured: true, voting_open: true, closes_at: null, winner_option_id: null, resolution_method: null },
+      error: null,
+    });
+    const { getPrizeStatus } = await import("@/lib/prize");
+
+    await expect(getPrizeStatus("trip-1")).rejects.toMatchObject({ message: "network down" });
+  });
+
+  it("a get_prize_status RPC error is thrown", async () => {
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: "internal error" } });
+    const { getPrizeStatus } = await import("@/lib/prize");
+
+    await expect(getPrizeStatus("trip-1")).rejects.toMatchObject({ message: "internal error" });
   });
 });

@@ -62,7 +62,9 @@ vi.mock("@/lib/creatorAccount", () => ({
 }));
 
 vi.mock("@/lib/prize", () => ({
-  getPrizeStatus: vi.fn().mockResolvedValue({ options: [], votingOpen: false, winner: null, closesAt: null }),
+  getPrizeStatus: vi
+    .fn()
+    .mockResolvedValue({ options: [], configured: false, votingOpen: false, winner: null, resolutionMethod: null, closesAt: null }),
 }));
 
 let addChildImpl: (...args: unknown[]) => Promise<unknown>;
