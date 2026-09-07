@@ -25,6 +25,8 @@ export type PrizeVoteStatus =
   | "voting_closed"
   | "invalid_option"
   | "not_configured";
+export type TripDifficulty = "easy" | "medium" | "hard";
+export type TripQuestionStyle = "fun" | "academic" | "narrated_by_character";
 
 type TableDef<Row, InsertRequired extends keyof Row> = {
   Row: Row;
@@ -245,6 +247,27 @@ export interface Database {
           client_request_id: string | null;
         },
         "trip_id"
+      >;
+      // Trip editorial brief: one row per trip, written only via
+      // save_trip_editorial_brief() -- see 20260909090000_trip_editorial_
+      // brief.sql. RLS enabled, zero anon/authenticated policies (same
+      // "service-role + verified route only" pattern as creator_accounts)
+      // -- never selected directly from the client; see
+      // src/lib/editorialBrief.ts and app/api/trips/[slug]/brief/route.ts.
+      trip_editorial_briefs: TableDef<
+        {
+          trip_id: string;
+          difficulty: TripDifficulty;
+          style: TripQuestionStyle;
+          narrator_character_name: string | null;
+          theme_history: number;
+          theme_places: number;
+          theme_food: number;
+          theme_curiosities: number;
+          created_at: string;
+          updated_at: string;
+        },
+        "trip_id" | "difficulty" | "style" | "theme_history" | "theme_places" | "theme_food" | "theme_curiosities"
       >;
       prize_options: TableDef<
         {
@@ -500,6 +523,40 @@ export interface Database {
           error_count: number;
           warning_count: number;
           issues: unknown;
+        };
+      };
+      // The only way to write trip_editorial_briefs -- atomic (one row
+      // lock shared with publish_trip, one upsert) and idempotent.
+      // 'rejected_published'/'rejected_generating' mean the row was NOT
+      // touched -- see 20260909090000_trip_editorial_brief.sql. Revoked
+      // from anon/authenticated; only ever called via the service-role
+      // client, after src/lib/security/tripAuthorAccess.ts's own
+      // creator-or-admin check.
+      save_trip_editorial_brief: {
+        Args: {
+          p_trip_id: string;
+          p_difficulty: TripDifficulty;
+          p_style: TripQuestionStyle;
+          p_narrator_character_name: string | null;
+          p_theme_history: number;
+          p_theme_places: number;
+          p_theme_food: number;
+          p_theme_curiosities: number;
+        };
+        Returns: {
+          status: "saved" | "rejected_published" | "rejected_generating";
+          brief: {
+            trip_id: string;
+            difficulty: TripDifficulty;
+            style: TripQuestionStyle;
+            narrator_character_name: string | null;
+            theme_history: number;
+            theme_places: number;
+            theme_food: number;
+            theme_curiosities: number;
+            created_at: string;
+            updated_at: string;
+          } | null;
         };
       };
     };

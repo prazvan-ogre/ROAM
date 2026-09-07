@@ -110,12 +110,26 @@ interface FakeLoginAttemptRow {
   locked_until: string | null;
 }
 
+export interface FakeBriefRow {
+  trip_id: string;
+  difficulty: string;
+  style: string;
+  narrator_character_name: string | null;
+  theme_history: number;
+  theme_places: number;
+  theme_food: number;
+  theme_curiosities: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export function createFakeAdminClient(
   rows: FakeAccountRow[],
   authOptions: FakeAuthOptions = {},
   trips: FakeTripRow[] = [],
   loginAttempts: FakeLoginAttemptRow[] = [],
   rpcHandlers: FakeRpcHandlers = {},
+  tripEditorialBriefs: FakeBriefRow[] = [],
 ) {
   const validTokens = authOptions.validTokens ?? {};
   let nextCreatedId = 1;
@@ -306,6 +320,29 @@ export function createFakeAdminClient(
                 loginAttempts.length = 0;
                 loginAttempts.push(...keep);
                 resolve({ error: null });
+              },
+            };
+            return builder;
+          },
+        };
+      }
+
+      // Trip editorial brief: read-only here (app/api/trips/[slug]/
+      // brief/route.ts's GET does a plain select; every write goes
+      // through the save_trip_editorial_brief RPC instead, same as the
+      // real app -- see this file's own rpc() above).
+      if (table === "trip_editorial_briefs") {
+        return {
+          select(_columns: string) {
+            const filters: Record<string, unknown> = {};
+            const builder = {
+              eq(column: string, value: unknown) {
+                filters[column] = value;
+                return builder;
+              },
+              async maybeSingle() {
+                const row = tripEditorialBriefs.find((r) => matchesFilters(r as unknown as Record<string, unknown>, filters)) ?? null;
+                return { data: row, error: null };
               },
             };
             return builder;

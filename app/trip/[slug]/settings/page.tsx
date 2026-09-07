@@ -10,12 +10,28 @@ import type { ParticipantRole } from "@/lib/supabase/types";
 import { getPrizeStatus, type PrizeStatus } from "@/lib/prize";
 import { getAccountDetails, getStoredAccountId, getTripsForCurrentAccount, updateAccountDetails } from "@/lib/creatorAccount";
 import { validateTripContent, publishTrip, type ContentValidationIssue, type PublishTripResult } from "@/lib/adminContent";
+import {
+  getTripEditorialBrief,
+  saveTripEditorialBrief,
+  validateEditorialBrief,
+  type EditorialBrief,
+  type EditorialBriefFieldErrors,
+} from "@/lib/editorialBrief";
+import {
+  EditorialBriefFields,
+  themeDefaultsAsStrings,
+  DIFFICULTY_LABEL,
+  STYLE_LABEL,
+  THEME_FIELD_LABELS,
+  type EditorialBriefFieldsValue,
+} from "@/components/EditorialBriefFields";
+import { DEFAULT_THEME_DISTRIBUTION, DEFAULT_TRIP_DIFFICULTY, DEFAULT_TRIP_QUESTION_STYLE } from "@/lib/constants";
 import { TripNav } from "@/components/TripNav";
 import { Centered } from "@/components/ui";
 import { TripsList } from "@/components/TripsList";
 import { useTrip, useProfiles } from "@/lib/hooks";
 
-type Tab = "trips" | "config" | "users" | "info" | "publish";
+type Tab = "trips" | "config" | "users" | "info" | "publish" | "brief";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "trips", label: "Toate călătoriile" },
@@ -23,6 +39,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "users", label: "Utilizatori" },
   { id: "info", label: "Info" },
   { id: "publish", label: "Publicare" },
+  { id: "brief", label: "Brief editorial" },
 ];
 
 export default function SettingsPage() {
@@ -53,6 +70,17 @@ export default function SettingsPage() {
   // participants just join a trip by device id and never create that
   // account, so this stays hidden for them.
   const hasAccount = getStoredAccountId() !== null;
+
+  // Trip editorial brief: "the trip's own authorized creator, or an
+  // admin" -- broader than isAdmin alone (which gates the Publicare tab
+  // above). accountTrips is ALREADY exactly "this account's own trips"
+  // for a non-admin account, or every trip for an admin one
+  // (app/api/account/trips/route.ts's own server-side filter) -- no
+  // separate ownership fetch needed; the same server-verified signal
+  // decides both tabs. The actual write is re-checked server-side
+  // regardless (src/lib/security/tripAuthorAccess.ts), this only
+  // decides what's SHOWN.
+  const isCreatorOrAdmin = accountTrips !== "error" && accountTrips.some((t) => t.slug === slug);
   const loadAccountTrips = useCallback(() => {
     if (!hasAccount) return;
     getTripsForCurrentAccount()
@@ -216,7 +244,9 @@ export default function SettingsPage() {
       <h1 className="mb-4 text-[28px] font-semibold tracking-tight text-foreground">Setări</h1>
 
       <div className="mb-6 flex rounded-xl bg-secondary p-1">
-        {TABS.filter((t) => (t.id !== "trips" || hasAccount) && (t.id !== "publish" || isAdmin)).map((t) => (
+        {TABS.filter(
+          (t) => (t.id !== "trips" || hasAccount) && (t.id !== "publish" || isAdmin) && (t.id !== "brief" || isCreatorOrAdmin),
+        ).map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -285,6 +315,13 @@ export default function SettingsPage() {
           what's SHOWN here; app/api/admin/trips/[slug]/{validate,publish}
           re-verify admin rights server-side regardless. */}
       {tab === "publish" && isAdmin && trip && <PublishSection trip={trip} />}
+
+      {/* Trip editorial brief: creator-or-admin (not admin-only), also
+          deliberately not gated on content_status === "ready" -- editing
+          before publish is the whole point. BriefSection itself decides
+          editable-vs-read-only from what GET returns (readOnly), never
+          just this client's own trip.content_status snapshot. */}
+      {tab === "brief" && isCreatorOrAdmin && trip && <BriefSection slug={slug} />}
 
       <TripNav slug={slug} />
     </main>
@@ -524,6 +561,211 @@ function PublishSection({ trip }: { trip: Trip }) {
         Conținutul (întrebări, Battle-uri, Extra-uri) se editează în continuare din Supabase Studio -- publicarea de
         aici doar verifică și marchează călătoria ca gata, nu creează sau modifică întrebări.
       </p>
+    </div>
+  );
+}
+
+type BriefLoadState = "loading" | "loaded" | "error";
+type BriefSaveState = "idle" | "saving" | "saved" | "error";
+
+function emptyBriefFormValue(): EditorialBriefFieldsValue {
+  return {
+    difficulty: DEFAULT_TRIP_DIFFICULTY,
+    style: DEFAULT_TRIP_QUESTION_STYLE,
+    narratorCharacterName: "",
+    ...themeDefaultsAsStrings(DEFAULT_THEME_DISTRIBUTION),
+  };
+}
+
+function briefToFormValue(brief: EditorialBrief): EditorialBriefFieldsValue {
+  return {
+    difficulty: brief.difficulty,
+    style: brief.style,
+    narratorCharacterName: brief.narratorCharacterName ?? "",
+    ...themeDefaultsAsStrings(brief.theme),
+  };
+}
+
+// Trip editorial brief tab: creator-or-admin (see the tab strip's own
+// filter above), shown regardless of publish status -- that's the whole
+// point, editing only makes sense BEFORE publish. Loads via GET (which
+// also reports whether the trip is already published); a published
+// trip renders a read-only summary instead of the form, and a trip with
+// no saved brief at all -- legacy, or a creation request that somehow
+// never got one -- shows "Preferințe nespecificate" rather than
+// inventing a value. Never claims a question was generated or adapted
+// from this brief -- there is no such process yet (see docs/DATABASE.md).
+function BriefSection({ slug }: { slug: string }) {
+  const [loadState, setLoadState] = useState<BriefLoadState>("loading");
+  const [readOnly, setReadOnly] = useState(false);
+  const [savedBrief, setSavedBrief] = useState<EditorialBrief | null>(null);
+  const [form, setForm] = useState<EditorialBriefFieldsValue>(emptyBriefFormValue());
+  const [fieldErrors, setFieldErrors] = useState<EditorialBriefFieldErrors>({});
+  const [saveState, setSaveState] = useState<BriefSaveState>("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Shared by the initial load, the "Încearcă din nou" retry, AND the
+  // silent refresh after a rejected save below -- applying a fetched
+  // result never depends on how the fetch was triggered.
+  const applyBrief = useCallback((result: { brief: EditorialBrief | null; readOnly: boolean }) => {
+    setReadOnly(result.readOnly);
+    setSavedBrief(result.brief);
+    // A published trip's read-only summary reads straight off
+    // savedBrief -- the form value here only matters for the
+    // editable (pre-publish) case, pre-filled from the existing
+    // brief, or this form's own visible/editable defaults for a
+    // trip that has none yet.
+    setForm(result.brief ? briefToFormValue(result.brief) : emptyBriefFormValue());
+  }, []);
+
+  const load = useCallback(() => {
+    setLoadState("loading");
+    getTripEditorialBrief(slug)
+      .then((result) => {
+        applyBrief(result);
+        setLoadState("loaded");
+      })
+      .catch((err) => {
+        console.error("getTripEditorialBrief failed", err);
+        setLoadState("error");
+      });
+  }, [slug, applyBrief]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function handleFormChange(next: EditorialBriefFieldsValue) {
+    setForm(next);
+    // A correction after a failed save (or after acknowledging a saved
+    // one) is a fresh attempt -- stop showing the previous outcome.
+    if (saveState !== "saving") {
+      setSaveState("idle");
+      setSaveError(null);
+    }
+  }
+
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    if (saveState === "saving") return;
+    const validated = validateEditorialBrief(form);
+    if (!validated.ok) {
+      setFieldErrors(validated.errors);
+      return;
+    }
+    setFieldErrors({});
+    setSaveState("saving");
+    setSaveError(null);
+    try {
+      const result = await saveTripEditorialBrief(slug, validated.value);
+      if (result.status !== "saved") {
+        // The trip was published (or a generation run started) between
+        // this tab loading and the save attempt -- a real, expected
+        // outcome, not a network failure. Show why, and refresh to the
+        // real current state (the read-only summary, for
+        // rejected_published) in the background -- deliberately NOT via
+        // load(), which would flip loadState back to "loading" in the
+        // very same render batch as this message and hide it before it
+        // ever paints. applyBrief leaves loadState alone, so this
+        // message stays visible for as long as the refresh takes.
+        setSaveError(
+          result.status === "rejected_published"
+            ? "Brief-ul e disponibil doar pentru citire -- călătoria a fost publicată între timp."
+            : "Pregătirea conținutului e în curs -- brief-ul nu poate fi modificat acum.",
+        );
+        setSaveState("error");
+        getTripEditorialBrief(slug)
+          .then(applyBrief)
+          .catch((err) => console.error("getTripEditorialBrief refresh-after-rejection failed", err));
+        return;
+      }
+      setSavedBrief(result.brief);
+      setSaveState("saved");
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Nu am putut salva brief-ul. Încearcă din nou.");
+      setSaveState("error");
+      // Deliberately does NOT reset `form` here -- the person's typed
+      // values stay exactly as entered, so a retry (same button, same
+      // values) doesn't require retyping anything.
+    }
+  }
+
+  if (loadState === "loading") {
+    return <p className="py-8 text-center text-[14px] text-muted-foreground">Se încarcă...</p>;
+  }
+  if (loadState === "error") {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-card px-5 py-8 text-center">
+        <p className="text-[15px] text-muted-foreground">Nu am putut încărca brief-ul.</p>
+        <button onClick={load} className="text-[14px] font-semibold text-primary underline">
+          Încearcă din nou
+        </button>
+      </div>
+    );
+  }
+
+  if (readOnly) {
+    if (!savedBrief) {
+      return (
+        <div className="rounded-2xl border border-border bg-card px-5 py-8 text-center">
+          <p className="text-[15px] font-semibold text-foreground">Preferințe nespecificate</p>
+          <p className="mx-auto mt-2 max-w-xs text-[13px] text-muted-foreground">
+            Această călătorie a fost publicată fără un brief editorial înregistrat.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-[13px] text-muted-foreground">
+          Călătoria e publicată -- brief-ul e disponibil doar pentru citire.
+        </p>
+        <BriefSummaryRow label="Dificultate" value={DIFFICULTY_LABEL[savedBrief.difficulty]} />
+        <BriefSummaryRow label="Stil de formulare" value={STYLE_LABEL[savedBrief.style]} />
+        {savedBrief.style === "narrated_by_character" && savedBrief.narratorCharacterName && (
+          <BriefSummaryRow label="Personaj istoric" value={savedBrief.narratorCharacterName} />
+        )}
+        <BriefSummaryRow
+          label="Distribuție tematică"
+          value={`${THEME_FIELD_LABELS.history} ${savedBrief.theme.history}% · ${THEME_FIELD_LABELS.places} ${savedBrief.theme.places}% · ${THEME_FIELD_LABELS.food} ${savedBrief.theme.food}% · ${THEME_FIELD_LABELS.curiosities} ${savedBrief.theme.curiosities}%`}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSave} className="flex flex-col gap-5">
+      {!savedBrief && (
+        <p className="text-[12px] text-disabled">
+          Nicio preferință salvată încă -- valorile de mai jos sunt propuneri inițiale, editabile.
+        </p>
+      )}
+      <EditorialBriefFields value={form} onChange={handleFormChange} errors={fieldErrors} disabled={saveState === "saving"} />
+
+      <p className="text-[12px] leading-relaxed text-disabled">
+        Dacă schimbi aceste preferințe după ce unele întrebări au fost deja pregătite, verifică-le -- ele nu se
+        actualizează automat ca să corespundă noilor preferințe.
+      </p>
+
+      {saveError && <p className="text-[13px] text-destructive">{saveError}</p>}
+      {saveState === "saved" && <p className="text-[13px] text-muted-foreground">Brief-ul a fost salvat.</p>}
+
+      <button
+        type="submit"
+        disabled={saveState === "saving"}
+        className="rounded-2xl bg-primary py-[14px] text-[15px] font-semibold text-primary-foreground transition-all duration-150 hover:bg-primary-hover active:scale-[0.98] disabled:opacity-40"
+      >
+        {saveState === "saving" ? "Se salvează..." : "Salvează brief-ul"}
+      </button>
+    </form>
+  );
+}
+
+function BriefSummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4 shadow-[0_1px_4px_rgba(0,0,0,0.04)]">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-0.5 text-[15px] font-medium text-foreground">{value}</p>
     </div>
   );
 }

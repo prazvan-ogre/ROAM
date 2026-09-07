@@ -5,6 +5,7 @@ import { checkAndRecordIpAttempt, getClientIp } from "@/lib/security/ipRateLimit
 import { resolveBearerAuthUserId } from "@/lib/security/session";
 import { isValidIanaTimezone } from "@/lib/timezone";
 import { MIN_TRIP_DURATION_DAYS as MIN_DURATION_DAYS, MAX_TRIP_DURATION_DAYS as MAX_DURATION_DAYS } from "@/lib/constants";
+import { validateEditorialBrief, type EditorialBriefRawInput } from "@/lib/editorialBrief";
 
 // Needs the Node runtime for the service-role Supabase client -- not
 // edge-compatible.
@@ -51,10 +52,22 @@ async function handleCreate(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Cerere invalidă." }, { status: 400 });
   }
 
-  const { destination, startDate, durationDays, timezone, deviceId, requestId, website } = (body ?? {}) as Record<
-    string,
-    unknown
-  >;
+  const {
+    destination,
+    startDate,
+    durationDays,
+    timezone,
+    deviceId,
+    requestId,
+    website,
+    difficulty,
+    style,
+    narratorCharacterName,
+    themeHistory,
+    themePlaces,
+    themeFood,
+    themeCuriosities,
+  } = (body ?? {}) as Record<string, unknown>;
 
   // Honeypot: a field real visitors never see or fill in (see app/page.tsx).
   // Rejected with the same generic message as a real validation failure,
@@ -140,6 +153,29 @@ async function handleCreate(request: Request): Promise<Response> {
   );
   if (startUtcMs > twoYearsFromNowUtcMs) {
     return NextResponse.json({ error: "Data de start e prea departe în viitor." }, { status: 400 });
+  }
+
+  // Trip editorial brief (20260909090000_trip_editorial_brief.sql): the
+  // creator's initial difficulty/theme/style preferences, submitted
+  // alongside the trip itself -- app/page.tsx's form always sends valid
+  // (default or edited) values, but this is the actual server-side
+  // enforcement; a request that skips or breaks them is rejected here,
+  // same as every other field above. validateEditorialBrief is the
+  // exact same check app/api/trips/[slug]/brief/route.ts uses for a
+  // later edit -- one set of rules for both.
+  const briefInput: EditorialBriefRawInput = {
+    difficulty,
+    style,
+    narratorCharacterName,
+    themeHistory,
+    themePlaces,
+    themeFood,
+    themeCuriosities,
+  };
+  const validatedBrief = validateEditorialBrief(briefInput);
+  if (!validatedBrief.ok) {
+    const firstError = Object.values(validatedBrief.errors)[0];
+    return NextResponse.json({ error: firstError ?? "Verifică preferințele editoriale." }, { status: 400 });
   }
 
   const admin = createAdminClient();
@@ -230,7 +266,7 @@ async function handleCreate(request: Request): Promise<Response> {
       client_request_id: requestId,
       content_status: "pending",
     })
-    .select("slug")
+    .select("id, slug")
     .single();
 
   if (insertTripError) {
@@ -249,6 +285,39 @@ async function handleCreate(request: Request): Promise<Response> {
       if (winner) return NextResponse.json({ slug: winner.slug });
     }
     throw insertTripError;
+  }
+
+  // The initial brief -- same save_trip_editorial_brief() function the
+  // edit route uses, called here via the service-role client right
+  // after the trip row it references now exists. content_status is
+  // guaranteed 'pending' at this exact instant (this request just
+  // created the row), so this can never hit either rejection branch
+  // that function has for an already-published/generating trip.
+  //
+  // A failure here (thrown, or resolved with an .error) is logged and
+  // swallowed rather than failing the whole creation -- deliberately,
+  // not an oversight: the trip itself was already created successfully
+  // by this point, and a retry of this same request (client_request_id)
+  // would just re-return that trip's slug via the early-return above
+  // WITHOUT ever reaching this step again, so failing the request here
+  // would leave the client retrying into a false "succeeded" response
+  // that still never saved a brief. A trip with no brief row is already
+  // a fully supported state either way (shows "Preferințe nespecificate",
+  // editable later from Setări) -- not a broken one.
+  try {
+    const { error: briefSaveError } = await admin.rpc("save_trip_editorial_brief", {
+      p_trip_id: created.id,
+      p_difficulty: validatedBrief.value.difficulty,
+      p_style: validatedBrief.value.style,
+      p_narrator_character_name: validatedBrief.value.narratorCharacterName,
+      p_theme_history: validatedBrief.value.themeHistory,
+      p_theme_places: validatedBrief.value.themePlaces,
+      p_theme_food: validatedBrief.value.themeFood,
+      p_theme_curiosities: validatedBrief.value.themeCuriosities,
+    });
+    if (briefSaveError) console.error("Initial trip editorial brief save failed", briefSaveError);
+  } catch (briefSaveException) {
+    console.error("Initial trip editorial brief save threw", briefSaveException);
   }
 
   return NextResponse.json({ slug: created.slug });

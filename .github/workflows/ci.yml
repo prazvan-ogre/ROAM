@@ -144,6 +144,7 @@ jobs:
           npm run test:sql:r6-timezone-lifecycle
           npm run test:sql:r7-content-publishing
           npm run test:sql:r8-prize-voting
+          npm run test:sql:trip-editorial-brief
 
   unit-tests:
     runs-on: ubuntu-latest

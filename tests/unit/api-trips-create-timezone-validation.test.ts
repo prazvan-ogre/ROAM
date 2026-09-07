@@ -39,6 +39,18 @@ const baseBody = {
   durationDays: 5,
   deviceId: "device-tz-1",
   website: "",
+  // Trip editorial brief (20260909090000_trip_editorial_brief.sql): the
+  // route validates this on every request now, same as every other
+  // field -- a valid default here isolates this file's own timezone
+  // assertions from that unrelated check. See api-trips-create-brief.test.ts
+  // for the brief validation itself.
+  difficulty: "medium",
+  style: "fun",
+  narratorCharacterName: "",
+  themeHistory: 25,
+  themePlaces: 25,
+  themeFood: 25,
+  themeCuriosities: 25,
 };
 
 describe("R6 follow-up: POST /api/trips/create validates timezone server-side", () => {
