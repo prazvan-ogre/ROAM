@@ -50,7 +50,7 @@ export const SCENES: Scene[] = [
   {
     id: "opening",
     label: "The question",
-    eyebrow: "A story in eight scenes",
+    eyebrow: "",
     headline: "It’s easy to build anything today. But is everything worth building?",
     lede: "Ideas become apps, agents and features in an afternoon. Choosing which ones deserve to exist is the hard part now.",
     narration:

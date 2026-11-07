@@ -262,17 +262,9 @@ export function OpeningScene() {
       ref={ref}
       id="opening"
       aria-labelledby="opening-title"
-      className="relative flex min-h-[100svh] flex-col items-center px-5 pb-24 pt-28 sm:px-8 sm:pt-32"
+      className="relative flex min-h-[100svh] flex-col items-center px-5 pb-24 pt-32 sm:px-8 sm:pt-40"
     >
       <motion.div style={{ y: titleY, opacity: titleOpacity }} className="relative z-10 mx-auto max-w-5xl text-center">
-        <motion.p
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease }}
-          className="mb-7 font-mono text-[11px] uppercase tracking-[0.18em] text-ink-faint"
-        >
-          {scene.eyebrow}
-        </motion.p>
         <h1 id="opening-title" className="text-balance text-display font-semibold">
           {["It’s", "easy", "to", "build", "anything", "today."].map((w, i) => (
             <motion.span
