@@ -2,7 +2,7 @@
 
 import { motion, useInView, useScroll, useTransform } from "framer-motion";
 import { useEffect, useRef, type ReactNode } from "react";
-import { useNarration } from "@/components/narration/NarrationProvider";
+import { useScenes } from "@/components/SceneProvider";
 import type { Scene as SceneData } from "@/lib/story";
 
 const ease = [0.22, 1, 0.36, 1] as const;
@@ -19,7 +19,7 @@ export const reveal = {
 
 /** Marks a section as the active scene while it crosses the middle of the viewport. */
 export function useRegisterScene(ref: React.RefObject<HTMLElement>, id: SceneData["id"]) {
-  const { setActiveScene } = useNarration();
+  const { setActiveScene } = useScenes();
   const centered = useInView(ref, { margin: "-48% 0px -48% 0px" });
   useEffect(() => {
     if (centered) setActiveScene(id);

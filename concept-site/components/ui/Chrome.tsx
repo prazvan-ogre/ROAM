@@ -2,7 +2,7 @@
 
 import { motion, useScroll, useSpring } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
-import { useNarration } from "@/components/narration/NarrationProvider";
+import { useScenes } from "@/components/SceneProvider";
 import { PRODUCT, SCENES } from "@/lib/story";
 
 export function Logo({ className = "" }: { className?: string }) {
@@ -24,7 +24,7 @@ export function Logo({ className = "" }: { className?: string }) {
 }
 
 export function TopBar() {
-  const { goTo } = useNarration();
+  const { goTo } = useScenes();
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, { stiffness: 120, damping: 30, mass: 0.3 });
 
@@ -59,7 +59,7 @@ export function TopBar() {
 
 /** Vertical chapter rail on large screens. */
 export function ChapterNav() {
-  const { activeScene, goTo } = useNarration();
+  const { activeScene, goTo } = useScenes();
   return (
     <nav aria-label="Scenes" className="fixed right-6 top-1/2 z-30 hidden -translate-y-1/2 xl:block">
       <ol className="flex flex-col gap-3">

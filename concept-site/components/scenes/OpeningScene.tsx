@@ -1,9 +1,9 @@
 "use client";
 
 import { AnimatePresence, motion, useInView, useScroll, useTransform } from "framer-motion";
-import { ArrowDown, Bot, CornerDownLeft, Inbox, Play, Sparkles } from "lucide-react";
+import { ArrowDown, Bot, CornerDownLeft, Inbox, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useNarration } from "@/components/narration/NarrationProvider";
+import { WatchFilmButton, useFilm } from "@/components/film/FilmPlayer";
 import { useRegisterScene } from "@/components/ui/Scene";
 import { Pill, Window } from "@/components/ui/primitives";
 import { sceneById } from "@/lib/story";
@@ -249,7 +249,7 @@ export function OpeningScene() {
   const ref = useRef<HTMLElement>(null);
   useRegisterScene(ref, "opening");
   const stageInView = useInView(ref, { amount: 0.3 });
-  const { startStory, soundOn } = useNarration();
+  const film = useFilm();
 
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
   const titleY = useTransform(scrollYProgress, [0, 1], [0, -120]);
@@ -309,19 +309,14 @@ export function OpeningScene() {
           transition={{ duration: 0.9, ease, delay: 1.7 }}
           className="mt-9 flex flex-wrap items-center justify-center gap-3"
         >
-          <button
-            type="button"
-            onClick={startStory}
-            className="group inline-flex items-center gap-2.5 rounded-full bg-ink py-2 pl-2 pr-5 text-[14px] font-medium text-paper shadow-float transition-all duration-300 ease-cine hover:-translate-y-0.5 hover:bg-accent-deep"
-          >
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-paper/15 transition-transform duration-300 group-hover:scale-110">
-              <Play size={13} fill="currentColor" className="ml-0.5" />
-            </span>
-            {soundOn ? "Restart the story" : "Watch the story · 2 min"}
-          </button>
+          <WatchFilmButton />
           <a
             href="#competition"
-            className="group inline-flex items-center gap-2 rounded-full px-5 py-3 text-[14px] font-medium text-ink-soft transition-colors hover:text-ink"
+            className={`group inline-flex items-center gap-2 rounded-full px-5 py-3 text-[14px] font-medium transition-all duration-300 ease-cine ${
+              film.available
+                ? "text-ink-soft hover:text-ink"
+                : "bg-ink text-paper shadow-float hover:-translate-y-0.5 hover:bg-accent-deep"
+            }`}
           >
             Scroll to explore
             <ArrowDown size={15} className="transition-transform duration-300 group-hover:translate-y-0.5" />

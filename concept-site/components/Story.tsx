@@ -1,8 +1,8 @@
 "use client";
 
 import { MotionConfig } from "framer-motion";
-import { NarrationProvider } from "@/components/narration/NarrationProvider";
-import { NarrationDock } from "@/components/narration/NarrationDock";
+import { SceneProvider } from "@/components/SceneProvider";
+import { FilmProvider } from "@/components/film/FilmPlayer";
 import { Atmosphere, ChapterNav, TopBar } from "@/components/ui/Chrome";
 import { OpeningScene } from "@/components/scenes/OpeningScene";
 import { CompetitionScene } from "@/components/scenes/CompetitionScene";
@@ -16,22 +16,23 @@ import { ClosingScene } from "@/components/scenes/ClosingScene";
 export function Story() {
   return (
     <MotionConfig reducedMotion="user">
-      <NarrationProvider>
-        <Atmosphere />
-        <TopBar />
-        <ChapterNav />
-        <main className="relative">
-          <OpeningScene />
-          <CompetitionScene />
-          <CostsScene />
-          <ValueScene />
-          <PlatformScene />
-          <BeforeScene />
-          <AfterScene />
-          <ClosingScene />
-        </main>
-        <NarrationDock />
-      </NarrationProvider>
+      <SceneProvider>
+        <FilmProvider>
+          <Atmosphere />
+          <TopBar />
+          <ChapterNav />
+          <main className="relative">
+            <OpeningScene />
+            <CompetitionScene />
+            <CostsScene />
+            <ValueScene />
+            <PlatformScene />
+            <BeforeScene />
+            <AfterScene />
+            <ClosingScene />
+          </main>
+        </FilmProvider>
+      </SceneProvider>
     </MotionConfig>
   );
 }
