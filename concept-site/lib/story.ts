@@ -7,8 +7,8 @@ export const PRODUCT = {
   name: "Worth",
   tagline: "Build what matters.",
   status: "Concept in development",
-  contactEmail: "hello@example.com",
-  bookingUrl: "mailto:hello@example.com?subject=Let%E2%80%99s%20talk%20about%20Worth",
+  contactEmail: "razvano7@yahoo.com",
+  bookingUrl: "mailto:razvano7@yahoo.com?subject=Let%E2%80%99s%20talk%20about%20Worth",
 };
 
 export type SceneId =
