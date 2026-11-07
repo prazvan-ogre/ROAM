@@ -29,34 +29,27 @@ npm run build && npm start
 
 ## Where to change things
 
-- **All copy, narration and audio paths:** `lib/story.ts` (also product name, status label, contact email, booking link).
+- **All copy, the film script and the film link:** `lib/story.ts` (also product name, status label, contact email, booking link).
 - **Design tokens** (one indigo accent, warm neutral canvas, ink scale, shadows, type scale): `tailwind.config.ts`.
 - **Scenes:** `components/scenes/*`. Shared building blocks (window frame, pills, count-ups, sparklines, `VideoLoop`) in `components/ui/primitives.tsx`; the scene wrapper with scroll reveal, parallax drift and scene tracking in `components/ui/Scene.tsx`.
 - **Video clips:** drop an MP4/WebM into `public/` and render `<VideoLoop src="/clip.mp4" />` inside any scene. It only plays while visible and respects reduced motion.
 
-## Voice-over
+## Promotional film
 
-The floating dock gives play/pause, replay, mute/unmute, captions on/off and a full
-transcript. “Watch the story” plays the narration scene by scene and scrolls
-forward on its own; scrolling by hand narrates whichever scene is in view.
+The site is ready to launch a promotional film once it exists. Until then, nothing
+film-related is shown.
 
-Three voices, chosen automatically:
+When the film is ready, set `FILM.src` in `lib/story.ts`:
 
-1. **Studio voice-over (recommended).** Render the narration once with a realistic AI voice:
-   ```bash
-   ELEVENLABS_API_KEY=... npm run voiceover          # optional ELEVENLABS_VOICE_ID
-   # or
-   OPENAI_API_KEY=... npm run voiceover              # optional OPENAI_VOICE (default "sage")
-   ```
-   This writes `public/audio/<scene>.mp3` and updates `public/audio/manifest.json`.
-   You can also drop in your own recorded files with the same names and list them in the manifest.
-2. **On-device voice.** With no audio files, the browser’s most natural English voice reads the narration.
-3. **Captions only.** If the browser has no speech voice, captions still play at a natural pace.
+- a **YouTube or Vimeo link** (e.g. `https://youtu.be/…` or `https://vimeo.com/123456`), or
+- a **video file** placed in `public/film/` (e.g. `"/film/worth.mp4"`), optionally with a `poster` image.
 
-Captions highlight word by word in every mode. Audio only starts after the viewer presses play (browser autoplay rules).
+A “Watch the film” button then appears in the opening scene and plays the film
+full-screen in a modal (Esc or click outside to close). Each scene’s `narration`
+field in `lib/story.ts` is the voice-over script for the film.
 
 ## Accessibility & motion
 
 - `prefers-reduced-motion` is honoured globally (`MotionConfig reducedMotion="user"`, CSS loops disabled).
-- Every scene has a real heading; the dock and controls are labelled buttons; the transcript is a dialog.
+- Every scene has a real heading; controls are labelled buttons; the film player is a dialog closable with Esc.
 - Layouts are tested at 390px and 1440px wide without horizontal scroll.
