@@ -59,7 +59,7 @@ export const SCENES: Scene[] = [
   {
     id: "competition",
     label: "Competition",
-    eyebrow: "Scene 02 — Resource competition",
+    eyebrow: "Resource competition",
     headline: "Every new idea competes for the same resources.",
     lede: "Requests arrive faster than teams can finish them. Priorities shift, similar work gets started twice, and something always gets parked.",
     narration:
@@ -68,7 +68,7 @@ export const SCENES: Scene[] = [
   {
     id: "costs",
     label: "Running costs",
-    eyebrow: "Scene 03 — Hidden and ongoing costs",
+    eyebrow: "Hidden and ongoing costs",
     headline: "The costs don’t stop at launch.",
     lede: "Building is a one-off. Running is forever: tokens, infrastructure, licences, and the people who keep it all working.",
     narration:
@@ -77,7 +77,7 @@ export const SCENES: Scene[] = [
   {
     id: "value",
     label: "Output vs. impact",
-    eyebrow: "Scene 04 — Output is not impact",
+    eyebrow: "Output is not impact",
     headline: "More features don’t automatically mean more value.",
     lede: "Shipping goes up and to the right. Usage, time saved and fewer errors often don’t follow.",
     narration:
@@ -86,7 +86,7 @@ export const SCENES: Scene[] = [
   {
     id: "platform",
     label: "The platform",
-    eyebrow: "Scene 05 — Introducing Worth",
+    eyebrow: "Introducing Worth",
     headline: "A shared view of what we build and maintain.",
     lede: "Every app, agent and feature in one place — with its purpose, owner, usage, cost and results, connected to the tools you already use.",
     narration:
@@ -95,7 +95,7 @@ export const SCENES: Scene[] = [
   {
     id: "before",
     label: "Before you build",
-    eyebrow: "Scene 06 — Before you build",
+    eyebrow: "Before you build",
     headline: "Before you build: check, compare, and choose.",
     lede: "New ideas are checked against what already exists, given an expected outcome, and routed to the cheapest path that can prove it.",
     narration:
@@ -104,7 +104,7 @@ export const SCENES: Scene[] = [
   {
     id: "after",
     label: "After launch",
-    eyebrow: "Scene 07 — After launch",
+    eyebrow: "After launch",
     headline: "After launch: check whether the investment is paying off.",
     lede: "Worth watches cost, usage and progress towards each goal — and raises a hand when the evidence changes.",
     narration:
@@ -113,7 +113,7 @@ export const SCENES: Scene[] = [
   {
     id: "closing",
     label: "Build what matters",
-    eyebrow: "Scene 08 — Focus",
+    eyebrow: "Focus",
     headline: "Build what matters.",
     lede: "Fewer initiatives. Each one with a clear goal, a clear owner, and evidence that it’s worth it.",
     narration:

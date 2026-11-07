@@ -63,7 +63,7 @@ export function ChapterNav() {
   return (
     <nav aria-label="Scenes" className="fixed right-6 top-1/2 z-30 hidden -translate-y-1/2 xl:block">
       <ol className="flex flex-col gap-3">
-        {SCENES.map((s, i) => {
+        {SCENES.map((s) => {
           const active = s.id === activeScene;
           return (
             <li key={s.id}>
@@ -78,7 +78,6 @@ export function ChapterNav() {
                     active ? "text-ink" : "text-ink-muted"
                   }`}
                 >
-                  <span className="mr-1.5 font-mono text-ink-faint">{String(i + 1).padStart(2, "0")}</span>
                   {s.label}
                 </span>
                 <span
